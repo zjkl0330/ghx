@@ -1,5 +1,21 @@
 apply plugin: 'com.android.application'
 
+// 固定签名。CI runner 的 debug keystore 每次都是新生成的，本地与 CI 签名不一致，
+// 会导致「无法覆盖安装」——升级就丢本地令牌。所以 debug/release 统一用仓库外的固定密钥。
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def signingValue = { String propKey, String envKey ->
+    System.getenv(envKey) ?: keystoreProps.getProperty(propKey)
+}
+def ghxStorePath = signingValue('storeFile', 'GHX_KEYSTORE_PATH')
+def ghxStorePass = signingValue('storePassword', 'GHX_KEYSTORE_PASSWORD')
+def ghxKeyAlias = signingValue('keyAlias', 'GHX_KEY_ALIAS') ?: 'ghx'
+def ghxKeyPass = signingValue('keyPassword', 'GHX_KEY_PASSWORD')
+def hasGhxSigning = ghxStorePath && ghxStorePass && ghxKeyPass
+
 android {
     namespace "dev.zjkl.ghx"
     compileSdk rootProject.ext.compileSdkVersion
@@ -16,8 +32,26 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasGhxSigning) {
+            ghx {
+                storeFile file(ghxStorePath)
+                storePassword ghxStorePass
+                keyAlias ghxKeyAlias
+                keyPassword ghxKeyPass
+            }
+        }
+    }
     buildTypes {
+        debug {
+            if (hasGhxSigning) {
+                signingConfig signingConfigs.ghx
+            }
+        }
         release {
+            if (hasGhxSigning) {
+                signingConfig signingConfigs.ghx
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

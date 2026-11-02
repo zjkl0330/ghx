@@ -81,6 +81,27 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
+      # 固定签名：runner 的 debug keystore 每次不同，不固定就无法覆盖安装。
+      # 四个 secret 缺一不可，缺了会在这里直接失败而不是悄悄用临时密钥签出废包。
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.GHX_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.GHX_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.GHX_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.GHX_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ] || [ -z "$KEY_PASS" ]; then
+            echo "::error::缺少签名密钥 secret（GHX_KEYSTORE_BASE64 / GHX_KEYSTORE_PASSWORD / GHX_KEY_PASSWORD）"
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ghx-release.jks"
+          {
+            echo "GHX_KEYSTORE_PATH=$RUNNER_TEMP/ghx-release.jks"
+            echo "GHX_KEYSTORE_PASSWORD=$KEYSTORE_PASS"
+            echo "GHX_KEY_ALIAS=${KEY_ALIAS:-ghx}"
+            echo "GHX_KEY_PASSWORD=$KEY_PASS"
+          } >> "$GITHUB_ENV"
+
       - name: Build debug APK
         working-directory: android
         run: |
@@ -93,6 +114,11 @@ jobs:
           OUT="ghx-${{ steps.ver.outputs.version }}-debug.apk"
           cp "$SRC" "$OUT"
           ls -lh "$OUT"
+
+      - name: Verify signature
+        run: |
+          APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)"
+          "$APKSIGNER" verify --print-certs "ghx-${{ steps.ver.outputs.version }}-debug.apk" | grep -E "Signer #1 certificate (DN|SHA-256)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
