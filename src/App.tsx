@@ -14,6 +14,7 @@ import type { AuditEntry, BatchResult, Repo, TokenRecord, Visibility, Visibility
 import { Vault } from './lib/vault'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
+import { CreateRepoSheet } from './ui/CreateRepoSheet'
 import { RepoDetailSheet } from './ui/RepoDetailSheet'
 import { RepoList } from './ui/RepoList'
 import { SettingsPage } from './ui/SettingsPage'
@@ -25,7 +26,7 @@ import { Icon } from './ui/icons'
 import './styles/theme.css'
 
 type Tab = 'repos' | 'tokens' | 'audit' | 'settings'
-type Sheet = 'none' | 'add' | 'visibility' | 'update' | 'detail'
+type Sheet = 'none' | 'add' | 'visibility' | 'update' | 'detail' | 'create'
 
 const MIRROR_KEY = 'ghx.mirror'
 
@@ -61,6 +62,8 @@ export default function App() {
   const [addError, setAddError] = useState<string | null>(null)
 
   const [detailRepo, setDetailRepo] = useState<Repo | null>(null)
+  const [createBusy, setCreateBusy] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [mirror, setMirror] = useState(DEFAULT_MIRROR)
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('checking')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
@@ -421,6 +424,28 @@ export default function App() {
     [refreshAudit],
   )
 
+  async function doCreateRepo(input: {
+    name: string
+    description: string
+    private: boolean
+    autoInit: boolean
+  }) {
+    if (!client) return
+    setCreateBusy(true)
+    setCreateError(null)
+    try {
+      const { data } = await client.createRepo(input)
+      setRepos((prev) => [data, ...prev])
+      setSheet('none')
+      showToast(`已创建 ${data.name}`)
+      void logAudit('repo-create', data.full_name, input.private ? '私有' : '公开')
+    } catch (err) {
+      setCreateError((err as Error).message)
+    } finally {
+      setCreateBusy(false)
+    }
+  }
+
   function lockVault() {
     vaultRef.current?.lock()
     setUnlocked(false)
@@ -488,6 +513,11 @@ export default function App() {
           }}
           updateVersion={updateResult?.hasUpdate ? (updateResult.info?.version ?? null) : null}
           onOpenUpdate={() => void runCheck(true)}
+          onCreate={() => {
+            setCreateError(null)
+            setSheet('create')
+          }}
+          canCreate={!!client}
         />
       )}
 
@@ -619,6 +649,16 @@ export default function App() {
           }}
           onAudit={(action, detail) => void logAudit(action, detail.target, detail.text)}
           onToast={showToast}
+        />
+      )}
+
+      {sheet === 'create' && (
+        <CreateRepoSheet
+          owner={activeRecord?.login ?? null}
+          busy={createBusy}
+          error={createError}
+          onCancel={() => setSheet('none')}
+          onSubmit={(input) => void doCreateRepo(input)}
         />
       )}
 

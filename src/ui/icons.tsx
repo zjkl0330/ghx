@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
 const P: Record<string, ReactNode> = {
   repo: (
@@ -129,7 +129,17 @@ const P: Record<string, ReactNode> = {
 
 export type IconName = keyof typeof P
 
-export function Icon({ name, size = 18, className }: { name: IconName; size?: number; className?: string }) {
+export function Icon({
+  name,
+  size = 18,
+  className,
+  style,
+}: {
+  name: IconName
+  size?: number
+  className?: string
+  style?: CSSProperties
+}) {
   return (
     <svg
       width={size}
@@ -141,6 +151,7 @@ export function Icon({ name, size = 18, className }: { name: IconName; size?: nu
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
+      style={style}
       aria-hidden="true"
     >
       {P[name]}

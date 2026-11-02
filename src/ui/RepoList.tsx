@@ -52,6 +52,8 @@ interface Props {
   onOpenRepo: (repo: Repo) => void
   updateVersion: string | null
   onOpenUpdate: () => void
+  onCreate: () => void
+  canCreate: boolean
 }
 
 export function RepoList(p: Props) {
@@ -66,6 +68,9 @@ export function RepoList(p: Props) {
         <div className="spacer" />
         <button className="icon-btn" onClick={p.onRefresh} aria-label="刷新">
           <Icon name="refresh" size={17} />
+        </button>
+        <button className="icon-btn" onClick={p.onCreate} aria-label="新建仓库" disabled={!p.canCreate}>
+          <Icon name="plus" size={17} />
         </button>
         <button
           className="icon-btn"

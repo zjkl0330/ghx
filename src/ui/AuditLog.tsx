@@ -10,6 +10,7 @@ const ACTION_LABEL: Record<AuditEntry['action'], string> = {
   'repo-star': 'Star 仓库',
   'repo-archive': '归档仓库',
   'repo-delete': '删除仓库',
+  'repo-create': '新建仓库',
 }
 
 function fmt(iso: string): string {

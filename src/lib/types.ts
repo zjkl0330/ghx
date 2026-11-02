@@ -74,6 +74,7 @@ export interface AuditEntry {
     | 'repo-star'
     | 'repo-archive'
     | 'repo-delete'
+    | 'repo-create'
   target: string
   result: 'ok' | 'failed'
   detail: string

@@ -181,6 +181,27 @@ export class GitHubClient {
   async deleteRepo(owner: string, name: string) {
     return this.request<null>(`/repos/${owner}/${name}`, { method: 'DELETE' })
   }
+
+  /** 在当前账号下新建仓库。auto_init 会带一个初始提交，否则是空仓库。 */
+  async createRepo(input: {
+    name: string
+    description?: string
+    private: boolean
+    autoInit?: boolean
+  }) {
+    const { data, rate, scopes } = await this.request<RawRepo>('/user/repos', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: input.name,
+        description: input.description || null,
+        private: input.private,
+        auto_init: input.autoInit ?? false,
+        has_issues: true,
+        has_wiki: false,
+      }),
+    })
+    return { data: normalizeRepo(data), rate, scopes }
+  }
 }
 
 function safeJson(text: string): unknown {

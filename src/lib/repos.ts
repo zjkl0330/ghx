@@ -138,3 +138,14 @@ export async function runBatch(
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
+
+/** GitHub 仓库名规则：字母、数字、点、短横、下划线，不能以点开头，最长 100。 */
+const REPO_NAME_RE = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,99}$/
+
+export function validateRepoName(name: string): string | null {
+  const v = name.trim()
+  if (!v) return '仓库名不能为空'
+  if (v === '.' || v === '..') return '这个名字不可用'
+  if (!REPO_NAME_RE.test(v)) return '只能用字母、数字、点、短横、下划线，且不能以点开头'
+  return null
+}

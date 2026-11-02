@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GitHubClient } from '../api'
-import { buildPlan, countBy, filterRepos, normalizeRepo, runBatch } from '../repos'
+import { buildPlan, countBy, filterRepos, normalizeRepo, runBatch, validateRepoName } from '../repos'
 import type { Repo, Visibility } from '../types'
 
 function repo(over: Partial<Repo> = {}): Repo {
@@ -168,5 +168,35 @@ describe('normalizeRepo', () => {
     const r = normalizeRepo({ ...base, owner: { login: 'zjkl' } })
     expect(r.full_name).toBe('zjkl/demo')
     expect(r.default_branch).toBe('main')
+  })
+})
+
+describe('validateRepoName', () => {
+  it('接受常见命名', () => {
+    expect(validateRepoName('ghx')).toBeNull()
+    expect(validateRepoName('my.repo_2')).toBeNull()
+    expect(validateRepoName('a-b_c.d')).toBeNull()
+  })
+
+  it('空名与纯空格拒绝', () => {
+    expect(validateRepoName('')).not.toBeNull()
+    expect(validateRepoName('   ')).not.toBeNull()
+  })
+
+  it('中文、空格、斜杠等非法字符拒绝', () => {
+    expect(validateRepoName('我的仓库')).not.toBeNull()
+    expect(validateRepoName('a b')).not.toBeNull()
+    expect(validateRepoName('a/b')).not.toBeNull()
+  })
+
+  it('以点开头拒绝，点与点点单独拒绝', () => {
+    expect(validateRepoName('.hidden')).not.toBeNull()
+    expect(validateRepoName('.')).not.toBeNull()
+    expect(validateRepoName('..')).not.toBeNull()
+  })
+
+  it('超过 100 字符拒绝', () => {
+    expect(validateRepoName('a'.repeat(100))).toBeNull()
+    expect(validateRepoName('a'.repeat(101))).not.toBeNull()
   })
 })
