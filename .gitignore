@@ -1,0 +1,19 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Android 构建产物
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+
+# 签名文件绝不入库
+*.jks
+*.keystore
+!android/app/debug.keystore

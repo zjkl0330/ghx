@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ghx</string>
+    <string name="title_activity_main">ghx</string>
+    <string name="package_name">dev.zjkl.ghx</string>
+    <string name="custom_url_scheme">dev.zjkl.ghx</string>
+</resources>
