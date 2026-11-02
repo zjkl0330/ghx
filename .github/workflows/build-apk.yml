@@ -115,10 +115,20 @@ jobs:
           cp "$SRC" "$OUT"
           ls -lh "$OUT"
 
+      # 指纹硬编码在这里是有意的：签错密钥的包装不上，必须在发版前拦住。
       - name: Verify signature
         run: |
           APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)"
-          "$APKSIGNER" verify --print-certs "ghx-${{ steps.ver.outputs.version }}-debug.apk" | grep -E "Signer #1 certificate (DN|SHA-256)"
+          OUT="ghx-${{ steps.ver.outputs.version }}-debug.apk"
+          "$APKSIGNER" verify "$OUT"
+          FP="$("$APKSIGNER" verify --print-certs "$OUT" 2>&1 | grep -m1 'SHA-256 digest' | awk '{print $NF}')"
+          EXPECT="fd6a8ea4445b0ada2c06065f38e9c8ea011df02c1eb484abd5ab6824c79eb2de"
+          echo "APK 证书 SHA-256: $FP"
+          if [ "$FP" != "$EXPECT" ]; then
+            echo "::error::签名指纹不匹配，期望 $EXPECT，实际 $FP"
+            exit 1
+          fi
+          echo "签名指纹校验通过"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
