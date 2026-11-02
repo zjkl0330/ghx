@@ -17,3 +17,6 @@ android/app/src/main/assets/capacitor.plugins.json
 *.jks
 *.keystore
 !android/app/debug.keystore
+
+# TS 增量构建缓存
+*.tsbuildinfo
