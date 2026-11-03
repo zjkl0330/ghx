@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
 import type { ResolvedTheme, ThemePref } from '../lib/theme'
 import { TRANSLATE_CHANNELS, type TranslateChannel } from '../lib/translate'
-import { DEFAULT_MIRROR } from '../lib/update'
+import { formatSpeed, mirrorLabel } from '../lib/mirrors'
 import { Icon } from './icons'
 
 interface Props {
@@ -30,7 +30,13 @@ interface Props {
   onClearGuard: () => void
   onMigrate: () => void
   onSaveBaseUrl: (url: string) => void
-  onSaveMirror: (url: string) => void
+  /** 当前镜像是否由测速自动选择 */
+  mirrorAuto: boolean
+  /** 当前镜像实测速度（KB/s） */
+  mirrorSpeed: number | null
+  /** 上次测速时间 */
+  mirrorCheckedAt: number | null
+  onOpenMirrors: () => void
   onCheckUpdate: () => void
   onLock: () => void
   onOpenAudit: () => void
@@ -48,9 +54,7 @@ function ago(ts: number | null): string {
 
 export function SettingsPage(p: Props) {
   const [url, setUrl] = useState(p.baseUrl)
-  const [mirror, setMirror] = useState(p.mirror)
   const changed = url.trim() !== p.baseUrl
-  const mirrorChanged = mirror.trim().replace(/\/+$/, '') !== p.mirror
 
   return (
     <>
@@ -226,27 +230,22 @@ export function SettingsPage(p: Props) {
               {p.hasUpdate ? `发现新版本 v${p.latestVersion}` : '检查更新'}
             </button>
             <div className="field" style={{ marginTop: 14 }}>
-              <label htmlFor="mirror">下载加速前缀</label>
-              <input
-                id="mirror"
-                value={mirror}
-                onChange={(e) => setMirror(e.target.value)}
-                placeholder={DEFAULT_MIRROR}
-                autoCapitalize="off"
-                spellCheck={false}
-              />
+              <label>下载加速</label>
+              <button className="linkrow" onClick={p.onOpenMirrors}>
+                <span className="linkrow-main">
+                  <b>{mirrorLabel(p.mirror)}</b>
+                  <i>
+                    {p.mirrorAuto ? '自动选最快' : '手动指定'}
+                    {p.mirrorSpeed != null ? ` · ${formatSpeed(p.mirrorSpeed)}` : ''}
+                    {p.mirrorCheckedAt ? ` · ${ago(p.mirrorCheckedAt).replace('检查', '测速')}` : ''}
+                  </i>
+                </span>
+                <Icon name="chevron" size={13} className="linkrow-arrow" />
+              </button>
               <div className="hint">
-                APK 从 {DEFAULT_MIRROR.replace(/^https?:\/\//, '')} 下载，因为 github.com 直连通常不通。查询版本走 API，与下载走不同通道。
+                APK 与自述图片都从加速站下载，因为 github.com 直连通常不通。内置多个站点，进页面可以测速选最快的；查询版本走 API，与下载是两个通道。
               </div>
             </div>
-            <button
-              className="btn ghost block"
-              style={{ marginTop: 8 }}
-              disabled={!mirrorChanged}
-              onClick={() => p.onSaveMirror(mirror.trim().replace(/\/+$/, '') || DEFAULT_MIRROR)}
-            >
-              保存加速前缀
-            </button>
           </div>
 
           <div className="section-title">本机数据</div>

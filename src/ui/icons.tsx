@@ -73,6 +73,16 @@ const P: Record<string, ReactNode> = {
   ),
   back: <path d="M15 5l-7 7 7 7" />,
   arrowRight: <path d="M5 12h14M13 6l6 6-6 6" />,
+  /** 测速用 */
+  bolt: <path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" />,
+  /** 外部页面 */
+  external: (
+    <>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-8.5 8.5" />
+      <path d="M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4" />
+    </>
+  ),
   eye: (
     <>
       <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />

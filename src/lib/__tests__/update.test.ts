@@ -56,6 +56,12 @@ describe('buildMirrorUrl', () => {
     ).toBe('https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/download/v0.2.0/ghx-0.2.0.apk')
   })
 
+  it('url 风格站点拼成完整 GitHub 地址', () => {
+    expect(buildMirrorUrl('https://gh-proxy.com', '827802685', 'ghx', 'v0.2.0', 'x.apk')).toBe(
+      'https://gh-proxy.com/https://github.com/827802685/ghx/releases/download/v0.2.0/x.apk',
+    )
+  })
+
   it('容忍前缀结尾多余斜杠，不产生 //', () => {
     expect(buildMirrorUrl('https://m.example.com///', 'a', 'b', 'v1', 'x.apk')).toBe(
       'https://m.example.com/a/b/releases/download/v1/x.apk',
@@ -98,6 +104,16 @@ describe('parseRelease', () => {
       'https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/download/v0.2.0/ghx-0.2.0.apk',
     )
     expect(info?.fallbackUrl).toBe('https://github.com/x/y.apk')
+  })
+
+  it('带出可直接打开的 Release 页面', () => {
+    const info = parseRelease(base, 'https://gh.zjkl0330.dpdns.org')
+    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/tag/v0.2.0')
+  })
+
+  it('纯下载型镜像的 Release 页面退回自建站点，按钮不会 403', () => {
+    const info = parseRelease(base, 'https://gh-proxy.com')
+    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/tag/v0.2.0')
   })
 
   it('draft 版本对外不可见，直接丢弃', () => {

@@ -35,6 +35,15 @@ describe('sheetBackTarget', () => {
     expect(sheetBackTarget('run', false)).toBe('none')
   })
 
+  it('加速站面板从更新弹层进来时退回更新弹层', () => {
+    expect(sheetBackTarget('mirrors', false, 'update')).toBe('update')
+  })
+
+  it('加速站面板从设置页进来时直接收起', () => {
+    expect(sheetBackTarget('mirrors', false)).toBe('none')
+    expect(sheetBackTarget('mirrors', false, 'none')).toBe('none')
+  })
+
   it('其余弹层一律收起', () => {
     const others: SheetName[] = [
       'add',

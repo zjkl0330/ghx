@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
-import { formatBytes, formatDate, openDownload, type UpdateCheckResult } from '../lib/update'
+import { formatSpeed, mirrorLabel, releaseDownloadUrl, releasePageUrl } from '../lib/mirrors'
+import {
+  formatBytes,
+  formatDate,
+  openExternal,
+  UPDATE_OWNER,
+  UPDATE_REPO,
+  type UpdateCheckResult,
+} from '../lib/update'
 import { Icon } from './icons'
 
 export type UpdatePhase = 'checking' | 'latest' | 'found' | 'error'
@@ -10,6 +18,9 @@ interface Props {
   error: string | null
   current: string
   mirror: string
+  /** 当前镜像的实测速度（KB/s），没测过为 null */
+  mirrorSpeed: number | null
+  onOpenMirrors: () => void
   onRecheck: () => void
   onClose: () => void
 }
@@ -28,11 +39,13 @@ function cleanNotes(raw: string): string {
 export function UpdateSheet(p: Props) {
   const [opening, setOpening] = useState(false)
   const [openError, setOpenError] = useState<string | null>(null)
+  const [pageBusy, setPageBusy] = useState(false)
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     setOpening(false)
     setOpenError(null)
+    setPageBusy(false)
     setExpanded(false)
   }, [p.phase, p.result?.latest])
 
@@ -40,16 +53,35 @@ export function UpdateSheet(p: Props) {
   const notes = info ? cleanNotes(info.notes) : ''
   const showToggle = notes.length > 260 && !expanded
 
+  // 下载地址与页面地址都按「当前镜像」现算：测速换站后不必重新检查更新
+  const downloadUrl =
+    info?.asset != null
+      ? releaseDownloadUrl(p.mirror, UPDATE_OWNER, UPDATE_REPO, info.tag, info.asset.name)
+      : null
+  const pageUrl = releasePageUrl(p.mirror, UPDATE_OWNER, UPDATE_REPO, info?.tag)
+  const mirrorName = mirrorLabel(p.mirror)
+
   async function download() {
-    if (!info?.downloadUrl) return
+    if (!downloadUrl) return
     setOpening(true)
     setOpenError(null)
     try {
-      await openDownload(info.downloadUrl)
+      await openExternal(downloadUrl)
       setOpening(false)
     } catch (err) {
       setOpening(false)
       setOpenError(`无法唤起浏览器：${(err as Error).message}`)
+    }
+  }
+
+  async function openPage() {
+    setPageBusy(true)
+    try {
+      await openExternal(pageUrl)
+    } catch (err) {
+      setOpenError(`无法唤起浏览器：${(err as Error).message}`)
+    } finally {
+      setPageBusy(false)
     }
   }
 
@@ -95,6 +127,10 @@ export function UpdateSheet(p: Props) {
                 </span>
               </div>
             </div>
+            <button className="btn ghost block" style={{ marginTop: 4 }} disabled={pageBusy} onClick={() => void openPage()}>
+              <Icon name="external" size={14} />
+              打开发行版页面
+            </button>
             <div className="btns">
               <button className="btn ghost" onClick={p.onRecheck}>
                 重新检查
@@ -123,10 +159,14 @@ export function UpdateSheet(p: Props) {
                     展开全部说明
                   </button>
                 )}
-                <div className="mirrorline">
+                <button className="mirrorline asbtn" onClick={p.onOpenMirrors}>
                   <Icon name="globe" size={13} />
-                  通过 {p.mirror.replace(/^https?:\/\//, '')} 加速下载
-                </div>
+                  <span>
+                    通过 {mirrorName}
+                    {p.mirrorSpeed != null ? ` · ${formatSpeed(p.mirrorSpeed)}` : ''} 加速下载
+                  </span>
+                  <b>更换</b>
+                </button>
                 {openError && <div className="errline">{openError}</div>}
                 <div className="btns">
                   <button className="btn ghost" onClick={p.onClose}>
@@ -137,6 +177,10 @@ export function UpdateSheet(p: Props) {
                     {opening ? '正在唤起…' : '下载并安装'}
                   </button>
                 </div>
+                <button className="btn ghost block" style={{ marginTop: 8 }} disabled={pageBusy} onClick={() => void openPage()}>
+                  <Icon name="external" size={14} />
+                  打开发行版页面
+                </button>
                 <div className="hint" style={{ marginTop: 10, textAlign: 'center' }}>
                   下载完成后点通知即可安装；覆盖安装不会丢失本地令牌与审计日志。
                 </div>
@@ -157,6 +201,10 @@ export function UpdateSheet(p: Props) {
                 >
                   该版本没有附带 APK 安装包，可能是发布流水线还没跑完。稍后重新检查即可。
                 </div>
+                <button className="btn ghost block" disabled={pageBusy} onClick={() => void openPage()}>
+                  <Icon name="external" size={14} />
+                  打开发行版页面
+                </button>
                 <div className="btns">
                   <button className="btn ghost" onClick={p.onClose}>
                     关闭
@@ -188,6 +236,11 @@ export function UpdateSheet(p: Props) {
             >
               {p.error ?? '未知错误'}
             </div>
+            <button className="btn ghost block" disabled={pageBusy} onClick={() => void openPage()}>
+              <Icon name="external" size={14} />
+              打开发行版页面（手动下载）
+            </button>
+            {openError && <div className="errline">{openError}</div>}
             <div className="btns">
               <button className="btn ghost" onClick={p.onClose}>
                 关闭

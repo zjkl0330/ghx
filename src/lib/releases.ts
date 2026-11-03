@@ -1,3 +1,4 @@
+import { githubUrlAt } from './mirrors'
 import type { Release, ReleaseAsset } from './types'
 
 /**
@@ -79,13 +80,12 @@ export function excerpt(body: string | null | undefined, n = 120): string {
 }
 
 /**
- * 把 github.com 的资产地址换成加速前缀。前缀只替换域名部分，
- * 路径原样保留，和 App 自身更新走的是同一条通道。
+ * 把 github.com 的资产地址换成加速前缀。路径原样保留，由 mirrors.ts
+ * 按站点风格决定是 `{base}/owner/repo/...` 还是 `{base}/https://github.com/...`。
  */
 export function mirrorDownloadUrl(url: string, mirror: string): string {
-  const base = mirror.replace(/\/+$/, '')
-  if (!base) return url
+  if (!mirror.trim()) return url
   const m = url.match(/^https?:\/\/(?:www\.)?github\.com(\/.*)$/)
   if (!m) return url
-  return `${base}${m[1]}`
+  return githubUrlAt(mirror, m[1])
 }

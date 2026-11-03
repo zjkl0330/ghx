@@ -19,6 +19,7 @@ export type SheetName =
   | 'repoPick'
   | 'sort'
   | 'readme'
+  | 'mirrors'
 
 /** 首页页签：从任何其他页签返回都回到这里 */
 export const HOME_TAB = 'repos'
@@ -35,6 +36,8 @@ export interface BackState {
   tab: string
   /** 弹层里有不可中断的任务（如在跑的批量改可见度），返回不放行 */
   sheetLocked?: boolean
+  /** 加速站面板从哪个弹层进来的，返回时回到那一层 */
+  mirrorReturn?: SheetName
 }
 
 export type BackAction =
@@ -47,8 +50,15 @@ export type BackAction =
   | { kind: 'blocked' }
 
 /** 关闭某个弹层后应该回到哪里 */
-export function sheetBackTarget(sheet: SheetName, hasWorkflow: boolean): SheetName {
+export function sheetBackTarget(
+  sheet: SheetName,
+  hasWorkflow: boolean,
+  mirrorReturn: SheetName = 'none',
+): SheetName {
   switch (sheet) {
+    // 加速站是从更新弹层点进来的，退回去继续看更新说明，而不是整屏收起
+    case 'mirrors':
+      return mirrorReturn
     // 这两个是仓库详情的子页，关掉后回到详情，而不是整屏收起
     case 'releases':
     case 'forks':
@@ -74,7 +84,7 @@ export function resolveBack(state: BackState): BackAction {
   if (state.sheet !== 'none') {
     // 批量改可见度跑到一半时，界面上已经没有取消按钮，返回键也不该绕过
     if (state.sheetLocked) return { kind: 'blocked' }
-    return { kind: 'sheet', to: sheetBackTarget(state.sheet, state.hasWorkflow) }
+    return { kind: 'sheet', to: sheetBackTarget(state.sheet, state.hasWorkflow, state.mirrorReturn) }
   }
 
   if (state.auditOpen) return { kind: 'close-audit' }

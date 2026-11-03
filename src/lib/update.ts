@@ -9,6 +9,8 @@
  * 令牌发到一个与账号操作无关的端点，且会占用用户自己的 API 配额。
  */
 
+import { DEFAULT_MIRROR, releaseDownloadUrl, releasePageUrl } from './mirrors'
+
 /**
  * 当前版本。构建时由 vite 注入；在 vitest / 裸 node 下没有该全局，降级为 dev 标记，
  * 用 typeof 判断而不是直接引用，避免模块加载期 ReferenceError。
@@ -18,8 +20,8 @@ export const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__
 export const UPDATE_OWNER = '827802685'
 export const UPDATE_REPO = 'ghx'
 
-/** 加速前缀。规则：{mirror}/{owner}/{repo}/releases/download/{tag}/{asset} */
-export const DEFAULT_MIRROR = 'https://gh.zjkl0330.dpdns.org'
+/** 加速前缀保持向后兼容导出；真正的站点表在 mirrors.ts */
+export { DEFAULT_MIRROR }
 export const DEFAULT_RELEASE_API = 'https://api.github.com'
 
 export interface ReleaseAsset {
@@ -37,6 +39,8 @@ export interface ReleaseInfo {
   asset: ReleaseAsset | null
   /** 已按加速前缀拼好的下载地址；无 APK 资产时为 null */
   downloadUrl: string | null
+  /** Release 页面地址（可在浏览器打开，未更新时也能看更新说明） */
+  releasePage: string
   /** 官方直链，仅作加速失败时的兜底与排错参考 */
   fallbackUrl: string | null
 }
@@ -75,7 +79,7 @@ export function isNewer(remote: string, local: string): boolean {
   }
 }
 
-/** 拼接加速下载地址，去掉多余斜杠，避免出现 `//` 被代理当成不同路径。 */
+/** 拼接加速下载地址。分片编码与站点风格都由 mirrors.ts 统一处理。 */
 export function buildMirrorUrl(
   mirror: string,
   owner: string,
@@ -83,9 +87,7 @@ export function buildMirrorUrl(
   tag: string,
   asset: string,
 ): string {
-  const base = mirror.trim().replace(/\/+$/, '')
-  const parts = [owner, repo, 'releases', 'download', tag, asset].map((s) => encodeURIComponent(s))
-  return `${base}/${parts.join('/')}`
+  return releaseDownloadUrl(mirror, owner, repo, tag, asset)
 }
 
 /** 优先取 .apk；没有则返回 null（不拿源码包冒充安装包）。 */
@@ -122,6 +124,7 @@ export function parseRelease(raw: RawRelease, mirror: string): ReleaseInfo | nul
     publishedAt: raw.published_at ?? '',
     asset,
     downloadUrl: asset ? buildMirrorUrl(mirror, owner, repo, raw.tag_name, asset.name) : null,
+    releasePage: releasePageUrl(mirror, owner, repo, raw.tag_name),
     fallbackUrl: asset?.url ?? null,
   }
 }

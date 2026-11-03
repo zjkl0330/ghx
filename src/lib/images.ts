@@ -6,6 +6,8 @@
  * raw.githubusercontent.com，并给出镜像降级地址 —— 国内直连 raw 常失败。
  */
 
+import { rawUrlAt } from './mirrors'
+
 const RAW_HOST = 'raw.githubusercontent.com'
 
 /** 把 README 的相对路径基准拼成绝对前缀 */
@@ -46,6 +48,8 @@ export function resolveImageSrc(src: string, base: string): string | null {
 /**
  * raw 地址换成加速前缀。只处理 raw.githubusercontent.com，
  * shields.io 这类第三方图床照旧。
+ *
+ * 加速站有两种路径风格（path / url），由 mirrors.ts 判断，这里只负责拆路径。
  */
 export function mirrorImage(src: string, mirror: string): string | null {
   const prefix = `https://${RAW_HOST}/`
@@ -53,7 +57,6 @@ export function mirrorImage(src: string, mirror: string): string | null {
   const rest = src.slice(prefix.length)
   const [owner, repo, branch, ...path] = rest.split('/')
   if (!owner || !repo || !branch || path.length === 0) return null
-  const m = mirror.replace(/\/+$/, '')
-  if (!m) return null
-  return `${m}/${owner}/${repo}/raw/${branch}/${path.join('/')}`
+  if (!mirror.trim()) return null
+  return rawUrlAt(mirror, owner, repo, branch, path.join('/'))
 }

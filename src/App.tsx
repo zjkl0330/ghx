@@ -4,6 +4,20 @@ import { Capacitor } from '@capacitor/core'
 import { GitHubClient } from './lib/api'
 import { appendAudit, clearAudit, readAudit } from './lib/audit'
 import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
+import {
+  DEFAULT_MIRROR,
+  mirrorDefFor,
+  mirrorLabel,
+  normalizeBase,
+  parseSnapshot,
+  pickFastest,
+  probeAll,
+  rawUrlAt,
+  releaseDownloadUrl,
+  snapshotFresh,
+  snapshotOf,
+  type ProbeResult,
+} from './lib/mirrors'
 import { buildPlan, countBy, filterRepos, runBatch } from './lib/repos'
 import { loadSnapshot, saveSnapshot, type Snapshot } from './lib/snapshot'
 import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
@@ -29,12 +43,7 @@ import {
   type TranslateChannel,
   type TranslationStore,
 } from './lib/translate'
-import {
-  APP_VERSION,
-  DEFAULT_MIRROR,
-  checkForUpdate,
-  type UpdateCheckResult,
-} from './lib/update'
+import { APP_VERSION, checkForUpdate, UPDATE_OWNER, UPDATE_REPO, type UpdateCheckResult } from './lib/update'
 import type {
   AuditEntry,
   BatchResult,
@@ -53,6 +62,7 @@ import { ForksSheet } from './ui/ForksSheet'
 import { GuardSheet, type GuardMode } from './ui/GuardSheet'
 import { HotPage } from './ui/HotPage'
 import { LockedScreen } from './ui/LockedScreen'
+import { MirrorSheet, mirrorRows, type MirrorProbeState } from './ui/MirrorSheet'
 import { PipelinesPage } from './ui/PipelinesPage'
 import { ReleasesSheet } from './ui/ReleasesSheet'
 import { ReadmeSheet } from './ui/ReadmeSheet'
@@ -76,6 +86,8 @@ type Tab = 'repos' | 'stars' | 'hot' | 'pipelines' | 'tokens' | 'settings'
 type Sheet = SheetName
 
 const MIRROR_KEY = 'ghx.mirror'
+const MIRROR_AUTO_KEY = 'ghx.mirror.auto'
+const MIRROR_SPEED_KEY = 'ghx.mirror.speed'
 const SORT_KEY = 'ghx.sort'
 const AUTO_TRANSLATE_KEY = 'ghx.readme.auto'
 const TRANSLATE_CHANNEL_KEY = 'ghx.readme.channel'
@@ -136,11 +148,34 @@ export default function App() {
   const [activeRun, setActiveRun] = useState<{ repo: Repo; run: WorkflowRun } | null>(null)
   const [auditOpen, setAuditOpen] = useState(false)
   const [mirror, setMirror] = useState(DEFAULT_MIRROR)
+  /** 是否让测速结果自动挑站；关掉就是用户自己指定 */
+  const [mirrorAuto, setMirrorAuto] = useState(true)
+  const [probe, setProbe] = useState<MirrorProbeState>({
+    running: false,
+    done: 0,
+    total: 0,
+    results: [],
+    error: null,
+    at: null,
+    light: false,
+  })
+  /** 从加速站面板返回时要回到哪一层（从更新弹层进来就回更新弹层） */
+  const [mirrorReturn, setMirrorReturn] = useState<SheetName>('none')
+  // 测速相关的回调里要读到最新值，用 ref 兜住闭包，避免测速跑到一半还在用旧状态
+  const probeRef = useRef<MirrorProbeState>(probe)
+  probeRef.current = probe
+  const mirrorAutoRef = useRef(mirrorAuto)
+  mirrorAutoRef.current = mirrorAuto
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('checking')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [updateCheckedAt, setUpdateCheckedAt] = useState<number | null>(null)
+  const updateResultRef = useRef<UpdateCheckResult | null>(null)
+  updateResultRef.current = updateResult
   const silentChecked = useRef(false)
+  /** 上次落盘的测速原文，用来判断快照是否还新鲜 */
+  const speedCacheRef = useRef<string | null>(null)
+  const speedTried = useRef(false)
 
   const [plan, setPlan] = useState<VisibilityPlan[]>([])
   const [phase, setPhase] = useState<'confirm' | 'running' | 'done'>('confirm')
@@ -169,6 +204,7 @@ export default function App() {
     hasWorkflow: false,
     selectMode: false,
     tab: 'repos',
+    mirrorReturn: 'none',
   })
 
   // 每次渲染同步一份界面状态：监听器只注册一次，不必随状态反复解绑
@@ -180,6 +216,7 @@ export default function App() {
     hasWorkflow: activeWorkflow !== null,
     selectMode,
     tab,
+    mirrorReturn,
     sheetLocked: sheet === 'visibility' && phase === 'running',
   }
 
@@ -430,8 +467,36 @@ export default function App() {
         vaultRef.current = v
 
         const savedMirror = await kv.get(MIRROR_KEY)
+        const savedAutoMirror = await kv.get(MIRROR_AUTO_KEY)
+        const savedSpeed = await kv.get(MIRROR_SPEED_KEY)
         if (cancelled) return
         if (savedMirror) setMirror(savedMirror)
+
+        // 加速站：自动模式下直接沿用上次测速选出的那台，冷启动不重复测
+        const auto = savedAutoMirror !== 'off'
+        speedCacheRef.current = savedSpeed
+        setMirrorAuto(auto)
+        const snap = parseSnapshot(savedSpeed)
+        if (snap) {
+          setProbe((prev) => ({
+            ...prev,
+            at: snap.at,
+            results: snap.results.map((r) => {
+              const def = mirrorDefFor(r.base)
+              return {
+                base: r.base,
+                label: def.label,
+                style: def.style,
+                status: r.kbps > 0 ? 'ok' : 'fail',
+                ms: r.ms,
+                bytes: 0,
+                kbps: r.kbps,
+                error: r.kbps > 0 ? undefined : '上次没测通',
+              } as ProbeResult
+            }),
+          }))
+          if (auto && snapshotFresh(snap) && snap.best) setMirror(snap.best)
+        }
 
         const savedSort = await kv.get(SORT_KEY)
         if (cancelled) return
@@ -772,14 +837,102 @@ export default function App() {
     void runCheck(false)
   }, [unlocked, runCheck])
 
-  const saveMirror = useCallback(
-    (url: string) => {
-      setMirror(url)
-      if (kvRef.current) void kvRef.current.set(MIRROR_KEY, url)
-      showToast('加速前缀已保存')
+  /** 手动指定加速站：同时关掉自动测速，免得下次启动又被覆盖 */
+  const useMirror = useCallback(
+    (base: string) => {
+      const next = normalizeBase(base) || DEFAULT_MIRROR
+      setMirror(next)
+      setMirrorAuto(false)
+      if (kvRef.current) {
+        void kvRef.current.set(MIRROR_KEY, next)
+        void kvRef.current.set(MIRROR_AUTO_KEY, 'off')
+      }
+      showToast(`已切换到 ${mirrorLabel(next)}`)
     },
     [showToast],
   )
+
+  /** 打开加速站面板；记下来源，返回键才能退对层 */
+  const openMirrors = useCallback((from: SheetName) => {
+    setMirrorReturn(from)
+    setSheet('mirrors')
+  }, [])
+
+  /**
+   * 逐个测速并落盘结果。
+   *
+   * 有安装包就测安装包（最贴近真实下载），没有就退化成测 README 的连通性 ——
+   * 顺序发请求而不是并发，否则几个站互相抢带宽，测出来的名次是噪声。
+   */
+  const speedTest = useCallback(
+    async (opts: { silent?: boolean } = {}) => {
+      if (probeRef.current.running) return
+      const bases = mirrorRows(mirror).map((r) => r.base)
+      const info = updateResultRef.current?.info ?? null
+      const asset = info?.asset ?? null
+      const light = !asset
+      const urlFor = (b: string) =>
+        asset && info
+          ? releaseDownloadUrl(b, UPDATE_OWNER, UPDATE_REPO, info.tag, asset.name)
+          : rawUrlAt(b, UPDATE_OWNER, UPDATE_REPO, 'main', 'README.md')
+
+      setProbe({ running: true, done: 0, total: bases.length, results: [], error: null, light, at: null })
+      const results = await probeAll(bases, urlFor, {
+        onResult: (r, i) =>
+          setProbe((prev) => ({ ...prev, done: i + 1, results: [...prev.results, r] })),
+      })
+      const snap = snapshotOf(results)
+      const best = pickFastest(results)
+      setProbe({
+        running: false,
+        done: bases.length,
+        total: bases.length,
+        results,
+        error: best ? null : '所有加速站都测不通，换个网络再试',
+        at: snap.at,
+        light,
+      })
+      const kv = kvRef.current
+      if (kv) await kv.set(MIRROR_SPEED_KEY, JSON.stringify(snap))
+
+      if (best && (opts.silent ? mirrorAutoRef.current : true)) {
+        setMirror(best.base)
+        if (kv) await kv.set(MIRROR_KEY, best.base)
+        if (!opts.silent) showToast(`已选用最快的 ${best.label}`)
+      }
+    },
+    [mirror, showToast],
+  )
+
+  const setAutoMirror = useCallback(
+    (on: boolean) => {
+      setMirrorAuto(on)
+      if (kvRef.current) void kvRef.current.set(MIRROR_AUTO_KEY, on ? 'on' : 'off')
+      if (!on) return
+      const best = pickFastest(probeRef.current.results)
+      if (best) {
+        setMirror(best.base)
+        if (kvRef.current) void kvRef.current.set(MIRROR_KEY, best.base)
+        showToast(`已选用最快的 ${best.label}`)
+        return
+      }
+      void speedTest()
+    },
+    [showToast, speedTest],
+  )
+
+  /**
+   * 后台测速：只有「自动选最快」打开、且没有新鲜结果时才跑一次。
+   * 等更新检查出结果再测，才有真实安装包可测；检查失败也照测（退化成连通性测试）。
+   */
+  useEffect(() => {
+    if (!unlocked || !mirrorAuto || speedTried.current) return
+    if (updatePhase === 'checking') return
+    speedTried.current = true
+    const cached = parseSnapshot(speedCacheRef.current)
+    if (snapshotFresh(cached) && cached?.best) return
+    void speedTest({ silent: true })
+  }, [unlocked, mirrorAuto, updatePhase, speedTest])
 
   /** 单个仓库操作成功后同步列表与详情，避免关掉详情再刷新一次。 */
   const patchRepo = useCallback((next: Repo) => {
@@ -904,6 +1057,14 @@ export default function App() {
       <LockedScreen busy={busy} onResume={() => void resumeVault()} />
     )
   }
+
+  // 当前镜像的实测速度；换站后按站点取，没测过就空着。
+  // 注意不能写成 useMemo —— 这行在口令屏/锁定屏的提前 return 之后，钩子数量会不固定
+  const currentSpeed = (() => {
+    const cur = normalizeBase(mirror).toLowerCase()
+    const hit = probe.results.find((r) => normalizeBase(r.base).toLowerCase() === cur)
+    return hit?.status === 'ok' ? hit.kbps : null
+  })()
 
   return (
     <div className="app">
@@ -1063,7 +1224,10 @@ export default function App() {
             setGuardError(null)
             setGuardSheet('migrate')
           }}
-          onSaveMirror={saveMirror}
+          mirrorAuto={mirrorAuto}
+          mirrorSpeed={currentSpeed}
+          mirrorCheckedAt={probe.at}
+          onOpenMirrors={() => openMirrors('none')}
           onCheckUpdate={() => void runCheck(true)}
           onSaveBaseUrl={(url) => void saveBaseUrl(url)}
           onLock={lockVault}
@@ -1302,8 +1466,25 @@ export default function App() {
           error={updateError}
           current={APP_VERSION}
           mirror={mirror}
+          mirrorSpeed={currentSpeed}
+          onOpenMirrors={() => openMirrors('update')}
           onRecheck={() => void runCheck(true)}
           onClose={() => setSheet('none')}
+        />
+      )}
+
+      {sheet === 'mirrors' && (
+        <MirrorSheet
+          current={mirror}
+          auto={mirrorAuto}
+          probe={probe}
+          onProbe={() => void speedTest()}
+          onUse={(base) => {
+            useMirror(base)
+            setSheet(mirrorReturn)
+          }}
+          onAuto={setAutoMirror}
+          onClose={() => setSheet(mirrorReturn)}
         />
       )}
 

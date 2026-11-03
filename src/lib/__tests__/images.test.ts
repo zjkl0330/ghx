@@ -61,6 +61,12 @@ describe('镜像降级地址', () => {
     )
   })
 
+  it('url 风格镜像走完整 raw 地址', () => {
+    expect(mirrorImage(`${RAW}/o/r/main/docs/a.png`, 'https://gh-proxy.com')).toBe(
+      'https://gh-proxy.com/https://raw.githubusercontent.com/o/r/main/docs/a.png',
+    )
+  })
+
   it('第三方图床不掺和镜像', () => {
     expect(mirrorImage('https://img.shields.io/badge/a-b.svg', 'https://gh.example.com')).toBeNull()
   })

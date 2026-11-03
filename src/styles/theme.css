@@ -1961,3 +1961,116 @@ h1.title {
   margin-left: 5px;
   text-decoration: underline;
 }
+
+/* ---- 加速站选择 ---- */
+.mrow-wrap {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.mrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 11px 12px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+}
+
+.mrow:first-child {
+  border-top: 0;
+}
+
+.mrow.on {
+  background: var(--blue-soft);
+}
+
+.mrow-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mrow-main b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.mrow-main i {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mrow-best {
+  font-style: normal;
+  font-size: 9.5px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--green-bg);
+  border: 1px solid var(--green-line);
+  color: var(--green);
+}
+
+.mrow-stat {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.mrow-stat.ok {
+  color: var(--green);
+}
+
+.mrow-stat.bad {
+  color: var(--red);
+  max-width: 108px;
+  text-align: right;
+  line-height: 1.35;
+}
+
+/* 更新页里可以点的镜像行 */
+.mirrorline.asbtn {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  padding: 9px 0 0;
+  font: inherit;
+  color: var(--text-dim);
+}
+
+.mirrorline.asbtn span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mirrorline.asbtn b {
+  flex: none;
+  font-weight: 500;
+  color: var(--blue);
+}
