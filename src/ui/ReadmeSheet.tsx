@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { mirrorImage, rawBase } from '../lib/images'
 import { parseMarkdown, type Block } from '../lib/markdown'
@@ -390,7 +391,7 @@ export function ReadmeSheet(p: Props) {
               className="btn ghost"
               style={{ flex: 1 }}
               onClick={() =>
-                void openExternal(`${p.mirror.replace(/\/+$/, '')}/${p.repo.full_name}#readme`)
+                void openExternal(`${githubUrlAt(p.mirror, p.repo.full_name)}#readme`)
               }
             >
               <Icon name="globe" size={14} />

@@ -8,6 +8,7 @@ import {
   formatSpeed,
   githubUrlAt,
   kbpsOf,
+  mirrorCandidates,
   mirrorDefFor,
   mirrorLabel,
   normalizeBase,
@@ -71,6 +72,23 @@ describe('站点风格识别', () => {
     expect(new Set(ids).size).toBe(ids.length)
     expect(BUILTIN_MIRRORS.some((m) => m.base === DEFAULT_MIRROR)).toBe(true)
     expect(BUILTIN_MIRRORS).toContainEqual(OFFICIAL_MIRROR)
+  })
+
+  it('候选列表含内置站与官方直连', () => {
+    const rows = mirrorCandidates('https://gh.zjkl0330.dpdns.org')
+    expect(rows.length).toBe(BUILTIN_MIRRORS.length)
+    expect(rows.at(-1)?.base).toBe('https://github.com')
+  })
+
+  it('当前站是自定义时补在最前面，避免选中了却看不见', () => {
+    const rows = mirrorCandidates('https://my.example/')
+    expect(rows[0]).toMatchObject({ base: 'https://my.example', note: '自定义' })
+    expect(rows.length).toBe(BUILTIN_MIRRORS.length + 1)
+  })
+
+  it('自定义站与内置站重复时不重复插入', () => {
+    const rows = mirrorCandidates('https://ghfast.top/')
+    expect(rows.filter((r) => r.base === 'https://ghfast.top')).toHaveLength(1)
   })
 
   it('镜像名优先用可读标签', () => {

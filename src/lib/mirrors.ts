@@ -69,6 +69,19 @@ export function mirrorDefFor(base: string): MirrorDef {
   return { id: 'custom', label: normalizeBase(base) || '未设置', base: normalizeBase(base), style: 'path' }
 }
 
+/**
+ * 参与测速与展示的站点：内置表 + 当前自定义站。
+ * 自定义站不在内置表里时补在最前面，否则用户选中了却在列表里看不见。
+ */
+export function mirrorCandidates(current: string): { base: string; label: string; note?: string }[] {
+  const cur = normalizeBase(current)
+  const rows = BUILTIN_MIRRORS.map((m) => ({ base: m.base, label: m.label, note: m.note }))
+  if (cur && !rows.some((r) => r.base.toLowerCase() === cur.toLowerCase())) {
+    rows.unshift({ base: cur, label: cur.replace(/^https?:\/\//, ''), note: '自定义' })
+  }
+  return rows
+}
+
 export function mirrorLabel(base: string): string {
   const def = mirrorDefFor(base)
   return def.id === 'custom' ? def.base.replace(/^https?:\/\//, '') : def.label

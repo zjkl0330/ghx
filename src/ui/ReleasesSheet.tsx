@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import {
   assetKind,
@@ -273,7 +274,7 @@ export function ReleasesSheet(p: Props) {
                     <div className="rel-actions">
                       <button
                         className="btn ghost tiny"
-                        onClick={() => void openExternal(`${p.mirror.replace(/\/+$/, '')}/${p.repo.full_name}/releases/tag/${r.tag_name}`)}
+                        onClick={() => void openExternal(githubUrlAt(p.mirror, `${p.repo.full_name}/releases/tag/${r.tag_name}`))}
                       >
                         <Icon name="arrowRight" size={12} />
                         网页查看

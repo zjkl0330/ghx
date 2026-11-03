@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import type { AuditEntry, Repo, Visibility } from '../lib/types'
 import { parseTopics, topicsToInput } from '../lib/topics'
@@ -337,7 +338,7 @@ export function RepoDetailSheet(p: Props) {
             '在浏览器打开',
             `经 ${p.mirror.replace(/^https?:\/\//, '')} 访问`,
             async () => {
-              await openExternal(`${p.mirror.replace(/\/+$/, '')}/${p.repo.full_name}`)
+              await openExternal(githubUrlAt(p.mirror, p.repo.full_name))
             },
           )}
 

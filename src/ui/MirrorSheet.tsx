@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import {
-  BUILTIN_MIRRORS,
   DEFAULT_MIRROR,
   formatSpeed,
+  mirrorCandidates,
   mirrorDefFor,
   mirrorLabel,
   normalizeBase,
@@ -43,19 +43,9 @@ function ago(ts: number | null): string {
   return `${Math.floor(diff / 86_400_000)} 天前测速`
 }
 
-/** 站点列表：内置站 + 当前自定义站（不在内置表里时补一行，免得选中了却看不见） */
-export function mirrorRows(current: string): { base: string; label: string; note?: string }[] {
-  const cur = normalizeBase(current)
-  const rows = BUILTIN_MIRRORS.map((m) => ({ base: m.base, label: m.label, note: m.note }))
-  if (cur && !rows.some((r) => r.base.toLowerCase() === cur.toLowerCase())) {
-    rows.unshift({ base: cur, label: cur.replace(/^https?:\/\//, ''), note: '自定义' })
-  }
-  return rows
-}
-
 export function MirrorSheet(p: Props) {
   const [custom, setCustom] = useState('')
-  const rows = mirrorRows(p.current)
+  const rows = mirrorCandidates(p.current)
   const cur = normalizeBase(p.current)
   const byBase = new Map(p.probe.results.map((r) => [normalizeBase(r.base).toLowerCase(), r]))
   const best = pickFastest(p.probe.results)

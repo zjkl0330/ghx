@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import type { Repo, WorkflowJob, WorkflowRun } from '../lib/types'
 import { openExternal } from '../lib/update'
@@ -225,7 +226,7 @@ export function RunSheet(p: Props) {
             className="btn ghost"
             style={{ flex: 1 }}
             onClick={() =>
-              void openExternal(`${p.mirror.replace(/\/+$/, '')}/${p.repo.full_name}/actions/runs/${p.run.id}`)
+              void openExternal(githubUrlAt(p.mirror, `${p.repo.full_name}/actions/runs/${p.run.id}`))
             }
           >
             <Icon name="terminal" size={14} />

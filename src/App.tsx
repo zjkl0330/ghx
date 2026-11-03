@@ -6,6 +6,7 @@ import { appendAudit, clearAudit, readAudit } from './lib/audit'
 import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
 import {
   DEFAULT_MIRROR,
+  mirrorCandidates,
   mirrorDefFor,
   mirrorLabel,
   normalizeBase,
@@ -62,7 +63,7 @@ import { ForksSheet } from './ui/ForksSheet'
 import { GuardSheet, type GuardMode } from './ui/GuardSheet'
 import { HotPage } from './ui/HotPage'
 import { LockedScreen } from './ui/LockedScreen'
-import { MirrorSheet, mirrorRows, type MirrorProbeState } from './ui/MirrorSheet'
+import { MirrorSheet, type MirrorProbeState } from './ui/MirrorSheet'
 import { PipelinesPage } from './ui/PipelinesPage'
 import { ReleasesSheet } from './ui/ReleasesSheet'
 import { ReadmeSheet } from './ui/ReadmeSheet'
@@ -867,7 +868,7 @@ export default function App() {
   const speedTest = useCallback(
     async (opts: { silent?: boolean } = {}) => {
       if (probeRef.current.running) return
-      const bases = mirrorRows(mirror).map((r) => r.base)
+      const bases = mirrorCandidates(mirror).map((r) => r.base)
       const info = updateResultRef.current?.info ?? null
       const asset = info?.asset ?? null
       const light = !asset

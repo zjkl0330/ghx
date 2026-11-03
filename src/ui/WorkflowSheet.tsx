@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import type { Repo, Workflow, WorkflowRun, WorkflowState } from '../lib/types'
 import { openExternal } from '../lib/update'
@@ -201,7 +202,7 @@ export function WorkflowSheet(p: Props) {
           className="btn ghost block"
           style={{ marginTop: 12 }}
           onClick={() =>
-            void openExternal(`${p.mirror.replace(/\/+$/, '')}/${p.repo.full_name}/actions/workflows/${p.workflow.path.split('/').pop()}`)
+            void openExternal(githubUrlAt(p.mirror, `${p.repo.full_name}/actions/workflows/${p.workflow.path.split('/').pop()}`))
           }
         >
           <Icon name="terminal" size={14} />

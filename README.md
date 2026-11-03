@@ -147,7 +147,7 @@ Android 上的 GitHub 本地控制台。不给网页版当壳，直接调 REST A
 
 ```bash
 pnpm install
-pnpm test                 # 398 项单元测试
+pnpm test                 # 401 项单元测试
 pnpm build                # 类型检查 + 打包
 pnpm cap:sync             # 同步版本号到 gradle 并 cap sync
 
