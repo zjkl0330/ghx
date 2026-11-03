@@ -404,7 +404,7 @@ export async function translateBlocks<B extends BlockLike>(
 
   for (let i = start; i < blocks.length; i += 1) {
     const b = blocks[i]
-    if (b.kind === 'code' || b.kind === 'hr') continue
+    if (b.kind === 'code' || b.kind === 'hr' || b.kind === 'img') continue
     const text = (b.text ?? '').trim()
     if (!text || hasChinese(text)) continue
     all.push(i)

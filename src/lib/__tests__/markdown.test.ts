@@ -107,3 +107,101 @@ describe('纯文本转换', () => {
     expect(summarize(parseMarkdown(long), 50)).toBe(`${'a'.repeat(50)}…`)
   })
 })
+
+describe('图片解析', () => {
+  const base = 'https://raw.githubusercontent.com/o/r/main/docs/'
+
+  it('相对路径的图片保留下来并按 README 目录解析', () => {
+    const blocks = parseMarkdown('![架构图](./img/a.png)', { imageBase: base })
+    expect(blocks).toEqual([
+      {
+        kind: 'img',
+        src: 'https://raw.githubusercontent.com/o/r/main/docs/img/a.png',
+        alt: '架构图',
+        badge: false,
+        width: null,
+        height: null,
+        inline: false,
+      },
+    ])
+  })
+
+  it('HTML img 与 width 属性都认', () => {
+    const blocks = parseMarkdown('<img src="logo.svg" width="120" alt="Logo">', { imageBase: base })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({
+      kind: 'img',
+      src: 'https://raw.githubusercontent.com/o/r/main/docs/logo.svg',
+      alt: 'Logo',
+      width: 120,
+    })
+  })
+
+  it('居中 div 包着的单行图片不再被当装饰丢掉', () => {
+    const md = '<div align="center">\n<img src="banner.png" width="800">\n</div>'
+    const blocks = parseMarkdown(md, { imageBase: base })
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].kind).toBe('img')
+    // width 超过 400 视为想撑满，交回界面按屏宽缩放
+    expect((blocks[0] as { width: number | null }).width).toBeNull()
+  })
+
+  it('被链接包住与 shields.io 的图算徽章', () => {
+    const md = '[![build](https://ci.example/b.svg)](https://ci.example)\n\n![](https://img.shields.io/badge/a-b.svg)'
+    const blocks = parseMarkdown(md)
+    expect(blocks).toHaveLength(2)
+    expect(blocks.every((b) => b.kind === 'img' && b.badge)).toBe(true)
+  })
+
+  it('普通截图的 SVG 不算徽章', () => {
+    const blocks = parseMarkdown('![截图](shot.svg)', { imageBase: base })
+    expect(blocks[0]).toMatchObject({ kind: 'img', badge: false })
+  })
+
+  it('段落里夹的图片单独成块，不会连文字一起被吞', () => {
+    const blocks = parseMarkdown('看这张图 ![示意图](a.png) 就明白了', { imageBase: base })
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].kind).toBe('p')
+    expect(blocks[1]).toMatchObject({ kind: 'img', alt: '示意图' })
+  })
+
+  it('没有基准地址时相对图片直接丢弃，不留空块', () => {
+    expect(parseMarkdown('![](a.png)')).toEqual([])
+  })
+
+  it('data URI 不会被渲染成图片', () => {
+    expect(parseMarkdown('![x](data:image/png;base64,AAAA)')).toEqual([])
+  })
+
+  it('图片不参与纯文本摘要', () => {
+    const blocks = parseMarkdown('![图](a.png)', { imageBase: base })
+    expect(summarize(blocks)).toBe('')
+  })
+})
+
+describe('同行多图与高度', () => {
+  const base = 'https://raw.githubusercontent.com/o/r/main/'
+
+  it('同一行的多张图并排，不各占一行', () => {
+    const md =
+      '<p align="center"><a href="README.md"><img src="lang-en.png" height="40" alt="English" /></a><a href="README.zh.md"><img src="lang-zh.png" height="40" alt="中文" /></a></p>'
+    const blocks = parseMarkdown(md, { imageBase: base })
+    expect(blocks).toHaveLength(2)
+    expect(blocks.every((b) => b.kind === 'img' && b.inline)).toBe(true)
+  })
+
+  it('height 属性决定行内高度，width 不再顶替', () => {
+    const [en] = parseMarkdown('<img src="lang-en.png" height="40" width="120">', { imageBase: base })
+    expect(en).toMatchObject({ height: 40, width: 120 })
+  })
+
+  it('大高度不照抄，避免一张图占满屏', () => {
+    const [banner] = parseMarkdown('<img src="banner.png" height="900">', { imageBase: base })
+    expect(banner).toMatchObject({ height: null })
+  })
+
+  it('单张图仍是块级，不跟正文挤在一行', () => {
+    const [shot] = parseMarkdown('![截图](a.png)', { imageBase: base })
+    expect(shot).toMatchObject({ inline: false })
+  })
+})

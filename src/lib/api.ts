@@ -1,5 +1,13 @@
 import { ResponseCache, ttlFor } from './cache'
-import { normalizeReadme, type RawReadme, type ReadmeFile } from './readme'
+import {
+  findChineseReadmeLink,
+  normalizeReadme,
+  pickChineseReadmeFile,
+  readmeDir,
+  type ContentEntry,
+  type RawReadme,
+  type ReadmeFile,
+} from './readme'
 import { normalizeRepo, type RawRepo } from './repos'
 import type {
   Fork,
@@ -324,6 +332,48 @@ export class GitHubClient {
         return { data: null, rate: this.rate, scopes: this.scopes }
       }
       throw err
+    }
+  }
+
+  /**
+   * 按路径读一个 markdown 文件。中文版 README 走这里，
+   * `GET /repos/{o}/{r}/readme` 只会给默认分支上的默认文件。
+   */
+  async readmeAt(owner: string, name: string, path: string): Promise<ReadmeFile | null> {
+    const encoded = path.split('/').map(encodeURIComponent).join('/')
+    try {
+      const res = await this.request<RawReadme>(`/repos/${owner}/${name}/contents/${encoded}`)
+      return normalizeReadme(res.data)
+    } catch (err) {
+      if (err instanceof GitHubError && (err.status === 404 || err.status === 403)) return null
+      throw err
+    }
+  }
+
+  /**
+   * 找仓库自带的中文版 README。
+   * 优先用 README 顶部「English | 简体中文」链接指向的文件（作者自己的选择），
+   * 没有链接就列目录按命名习惯猜（README.zh-CN.md 那一类）。
+   * 找到后直接显示，比机翻准得多，也不消耗翻译额度。
+   */
+  async chineseReadme(owner: string, name: string, readme: ReadmeFile): Promise<ReadmeFile | null> {
+    const linked = findChineseReadmeLink(readme.text, readme.path)
+    if (linked) {
+      const direct = await this.readmeAt(owner, name, linked)
+      if (direct) return direct
+    }
+
+    const dir = readmeDir(readme.path)
+    const encoded = dir.split('/').filter(Boolean).map(encodeURIComponent).join('/')
+    try {
+      const res = await this.request<ContentEntry[]>(
+        `/repos/${owner}/${name}/contents${encoded ? `/${encoded}` : ''}`,
+      )
+      const path = pickChineseReadmeFile(res.data, readme.path)
+      if (!path) return null
+      return await this.readmeAt(owner, name, path)
+    } catch {
+      return null
     }
   }
 

@@ -1904,6 +1904,48 @@ h1.title {
   margin: 13px 0;
 }
 
+.md-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 6px 0;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+/* 徽章：行内小图，连续多个自然换行排布 */
+.md-img.badge {
+  display: inline-block;
+  height: 20px;
+  width: auto;
+  max-width: 100%;
+  margin: 2px 6px 2px 0;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.md-img.inline {
+  display: inline-block;
+  margin: 4px 6px 4px 0;
+  vertical-align: middle;
+}
+
+.md-img-fail {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  margin: 3px 6px 3px 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .md-status {
   display: flex;
   align-items: center;

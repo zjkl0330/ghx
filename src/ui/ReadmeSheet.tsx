@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
+import { mirrorImage, rawBase } from '../lib/images'
 import { parseMarkdown, type Block } from '../lib/markdown'
-import type { ReadmeFile } from '../lib/readme'
+import { looksChinese, type ReadmeFile } from '../lib/readme'
 import { openExternal } from '../lib/update'
 import {
-  hasChinese,
   translateBlocks,
   type TranslateChannel,
   type TranslationStore,
@@ -27,7 +27,74 @@ interface Props {
 
 type View = 'zh' | 'source'
 
-function renderBlock(b: Block, key: number, showCode: boolean) {
+/**
+ * 单张图片。
+ *
+ * 仓库里的图基本都在 raw.githubusercontent.com，国内直连要么不通、要么慢到
+ * 十几秒还没响应 —— 而 img 在「还在等」的时候不会触发 onerror，界面就是一块空白。
+ * 所以这里有两条路：优先走加速前缀，失败或超时再换回 raw；两边都失败才显示占位。
+ */
+function MdImage({ b, mirror }: { b: Extract<Block, { kind: 'img' }>; mirror: string }) {
+  const accelerated = mirrorImage(b.src, mirror)
+  const primary = accelerated ?? b.src
+  const other = accelerated ? b.src : null
+
+  const [src, setSrc] = useState(primary)
+  const [failed, setFailed] = useState(false)
+  const tried = useRef(false)
+
+  const giveUpOrSwap = useCallback(() => {
+    if (!tried.current && other && other !== src) {
+      tried.current = true
+      setSrc(other)
+      return
+    }
+    setFailed(true)
+  }, [other, src])
+
+  // 没有 onerror 的那种「假死」也要有个了断
+  useEffect(() => {
+    if (failed || !other || tried.current) return
+    const t = window.setTimeout(giveUpOrSwap, 12_000)
+    return () => window.clearTimeout(t)
+  }, [failed, other, src, giveUpOrSwap])
+
+  if (failed) {
+    return (
+      <span className="md-img-fail" title={b.alt || b.src}>
+        {b.alt ? `图片没能加载：${b.alt}` : '图片没能加载'}
+      </span>
+    )
+  }
+
+  return (
+    <img
+      className={`md-img${b.badge ? ' badge' : ''}${b.inline ? ' inline' : ''}`}
+      src={src}
+      alt={b.alt}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      style={
+        b.badge
+          ? undefined
+          : b.height
+            ? { height: b.height }
+            : b.width
+              ? { maxWidth: b.width }
+              : undefined
+      }
+      onError={giveUpOrSwap}
+    />
+  )
+}
+
+function renderBlock(
+  b: Block,
+  key: number,
+  showCode: boolean,
+  mirror: string,
+) {
   switch (b.kind) {
     case 'h':
       return (
@@ -62,6 +129,8 @@ function renderBlock(b: Block, key: number, showCode: boolean) {
       ) : null
     case 'hr':
       return <div className="md-hr" key={key} />
+    case 'img':
+      return <MdImage key={key} b={b} mirror={mirror} />
     default:
       return null
   }
@@ -73,6 +142,9 @@ export function ReadmeSheet(p: Props) {
 
   const [file, setFile] = useState<ReadmeFile | null>(null)
   const [blocks, setBlocks] = useState<Block[]>([])
+  /** 仓库自带的中文版 README（作者自己写的译文，优先于机翻） */
+  const [zhFile, setZhFile] = useState<ReadmeFile | null>(null)
+  const [zhBlocks, setZhBlocks] = useState<Block[]>([])
   const [translated, setTranslated] = useState<Block[] | null>(null)
   const [view, setView] = useState<View>('zh')
   const [loading, setLoading] = useState(true)
@@ -92,10 +164,7 @@ export function ReadmeSheet(p: Props) {
     setTranslated(next)
   }, [])
 
-  const seemsChinese = useMemo(
-    () => (file ? hasChinese(file.text.slice(0, 2000)) : false),
-    [file],
-  )
+  const seemsChinese = useMemo(() => (file ? looksChinese(file.text) : false), [file])
 
   const doTranslate = useCallback(
     async (source: Block[], skip = 0) => {
@@ -146,6 +215,8 @@ export function ReadmeSheet(p: Props) {
       setTranslated(null)
       translatedRef.current = null
       setPending({ next: 0, remaining: 0 })
+      setZhFile(null)
+      setZhBlocks([])
       try {
         const res = await p.client.readme(owner, name, fresh)
         const f = res.data
@@ -154,15 +225,32 @@ export function ReadmeSheet(p: Props) {
           setBlocks([])
           return
         }
-        const parsed = parseMarkdown(f.text, { maxBlocks: 300 })
+        const parsed = parseMarkdown(f.text, {
+          maxBlocks: 300,
+          imageBase: rawBase(owner, name, p.repo.default_branch, f.path),
+        })
         setBlocks(parsed)
-        // 原文已经是中文就别翻了，直接看原文
-        if (p.autoTranslate && !hasChinese(f.text.slice(0, 2000))) {
+        setView('source')
+        // 原文本来就是中文，直接看原文
+        if (looksChinese(f.text)) return
+
+        // 仓库带了中文版就直接显示：作者自己翻的，比机翻准，也不花翻译额度
+        const zh = await p.client.chineseReadme(owner, name, f)
+        if (zh && looksChinese(zh.text)) {
+          setZhFile(zh)
+          setZhBlocks(
+            parseMarkdown(zh.text, {
+              maxBlocks: 300,
+              imageBase: rawBase(owner, name, p.repo.default_branch, zh.path),
+            }),
+          )
+          setView('zh')
+          return
+        }
+        if (p.autoTranslate) {
           startedRef.current = true
           setView('zh')
           void doTranslate(parsed)
-        } else {
-          setView('source')
         }
       } catch (err) {
         setError((err as Error).message)
@@ -170,7 +258,7 @@ export function ReadmeSheet(p: Props) {
         setLoading(false)
       }
     },
-    [p.client, p.autoTranslate, owner, name, doTranslate],
+    [p.client, p.autoTranslate, p.repo.default_branch, owner, name, doTranslate],
   )
 
   useEffect(() => {
@@ -179,7 +267,7 @@ export function ReadmeSheet(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const shown = view === 'zh' && translated ? translated : blocks
+  const shown = view === 'zh' ? (zhFile ? zhBlocks : (translated ?? blocks)) : blocks
 
   return (
     <div className="mask" onClick={p.onClose}>
@@ -190,7 +278,7 @@ export function ReadmeSheet(p: Props) {
             <h3 className="ellipsis">项目自述</h3>
             <div className="sheet-sub ellipsis">
               {p.repo.full_name}
-              {file ? ` · ${file.name}` : ''}
+              {file ? ` · ${view === 'zh' && zhFile ? zhFile.name : file.name}` : ''}
             </div>
           </div>
           <div className="spacer" />
@@ -208,6 +296,7 @@ export function ReadmeSheet(p: Props) {
               className={view === 'zh' ? 'on' : ''}
               onClick={() => {
                 setView('zh')
+                if (zhFile) return
                 if (!translated && !translating) {
                   if (seemsChinese) {
                     p.onToast('这份自述已经是中文，无需翻译')
@@ -223,6 +312,13 @@ export function ReadmeSheet(p: Props) {
             <button className={view === 'source' ? 'on' : ''} onClick={() => setView('source')}>
               原文
             </button>
+          </div>
+        )}
+
+        {zhFile && view === 'zh' && (
+          <div className="chip" style={{ marginBottom: 8 }}>
+            <Icon name="check" size={12} />
+            仓库自带中文版 {zhFile.name}，未经过机翻
           </div>
         )}
 
@@ -269,10 +365,12 @@ export function ReadmeSheet(p: Props) {
         )}
 
         {!loading && shown.length > 0 && (
-          <div className="md">{shown.map((b, i) => renderBlock(b, i, view === 'source'))}</div>
+          <div className="md">
+            {shown.map((b, i) => renderBlock(b, i, view === 'source', p.mirror))}
+          </div>
         )}
 
-        {!loading && !translating && pending.remaining > 0 && (
+        {!loading && !translating && !zhFile && pending.remaining > 0 && (
           <button
             className="btn ghost block"
             style={{ marginTop: 12 }}
@@ -298,30 +396,43 @@ export function ReadmeSheet(p: Props) {
               <Icon name="globe" size={14} />
               网页版
             </button>
-            <button
-              className="btn blue"
-              style={{ flex: 1 }}
-              onClick={() => {
-                if (!blocks.length) return
-                if (seemsChinese) {
-                  p.onToast('已经是中文，不需要翻译')
-                  return
-                }
-                setView('zh')
-                void doTranslate(blocks)
-              }}
-              disabled={translating || !p.store}
-            >
-              <Icon name="refresh" size={14} />
-              {translating ? '翻译中…' : translated ? '重新翻译' : '翻译成中文'}
-            </button>
+            {zhFile ? (
+              <button
+                className="btn ghost"
+                style={{ flex: 1 }}
+                onClick={() => setView(view === 'zh' ? 'source' : 'zh')}
+              >
+                <Icon name="repo" size={14} />
+                看{view === 'zh' ? '英文原版' : '中文版'}
+              </button>
+            ) : (
+              <button
+                className="btn blue"
+                style={{ flex: 1 }}
+                onClick={() => {
+                  if (!blocks.length) return
+                  if (seemsChinese) {
+                    p.onToast('已经是中文，不需要翻译')
+                    return
+                  }
+                  setView('zh')
+                  void doTranslate(blocks)
+                }}
+                disabled={translating || !p.store}
+              >
+                <Icon name="refresh" size={14} />
+                {translating ? '翻译中…' : translated ? '重新翻译' : '翻译成中文'}
+              </button>
+            )}
           </div>
         )}
 
         <div className="hint" style={{ marginTop: 10 }}>
-          {p.channel === 'google'
-            ? '当前使用 Google 通道，国内网络可能连不上，可在设置里换成 MyMemory。'
-            : '机翻仅作参考，代码块与专有名词不翻译。译文按内容缓存，同一份自述不会重复消耗额度。'}
+          {zhFile
+            ? '上面显示的是仓库自带的中文版，原样呈现，未做机翻。'
+            : p.channel === 'google'
+              ? '当前使用 Google 通道，国内网络可能连不上，可在设置里换成 MyMemory。'
+              : '机翻仅作参考，代码块与专有名词不翻译。译文按内容缓存，同一份自述不会重复消耗额度。'}
         </div>
       </div>
     </div>
