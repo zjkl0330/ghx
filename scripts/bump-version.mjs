@@ -50,6 +50,16 @@ if (dry) {
   process.exit(0)
 }
 
+const before = pkg.version
 pkg.version = next
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
-execFileSync(process.execPath, [new URL('sync-version.mjs', root).pathname], { stdio: 'inherit' })
+
+try {
+  execFileSync(process.execPath, [new URL('scripts/sync-version.mjs', root).pathname], { stdio: 'inherit' })
+} catch (err) {
+  // 同步 gradle 失败时回滚版本号，避免 package.json 与安装包版本错位
+  pkg.version = before
+  writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
+  console.error(`[bump] 同步失败，已回滚到 ${before}`)
+  throw err
+}
