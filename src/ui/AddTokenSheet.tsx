@@ -75,7 +75,7 @@ export function AddTokenSheet({ busy, error, onCancel, onSubmit }: Props) {
 
         <div className="sheet-sub" style={{ marginTop: 12, display: 'flex', gap: 6 }}>
           <Icon name="lock" size={12} />
-          令牌用你的口令加密后存本机，明文只在请求时短暂存在内存。
+          令牌用本机密钥加密后存盘，明文只在请求时短暂存在内存。
         </div>
       </div>
     </>

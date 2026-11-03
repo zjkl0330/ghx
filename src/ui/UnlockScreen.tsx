@@ -2,36 +2,35 @@ import { useState } from 'react'
 import { Icon } from './icons'
 
 interface Props {
-  mode: 'create' | 'unlock'
   busy: boolean
   error: string | null
+  /** 老版本口令保险库可一次性迁移为免密，迁移后不再要求口令 */
+  canMigrate: boolean
   onSubmit: (passphrase: string) => void
+  onMigrate: (passphrase: string) => void
 }
 
-export function UnlockScreen({ mode, busy, error, onSubmit }: Props) {
+export function UnlockScreen({ busy, error, canMigrate, onSubmit, onMigrate }: Props) {
   const [pass, setPass] = useState('')
-  const [confirm, setConfirm] = useState('')
   const [show, setShow] = useState(false)
 
-  const tooShort = pass.length > 0 && pass.length < 8
-  const mismatch = mode === 'create' && confirm.length > 0 && confirm !== pass
-  const canSubmit = pass.length >= 8 && !mismatch && !busy
+  const canSubmit = pass.length > 0 && !busy
 
   return (
     <div className="app">
       <div className="center-screen">
         <div className="logo-mark">
-          <Icon name="key" size={22} />
+          <Icon name="lock" size={22} />
         </div>
-        <h1 className="title">{mode === 'create' ? '创建令牌保险库' : '解锁保险库'}</h1>
+        <h1 className="title">需要口令解锁</h1>
         <p className="muted">
-          {mode === 'create'
-            ? '设置一个本地口令。令牌用 AES-256-GCM 加密，密钥由该口令经 PBKDF2 派生，不会离开这台设备，也无法在忘记后找回。'
-            : '输入口令解锁。口令只用于本机解密，不会发送到任何服务器。'}
+          {canMigrate
+            ? '这是旧版本创建的保险库，密钥由口令派生。输一次口令把它迁移成免密模式，以后打开就不用再输了。'
+            : '你开启了启动验证。输入口令解开设备密钥，数据本身仍存在本机。'}
         </p>
 
         <div className="field">
-          <label htmlFor="pass">口令（至少 8 位）</label>
+          <label htmlFor="pass">启动口令</label>
           <div style={{ position: 'relative' }}>
             <input
               id="pass"
@@ -41,7 +40,10 @@ export function UnlockScreen({ mode, busy, error, onSubmit }: Props) {
               autoCapitalize="off"
               spellCheck={false}
               onChange={(e) => setPass(e.target.value)}
-              placeholder="用于加密本地令牌"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && canSubmit) onSubmit(pass)
+              }}
+              placeholder="输入口令"
             />
             <button
               type="button"
@@ -53,25 +55,7 @@ export function UnlockScreen({ mode, busy, error, onSubmit }: Props) {
               <Icon name={show ? 'eyeOff' : 'eye'} size={16} />
             </button>
           </div>
-          {tooShort && <div className="err">口令至少 8 位</div>}
         </div>
-
-        {mode === 'create' && (
-          <div className="field">
-            <label htmlFor="pass2">再输一次</label>
-            <input
-              id="pass2"
-              type={show ? 'text' : 'password'}
-              value={confirm}
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder="确认口令"
-            />
-            {mismatch && <div className="err">两次输入不一致</div>}
-          </div>
-        )}
 
         {error && <div className="err">{error}</div>}
 
@@ -81,11 +65,22 @@ export function UnlockScreen({ mode, busy, error, onSubmit }: Props) {
           disabled={!canSubmit}
           onClick={() => onSubmit(pass)}
         >
-          {busy ? '处理中…' : mode === 'create' ? '创建并进入' : '解锁'}
+          {busy ? '处理中…' : '解锁'}
         </button>
 
+        {canMigrate && (
+          <button
+            className="btn ghost block"
+            style={{ marginTop: 10 }}
+            disabled={!canSubmit}
+            onClick={() => onMigrate(pass)}
+          >
+            用这次口令迁移成免密
+          </button>
+        )}
+
         <p className="muted" style={{ marginTop: 16, fontSize: 10.5 }}>
-          口令丢失等于令牌丢失，没有找回途径。建议与你的密码管理器里的主口令一致。
+          口令只在本机参与解密，不会发送到任何服务器，也不会被保存。
         </p>
       </div>
     </div>

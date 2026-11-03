@@ -75,6 +75,7 @@ export interface AuditEntry {
     | 'repo-archive'
     | 'repo-delete'
     | 'repo-create'
+    | 'security'
   target: string
   result: 'ok' | 'failed'
   detail: string

@@ -15,6 +15,8 @@ import { Vault } from './lib/vault'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
 import { CreateRepoSheet } from './ui/CreateRepoSheet'
+import { GuardSheet, type GuardMode } from './ui/GuardSheet'
+import { LockedScreen } from './ui/LockedScreen'
 import { RepoDetailSheet } from './ui/RepoDetailSheet'
 import { RepoList } from './ui/RepoList'
 import { SettingsPage } from './ui/SettingsPage'
@@ -36,10 +38,17 @@ export default function App() {
   const toastTimer = useRef<number | null>(null)
 
   const [ready, setReady] = useState(false)
-  const [vaultMode, setVaultMode] = useState<'create' | 'unlock'>('unlock')
+  const [bootError, setBootError] = useState<string | null>(null)
+  /** 启动是否需要口令：旧口令库或用户主动开启了启动验证 */
+  const [needPass, setNeedPass] = useState(false)
   const [unlocked, setUnlocked] = useState(false)
   const [busy, setBusy] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [secureMode, setSecureMode] = useState<'device' | 'passphrase'>('device')
+  const [guarded, setGuarded] = useState(false)
+  const [guardSheet, setGuardSheet] = useState<GuardMode | null>(null)
+  const [guardBusy, setGuardBusy] = useState(false)
+  const [guardError, setGuardError] = useState<string | null>(null)
 
   const [records, setRecords] = useState<TokenRecord[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -91,27 +100,6 @@ export default function App() {
     if (!kvRef.current) return
     setAudit(await readAudit(kvRef.current))
   }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      const kv = await createKV()
-      const v = new Vault(kv)
-      if (cancelled) return
-      kvRef.current = kv
-      vaultRef.current = v
-      const exists = await v.exists()
-      if (cancelled) return
-      const savedMirror = await kv.get(MIRROR_KEY)
-      if (savedMirror && !cancelled) setMirror(savedMirror)
-      setVaultMode(exists ? 'unlock' : 'create')
-      setReady(true)
-      await refreshAudit()
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [refreshAudit])
 
   const loadRepos = useCallback(async (c: GitHubClient, tokenId: string | null) => {
     setLoadingRepos(true)
@@ -172,31 +160,174 @@ export default function App() {
     [records, baseUrl, loadRepos, refreshAudit],
   )
 
+  /** 解锁成功后的统一入口：载入列表、自动激活第一条、记一条审计。 */
+  const enterVault = useCallback(
+    async (detail: string) => {
+      const v = vaultRef.current
+      if (!v) return
+      const list = await v.list()
+      setRecords(list)
+      setUnlocked(true)
+      setNeedPass(false)
+      setSecureMode(v.mode === 'passphrase' ? 'passphrase' : 'device')
+      setGuarded(v.guarded)
+      if (kvRef.current) {
+        await appendAudit(kvRef.current, {
+          action: 'unlock',
+          target: '本地保险库',
+          result: 'ok',
+          detail,
+        })
+        await refreshAudit()
+      }
+      if (list[0]) await activate(list[0].id, list)
+    },
+    [activate, refreshAudit],
+  )
+
+  /**
+   * 启动流程：没有保险库就静默建一个免密的，有的话直接自动解锁。
+   * 只有旧口令库或开了启动验证才会停在口令屏 —— 这是本版的默认体验。
+   */
+  const enterRef = useRef(enterVault)
+  enterRef.current = enterVault
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const kv = await createKV()
+        const v = new Vault(kv)
+        kvRef.current = kv
+        vaultRef.current = v
+
+        const savedMirror = await kv.get(MIRROR_KEY)
+        if (cancelled) return
+        if (savedMirror) setMirror(savedMirror)
+
+        const state = await v.autoUnlock()
+        if (cancelled) return
+        if (state === 'no-vault') {
+          await v.createDevice()
+          if (cancelled) return
+        }
+
+        setSecureMode(v.mode === 'passphrase' ? 'passphrase' : 'device')
+        setGuarded(v.guarded)
+
+        if (state === 'need-passphrase') {
+          setNeedPass(true)
+        } else {
+          await enterRef.current(state === 'no-vault' ? '首次创建（免密）' : '自动解锁')
+        }
+        if (!cancelled) setReady(true)
+      } catch (err) {
+        if (cancelled) return
+        setBootError((err as Error).message)
+        setReady(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   async function handleUnlock(passphrase: string) {
     const v = vaultRef.current
     if (!v) return
     setBusy(true)
     setAuthError(null)
     try {
-      if (vaultMode === 'create') await v.create(passphrase)
-      else await v.unlock(passphrase)
-      const list = await v.list()
-      setRecords(list)
-      setUnlocked(true)
-      if (kvRef.current) {
-        await appendAudit(kvRef.current, {
-          action: 'unlock',
-          target: '本地保险库',
-          result: 'ok',
-          detail: vaultMode === 'create' ? '首次创建' : '解锁',
-        })
-        await refreshAudit()
-      }
-      if (list[0]) await activate(list[0].id, list)
+      await v.unlock(passphrase)
+      await enterVault('口令解锁')
     } catch (err) {
       setAuthError((err as Error).message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  /** 旧口令库一次性迁移成免密：解密全部令牌后用设备密钥重新加密。 */
+  async function handleMigrate(passphrase: string) {
+    const v = vaultRef.current
+    if (!v) return
+    setBusy(true)
+    setAuthError(null)
+    try {
+      await v.migrateToDevice(passphrase)
+      await enterVault('旧库改为免密解锁')
+      showToast('已改为免密，下次打开直接进入')
+    } catch (err) {
+      setAuthError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 手动锁定后点「继续」：免密模式直接自动解锁。 */
+  async function resumeVault() {
+    const v = vaultRef.current
+    if (!v) return
+    setBusy(true)
+    try {
+      const state = await v.autoUnlock()
+      if (state === 'need-passphrase') setNeedPass(true)
+      else if (state === 'unlocked') await enterVault('免密解锁')
+    } catch (err) {
+      setBootError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function applyGuard(input: { current: string; next: string }) {
+    const v = vaultRef.current
+    const mode = guardSheet
+    if (!v || !mode) return
+    setGuardBusy(true)
+    setGuardError(null)
+    try {
+      if (mode === 'migrate') {
+        await v.migrateToDevice(input.current)
+        setSecureMode('device')
+        setGuarded(false)
+      } else if (mode === 'set') {
+        await v.setGuard(input.next)
+      } else if (mode === 'change') {
+        await v.changeGuard(input.current, input.next)
+      } else {
+        await v.clearGuard(input.current)
+      }
+      setGuarded(v.guarded)
+      setGuardSheet(null)
+      showToast(
+        mode === 'clear'
+          ? '已关闭启动验证'
+          : mode === 'change'
+            ? '启动口令已更新'
+            : mode === 'migrate'
+              ? '已改为免密，下次打开直接进入'
+              : '已开启启动验证',
+      )
+      if (kvRef.current) {
+        await appendAudit(kvRef.current, {
+          action: 'security',
+          target: '启动验证',
+          result: 'ok',
+          detail:
+            mode === 'clear'
+              ? '已关闭'
+              : mode === 'change'
+                ? '口令已修改'
+                : mode === 'migrate'
+                  ? '旧口令库迁移为免密'
+                  : '已开启',
+        })
+        await refreshAudit()
+      }
+    } catch (err) {
+      setGuardError((err as Error).message)
+    } finally {
+      setGuardBusy(false)
     }
   }
 
@@ -447,15 +578,18 @@ export default function App() {
   }
 
   function lockVault() {
-    vaultRef.current?.lock()
+    const v = vaultRef.current
+    const needsPassword = (v?.guarded ?? false) || secureMode === 'passphrase'
+    v?.lock()
     setUnlocked(false)
+    setNeedPass(needsPassword)
     setRecords([])
     setActiveId(null)
     setClient(null)
     setRepos([])
     setSelected(new Set())
-    setVaultMode('unlock')
     setTab('repos')
+    showToast(needsPassword ? '已锁定，需要口令解锁' : '已锁定，数据已从内存清除')
   }
 
   const counts = useMemo(() => {
@@ -478,9 +612,34 @@ export default function App() {
     )
   }
 
-  if (!unlocked) {
+  if (bootError) {
     return (
-      <UnlockScreen mode={vaultMode} busy={busy} error={authError} onSubmit={handleUnlock} />
+      <div className="app">
+        <div className="center-screen">
+          <div className="logo-mark">
+            <Icon name="warn" size={22} />
+          </div>
+          <h1 className="title">无法打开保险库</h1>
+          <p className="muted">{bootError}</p>
+          <p className="muted" style={{ marginTop: 10, fontSize: 10.5 }}>
+            数据仍在本机，先别卸载重装。设备密钥缺失通常来自清除应用数据或换机迁移；若确认用不到旧数据，卸载重装会建一个新的空库。
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!unlocked) {
+    return needPass ? (
+      <UnlockScreen
+        busy={busy}
+        error={authError}
+        canMigrate={secureMode === 'passphrase'}
+        onSubmit={(pass) => void handleUnlock(pass)}
+        onMigrate={(pass) => void handleMigrate(pass)}
+      />
+    ) : (
+      <LockedScreen busy={busy} onResume={() => void resumeVault()} />
     )
   }
 
@@ -562,6 +721,24 @@ export default function App() {
           updateCheckedAt={updateCheckedAt}
           latestVersion={updateResult?.latest ?? null}
           hasUpdate={!!updateResult?.hasUpdate}
+          secureMode={secureMode}
+          guarded={guarded}
+          onSetGuard={() => {
+            setGuardError(null)
+            setGuardSheet('set')
+          }}
+          onChangeGuard={() => {
+            setGuardError(null)
+            setGuardSheet('change')
+          }}
+          onClearGuard={() => {
+            setGuardError(null)
+            setGuardSheet('clear')
+          }}
+          onMigrate={() => {
+            setGuardError(null)
+            setGuardSheet('migrate')
+          }}
           onSaveMirror={saveMirror}
           onCheckUpdate={() => void runCheck(true)}
           onSaveBaseUrl={(url) => void saveBaseUrl(url)}
@@ -671,6 +848,16 @@ export default function App() {
           mirror={mirror}
           onRecheck={() => void runCheck(true)}
           onClose={() => setSheet('none')}
+        />
+      )}
+
+      {guardSheet && (
+        <GuardSheet
+          mode={guardSheet}
+          busy={guardBusy}
+          error={guardError}
+          onCancel={() => setGuardSheet(null)}
+          onSubmit={(input) => void applyGuard(input)}
         />
       )}
 

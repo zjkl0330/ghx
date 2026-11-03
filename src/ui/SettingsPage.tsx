@@ -14,6 +14,12 @@ interface Props {
   updateCheckedAt: number | null
   latestVersion: string | null
   hasUpdate: boolean
+  secureMode: 'device' | 'passphrase'
+  guarded: boolean
+  onSetGuard: () => void
+  onChangeGuard: () => void
+  onClearGuard: () => void
+  onMigrate: () => void
   onSaveBaseUrl: (url: string) => void
   onSaveMirror: (url: string) => void
   onCheckUpdate: () => void
@@ -84,6 +90,50 @@ export function SettingsPage(p: Props) {
             <div className="tk" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
               <div style={{ fontSize: 20, fontWeight: 700 }}>{p.auditCount}</div>
               <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>审计</div>
+            </div>
+          </div>
+
+          <div className="section-title">安全</div>
+          <div className="panel">
+            <div className="kv-row">
+              <span>解锁方式</span>
+              <b>{p.secureMode === 'device' ? '免密，打开即用' : '口令（旧版保险库）'}</b>
+            </div>
+            <div className="kv-row">
+              <span>启动验证</span>
+              <b style={{ color: p.guarded ? 'var(--green)' : 'var(--text-dim)' }}>
+                {p.secureMode === 'passphrase' ? '口令本身即验证' : p.guarded ? '已开启' : '关闭'}
+              </b>
+            </div>
+
+            {p.secureMode === 'passphrase' ? (
+              <>
+                <div className="hint" style={{ marginTop: 6 }}>
+                  旧版保险库的密钥由口令派生，所以每次启动都要输入。迁移后密钥改由本机保管，令牌会重新加密一遍，原文不变。
+                </div>
+                <button className="btn block" style={{ marginTop: 10 }} onClick={p.onMigrate}>
+                  <Icon name="key" size={14} />
+                  迁移为免密解锁
+                </button>
+              </>
+            ) : p.guarded ? (
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button className="btn ghost" style={{ flex: 1 }} onClick={p.onChangeGuard}>
+                  修改口令
+                </button>
+                <button className="btn ghost" style={{ flex: 1 }} onClick={p.onClearGuard}>
+                  关闭验证
+                </button>
+              </div>
+            ) : (
+              <button className="btn block" style={{ marginTop: 10 }} onClick={p.onSetGuard}>
+                <Icon name="lock" size={14} />
+                开启启动验证
+              </button>
+            )}
+
+            <div className="hint" style={{ marginTop: 10 }}>
+              令牌一律 AES-256-GCM 加密落盘。免密模式下设备密钥也放在本机，能防住「数据文件被单独拷走或上传」，防不住拿到已解锁手机的人；需要后者就开启启动验证。
             </div>
           </div>
 
