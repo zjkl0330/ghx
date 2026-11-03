@@ -281,3 +281,74 @@ describe('实体反转义', () => {
     expect(unescapeHtml('一&#10;二&#9;三')).toBe('一\n二\t三')
   })
 })
+
+describe('长自述分批', () => {
+  const okFetch = () =>
+    vi.fn(async () => jsonResponse({ responseData: { translatedText: '译文' }, responseStatus: 200 }))
+
+  it('一批只翻 maxBlocks 段，并交回下一批的起点与剩余数', async () => {
+    const blocks = Array.from({ length: 5 }, (_, i) => ({ kind: 'p' as const, text: `para ${i}` }))
+    const r = await translateBlocks(blocks, {
+      fetchImpl: okFetch() as unknown as typeof fetch,
+      channel: 'mymemory',
+      maxBlocks: 2,
+    })
+    expect(r.total).toBe(2)
+    expect(r.next).toBe(2)
+    expect(r.remaining).toBe(3)
+    expect(r.translated).toBe(2)
+  })
+
+  it('续翻接在已翻结果之后，前面批次的译文不会被覆盖', async () => {
+    const blocks = [
+      { kind: 'p' as const, text: 'one' },
+      { kind: 'p' as const, text: 'two' },
+      { kind: 'p' as const, text: 'three' },
+    ]
+    const first = await translateBlocks(blocks, {
+      fetchImpl: okFetch() as unknown as typeof fetch,
+      channel: 'mymemory',
+      maxBlocks: 1,
+    })
+    const second = await translateBlocks(first.blocks, {
+      fetchImpl: okFetch() as unknown as typeof fetch,
+      channel: 'mymemory',
+      maxBlocks: 5,
+      skip: first.next,
+    })
+    expect(second.total).toBe(2)
+    expect(second.remaining).toBe(0)
+    expect(second.blocks[0].text).toBe('译文')
+    expect(second.blocks[2].text).toBe('译文')
+  })
+
+  it('代码块与中文段落不占批次额度', async () => {
+    const blocks = [
+      { kind: 'code' as const, text: 'const a = 1' },
+      { kind: 'p' as const, text: '这是中文段落' },
+      { kind: 'p' as const, text: 'english one' },
+      { kind: 'hr' as const },
+      { kind: 'p' as const, text: 'english two' },
+    ]
+    const r = await translateBlocks(blocks, {
+      fetchImpl: okFetch() as unknown as typeof fetch,
+      channel: 'mymemory',
+      maxBlocks: 1,
+    })
+    expect(r.total).toBe(1)
+    expect(r.remaining).toBe(1)
+    expect(r.blocks[2].text).toBe('译文')
+    expect(r.blocks[0].text).toBe('const a = 1')
+  })
+
+  it('skip 超过总段数时不再发请求', async () => {
+    const f = vi.fn()
+    const r = await translateBlocks(
+      [{ kind: 'p' as const, text: 'only one' }],
+      { fetchImpl: f as unknown as typeof fetch, channel: 'mymemory', skip: 9 },
+    )
+    expect(f).not.toHaveBeenCalled()
+    expect(r.total).toBe(0)
+    expect(r.remaining).toBe(0)
+  })
+})

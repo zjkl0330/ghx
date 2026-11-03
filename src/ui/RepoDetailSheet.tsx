@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
 import type { AuditEntry, Repo, Visibility } from '../lib/types'
+import { parseTopics, topicsToInput } from '../lib/topics'
 import { openExternal } from '../lib/update'
 import { Icon, type IconName } from './icons'
 
@@ -53,6 +54,13 @@ export function RepoDetailSheet(p: Props) {
   const [error, setError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [typed, setTyped] = useState('')
+  /** 简介/主页/话题就地编辑，不另开一层弹层 */
+  const [editing, setEditing] = useState(false)
+  const [desc, setDesc] = useState(p.repo.description ?? '')
+  const [home, setHome] = useState(p.repo.homepage ?? '')
+  const [topicText, setTopicText] = useState(topicsToInput(p.repo.topics))
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
 
   const owner = p.repo.owner
   const name = p.repo.name
@@ -68,6 +76,7 @@ export function RepoDetailSheet(p: Props) {
     setError(null)
     setConfirmDelete(false)
     setTyped('')
+    setEditing(false)
     if (!p.client) return () => { alive = false }
     p.client
       .isStarred(owner, name)
@@ -116,6 +125,28 @@ export function RepoDetailSheet(p: Props) {
         {busy !== key && <Icon name="chevron" size={13} className="act-arrow" />}
       </button>
     )
+  }
+
+  async function saveMeta() {
+    if (!p.client) return
+    setSaving(true)
+    setEditError(null)
+    try {
+      const { data } = await p.client.updateRepo(owner, name, {
+        // 清空简介要传 null；空串会被 GitHub 当成「未修改」
+        description: desc.trim() ? desc.trim() : null,
+        homepage: home.trim() ? home.trim() : null,
+        topics: parseTopics(topicText),
+      })
+      p.onChanged({ ...p.repo, ...data })
+      p.onAudit('repo-edit', { target: p.repo.full_name, text: '更新简介 / 主页 / 话题' })
+      p.onToast('仓库信息已更新')
+      setEditing(false)
+    } catch (err) {
+      setEditError((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const canDelete = typed.trim() === name
@@ -175,6 +206,61 @@ export function RepoDetailSheet(p: Props) {
           </div>
         )}
 
+        {editing && (
+          <div className="panel" style={{ marginBottom: 10 }}>
+            <div className="field">
+              <label htmlFor="edit-desc">仓库简介</label>
+              <textarea
+                id="edit-desc"
+                className="textarea"
+                rows={3}
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="一句话说明这个仓库做什么"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-home">主页</label>
+              <input
+                id="edit-home"
+                value={home}
+                onChange={(e) => setHome(e.target.value)}
+                placeholder="https://…（可留空）"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-topics">话题</label>
+              <input
+                id="edit-topics"
+                value={topicText}
+                onChange={(e) => setTopicText(e.target.value)}
+                placeholder="react, android, tauri"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+              <div className="hint">
+                逗号或空格分隔，最多 20 个。GitHub 只收小写字母、数字与连字符，中文会被忽略。
+              </div>
+            </div>
+            {editError && <div className="errline">{editError}</div>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button className="btn ghost" style={{ flex: 1 }} onClick={() => setEditing(false)}>
+                取消
+              </button>
+              <button
+                className="btn primary"
+                style={{ flex: 1 }}
+                disabled={saving}
+                onClick={() => void saveMeta()}
+              >
+                {saving ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="acts">
           {action(
             'star',
@@ -190,6 +276,15 @@ export function RepoDetailSheet(p: Props) {
               p.onToast(next ? '已 star' : '已取消 star')
             },
           )}
+
+          {canAdmin &&
+            action('edit', 'dots', '编辑简介与话题', p.repo.description ?? '还没写简介', async () => {
+              setDesc(p.repo.description ?? '')
+              setHome(p.repo.homepage ?? '')
+              setTopicText(topicsToInput(p.repo.topics))
+              setEditError(null)
+              setEditing(true)
+            })}
 
           {canAdmin &&
             action(

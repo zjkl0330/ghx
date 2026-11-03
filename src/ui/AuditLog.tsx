@@ -11,6 +11,7 @@ const ACTION_LABEL: Record<AuditEntry['action'], string> = {
   'repo-archive': '归档仓库',
   'repo-delete': '删除仓库',
   'repo-create': '新建仓库',
+  'repo-edit': '编辑仓库信息',
   workflow: '工作流',
   release: '发行版',
   fork: '复刻',

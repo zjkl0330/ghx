@@ -15,6 +15,8 @@ import { Icon } from './icons'
 interface Props {
   repo: Repo
   client: GitHubClient | null
+  /** 下载/网页加速前缀，网页版走它而不是 github.com */
+  mirror: string
   /** 设置里「自动翻译自述」的开关 */
   autoTranslate: boolean
   channel: TranslateChannel
@@ -78,8 +80,17 @@ export function ReadmeSheet(p: Props) {
   const [translating, setTranslating] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [translateError, setTranslateError] = useState<string | null>(null)
+  /** 下一批从哪开始、还剩多少段：长 README 分批判，不静悄悄漏掉后半 */
+  const [pending, setPending] = useState({ next: 0, remaining: 0 })
+  /** 已翻好的块：续翻时要在这份基础上改，否则前一批的译文会被原文覆盖 */
+  const translatedRef = useRef<Block[] | null>(null)
   /** 只跑一次的翻译；用户手动重试时会清掉 */
   const startedRef = useRef(false)
+
+  const applyTranslated = useCallback((next: Block[]) => {
+    translatedRef.current = next
+    setTranslated(next)
+  }, [])
 
   const seemsChinese = useMemo(
     () => (file ? hasChinese(file.text.slice(0, 2000)) : false),
@@ -87,27 +98,32 @@ export function ReadmeSheet(p: Props) {
   )
 
   const doTranslate = useCallback(
-    async (source: Block[]) => {
+    async (source: Block[], skip = 0) => {
       if (!p.store) return
       setTranslating(true)
       setTranslateError(null)
       setProgress({ done: 0, total: 0 })
-      // 先把原文铺上去，翻好一段就替换一段 —— 不必盯着空白等全部完成
-      setTranslated(source.map((b) => ({ ...b })))
+      // 续翻时接在已翻结果后面；首次先把原文铺满，翻好一段替换一段
+      const base =
+        skip > 0 && translatedRef.current ? translatedRef.current : source.map((b) => ({ ...b }))
+      if (skip === 0) applyTranslated(base)
       try {
-        const res = await translateBlocks(source, {
+        const res = await translateBlocks(base, {
           channel: p.channel,
           store: p.store,
-          maxBlocks: 30,
+          maxBlocks: 20,
           concurrency: 3,
+          skip,
           onProgress: (done, total) => setProgress({ done, total }),
-          onBlock: (index, text) =>
-            setTranslated((prev) =>
-              prev ? prev.map((b, i) => (i === index ? { ...b, text } : b)) : prev,
-            ),
+          onBlock: (index, text) => {
+            const cur = translatedRef.current
+            if (!cur) return
+            applyTranslated(cur.map((b, i) => (i === index ? { ...b, text } : b)))
+          },
         })
-        setTranslated(res.blocks)
-        if (res.translated === 0) {
+        applyTranslated(res.blocks)
+        setPending({ next: res.next, remaining: res.remaining })
+        if (res.translated === 0 && skip === 0) {
           setView('source')
           if (res.total > 0) setTranslateError('所有段落都没翻成功，网络可能不通，先看原文吧')
         }
@@ -118,7 +134,7 @@ export function ReadmeSheet(p: Props) {
         setTranslating(false)
       }
     },
-    [p.channel, p.store],
+    [p.channel, p.store, applyTranslated],
   )
 
   const load = useCallback(
@@ -128,6 +144,8 @@ export function ReadmeSheet(p: Props) {
       setError(null)
       startedRef.current = false
       setTranslated(null)
+      translatedRef.current = null
+      setPending({ next: 0, remaining: 0 })
       try {
         const res = await p.client.readme(owner, name, fresh)
         const f = res.data
@@ -254,12 +272,28 @@ export function ReadmeSheet(p: Props) {
           <div className="md">{shown.map((b, i) => renderBlock(b, i, view === 'source'))}</div>
         )}
 
+        {!loading && !translating && pending.remaining > 0 && (
+          <button
+            className="btn ghost block"
+            style={{ marginTop: 12 }}
+            onClick={() => {
+              setView('zh')
+              void doTranslate(blocks, pending.next)
+            }}
+          >
+            <Icon name="chevron" size={14} />
+            继续翻译剩余 {pending.remaining} 段
+          </button>
+        )}
+
         {!loading && file && (
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button
               className="btn ghost"
               style={{ flex: 1 }}
-              onClick={() => void openExternal(`https://github.com/${p.repo.full_name}#readme`)}
+              onClick={() =>
+                void openExternal(`${p.mirror.replace(/\/+$/, '')}/${p.repo.full_name}#readme`)
+              }
             >
               <Icon name="globe" size={14} />
               网页版

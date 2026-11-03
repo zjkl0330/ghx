@@ -368,15 +368,21 @@ export interface BlockLike {
 
 export interface TranslateBlocksResult<B extends BlockLike> {
   blocks: B[]
+  /** 本批真正拿到译文的段数（缓存命中也算） */
   translated: number
+  /** 本批处理的段数 */
   total: number
   channel: string
+  /** 下一批从第几个块开始扫（块下标，不是「第几个待翻段」） */
+  next: number
+  /** 还剩多少段没翻；>0 时界面给「继续翻译」的入口 */
+  remaining: number
 }
 
 /**
  * 按块翻译，保留标题层级、列表缩进与代码块。
- * 只翻前面 maxBlocks 个块 —— README 后半段常是贡献指南、许可证，
- * 全翻既慢又烧免费额度。
+ * 每次只翻一批（默认 30 段）：长 README 全量翻要几分钟且很烧免费额度，
+ * 所以分批判，翻完一批就把 next / remaining 交回界面，由用户决定继续。
  */
 export async function translateBlocks<B extends BlockLike>(
   blocks: B[],
@@ -384,24 +390,30 @@ export async function translateBlocks<B extends BlockLike>(
     store?: TranslationStore
     maxBlocks?: number
     concurrency?: number
+    /** 从第几个块开始扫，用于分批续翻。用块下标而不是待翻段序号：
+     *  前一批翻完的段落已变成中文，按待翻序号会错位漏段。 */
+    skip?: number
     onProgress?: (done: number, total: number) => void
     /** 每翻好一段就回调，界面可以边翻边显示，不必等全部完成 */
     onBlock?: (index: number, text: string) => void
   } = {},
 ): Promise<TranslateBlocksResult<B>> {
   const maxBlocks = opts.maxBlocks ?? 30
-  const targets: number[] = []
+  const start = Math.max(0, Math.min(opts.skip ?? 0, blocks.length))
+  const all: number[] = []
 
-  for (let i = 0; i < blocks.length && targets.length < maxBlocks; i += 1) {
+  for (let i = start; i < blocks.length; i += 1) {
     const b = blocks[i]
     if (b.kind === 'code' || b.kind === 'hr') continue
     const text = (b.text ?? '').trim()
     if (!text || hasChinese(text)) continue
-    targets.push(i)
+    all.push(i)
   }
 
+  const targets = all.slice(0, maxBlocks)
+
   if (targets.length === 0) {
-    return { blocks, translated: 0, total: 0, channel: 'none' }
+    return { blocks, translated: 0, total: 0, channel: 'none', next: blocks.length, remaining: 0 }
   }
 
   const out = blocks.map((b) => ({ ...b }))
@@ -443,5 +455,14 @@ export async function translateBlocks<B extends BlockLike>(
   // 先把总段数报出去，界面才不会一直显示「翻译 …」
   opts.onProgress?.(0, targets.length)
   await Promise.all(Array.from({ length: Math.min(limit, targets.length) }, worker))
-  return { blocks: out, translated: ok, total: targets.length, channel }
+  // 用最后一段的块下标 +1 作为游标，保证下次从它后面继续，不会跳段
+  const next = targets[targets.length - 1] + 1
+  return {
+    blocks: out,
+    translated: ok,
+    total: targets.length,
+    channel,
+    next,
+    remaining: Math.max(0, all.length - targets.length),
+  }
 }

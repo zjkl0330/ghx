@@ -4,6 +4,8 @@ import type { RateLimit, TokenStatus } from './types'
 export interface ProbeResult {
   login: string
   name: string | null
+  /** GitHub 头像；可能为空 */
+  avatarUrl: string | null
   scopes: string[]
   rate: RateLimit | null
   status: TokenStatus
@@ -20,6 +22,7 @@ export async function probeToken(client: GitHubClient, expiresAt: string | null 
   return {
     login: data.login,
     name: data.name,
+    avatarUrl: data.avatar_url ?? null,
     scopes,
     rate,
     status: classifyExpiry(expiresAt),

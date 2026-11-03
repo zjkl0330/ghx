@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { daysUntil, riskyScopes } from '../lib/tokens'
 import type { TokenRecord } from '../lib/types'
 import { Icon } from './icons'
@@ -23,6 +24,15 @@ interface Props {
 }
 
 export function TokenVault(p: Props) {
+  /** 删除是不可逆的，先点一次进确认态，3 秒内再点才真删 */
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!confirmId) return
+    const t = window.setTimeout(() => setConfirmId(null), 3000)
+    return () => window.clearTimeout(t)
+  }, [confirmId])
+
   return (
     <>
       <div className="topbar">
@@ -114,12 +124,19 @@ export function TokenVault(p: Props) {
                   {p.checking === rec.id ? '校验中' : '校验'}
                 </button>
                 <button
-                  className="btn danger"
+                  className={`btn danger${confirmId === rec.id ? ' block' : ''}`}
                   style={{ height: 32, padding: '0 10px' }}
-                  onClick={() => p.onRemove(rec.id)}
-                  aria-label="删除"
+                  onClick={() => {
+                    if (confirmId === rec.id) {
+                      setConfirmId(null)
+                      p.onRemove(rec.id)
+                      return
+                    }
+                    setConfirmId(rec.id)
+                  }}
+                  aria-label={confirmId === rec.id ? '确认删除令牌' : '删除'}
                 >
-                  <Icon name="trash" size={14} />
+                  {confirmId === rec.id ? '确认删除' : <Icon name="trash" size={14} />}
                 </button>
               </div>
             </div>

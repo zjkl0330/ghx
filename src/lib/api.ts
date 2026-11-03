@@ -175,7 +175,7 @@ export class GitHubClient {
 
   /** 当前登录用户，用于确认令牌归属。 */
   async whoami() {
-    return this.request<{ login: string; name: string | null; id: number }>('/user')
+    return this.request<{ login: string; name: string | null; id: number; avatar_url?: string }>('/user')
   }
 
   /** 分页拉取当前账号可见的仓库，按最近推送排序。 */
@@ -211,6 +211,41 @@ export class GitHubClient {
       method: 'PATCH',
       body: JSON.stringify({ archived }),
     })
+    return { data: normalizeRepo(data), rate, scopes }
+  }
+
+  /**
+   * 改仓库简介、主页与话题。
+   * topics 走独立端点（PUT，整体覆盖），所以分两次请求；只传变化过的字段，
+   * 避免把没动过的简介顺手清空。description 传 null 才是清空，空串会被忽略。
+   */
+  async updateRepo(
+    owner: string,
+    name: string,
+    patch: { description?: string | null; homepage?: string | null; topics?: string[] },
+  ) {
+    const body: Record<string, unknown> = {}
+    if (patch.description !== undefined) body.description = patch.description
+    if (patch.homepage !== undefined) body.homepage = patch.homepage
+
+    if (Object.keys(body).length > 0) {
+      await this.request<RawRepo>(`/repos/${owner}/${name}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      })
+    }
+    if (patch.topics) {
+      await this.request<{ names?: string[] }>(`/repos/${owner}/${name}/topics`, {
+        method: 'PUT',
+        body: JSON.stringify({ names: patch.topics }),
+      })
+    }
+    // topics 不随 PATCH 返回，改完再取一次，避免界面与服务器不一致
+    const { data, rate, scopes } = await this.request<RawRepo>(
+      `/repos/${owner}/${name}`,
+      {},
+      { fresh: true },
+    )
     return { data: normalizeRepo(data), rate, scopes }
   }
 

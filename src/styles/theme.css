@@ -155,6 +155,11 @@ textarea {
   flex: none;
 }
 
+.avatar-img {
+  object-fit: cover;
+  background: var(--panel-2, #21262d);
+}
+
 .avatar {
   width: 30px;
   height: 30px;

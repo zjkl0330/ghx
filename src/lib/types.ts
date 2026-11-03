@@ -16,6 +16,8 @@ export interface TokenRecord {
   expiresAt: string | null
   scopes: string[]
   login: string | null
+  /** 头像地址。国内可能加载不出来，界面一律准备首字母兜底 */
+  avatarUrl?: string | null
   lastCheckedAt: string | null
   lastStatus: TokenStatus
   baseUrl: string
@@ -31,6 +33,7 @@ export interface Repo {
   archived: boolean
   disabled: boolean
   description: string | null
+  homepage?: string | null
   language: string | null
   stargazers_count: number
   forks_count: number
@@ -165,6 +168,7 @@ export interface AuditEntry {
     | 'repo-archive'
     | 'repo-delete'
     | 'repo-create'
+    | 'repo-edit'
     | 'workflow'
     | 'release'
     | 'fork'

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { snapshotAge } from '../lib/snapshot'
 import type { RepoSort } from '../lib/sort'
 import type { Repo } from '../lib/types'
@@ -60,6 +61,8 @@ interface Props {
   onRefresh: () => void
   hasToken: boolean
   account: string | null
+  /** 真实头像；加载失败或为空时回退到首字母 */
+  avatarUrl?: string | null
   onOpenRepo: (repo: Repo) => void
   updateVersion: string | null
   onOpenUpdate: () => void
@@ -72,10 +75,23 @@ interface Props {
 }
 
 export function RepoList(p: Props) {
+  const [avatarFailed, setAvatarFailed] = useState(false)
+  const initial = (p.account ?? '?').slice(0, 1).toUpperCase()
+  const showAvatar = p.avatarUrl && !avatarFailed
+
   return (
     <>
       <div className="topbar">
-        <div className="avatar">Z</div>
+        {showAvatar ? (
+          <img
+            className="avatar avatar-img"
+            src={p.avatarUrl as string}
+            alt={p.account ?? '头像'}
+            onError={() => setAvatarFailed(true)}
+          />
+        ) : (
+          <div className="avatar">{initial}</div>
+        )}
         <div className="who">
           {p.account ? `@${p.account}` : '未连接账号'}
           <span> · {p.counts.total} 个仓库</span>

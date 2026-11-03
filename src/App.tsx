@@ -371,6 +371,7 @@ export default function App() {
           const updated = await v.update(id, {
             scopes: probe.scopes,
             login: probe.login,
+            avatarUrl: probe.avatarUrl,
             lastCheckedAt: probe.checkedAt,
             lastStatus: probe.status,
           })
@@ -927,6 +928,7 @@ export default function App() {
           onRefresh={() => client && void loadRepos(client, activeId, true)}
           hasToken={records.length > 0}
           account={activeRecord?.login ?? null}
+          avatarUrl={activeRecord?.avatarUrl ?? null}
           onOpenRepo={(r) => {
             setDetailRepo(r)
             setSheet('detail')
@@ -1213,6 +1215,7 @@ export default function App() {
         <ReadmeSheet
           repo={detailRepo}
           client={client}
+          mirror={mirror}
           autoTranslate={autoTranslate}
           channel={translateChannel}
           store={translateStore}
