@@ -5,7 +5,18 @@
  * - MyMemory 单次请求上限 500 字节，超了直接返回警告串，所以必须切段；
  * - Google 的 gtx 端点没有官方承诺，国内常常连不通，只能当备选；
  * - 微软（Azure Translator）质量和速度最好，但需要一个免费 F0 密钥；
- * - 三者都会把换行转成 `&#10;`，要反转义回来。
+ * - Edge 浏览器自带翻译的端点（translatetext）免密钥、单次可吞 5 万字符、
+ *   CORS 全开、国内可直连，2026-11 实测可用，因此作为默认首选；
+ * - 各通道都会把换行转成 `&#10;`，要反转义回来。
+ *
+ * 关于 Edge 通道的来龙去脉（重要，别再走回头路）：
+ * 老办法是 GET edge.microsoft.com/translate/auth 取 token 再调 api-edge，
+ * 该接口 2026-07-30 下线，现在固定 404。新的 translatetext 不需要 token，
+ * 但它是 Edge 客户端内部接口，没有 SLA，随时可能一起没。所以必须：
+ *   1) 做成可选通道，用户能手动切走；
+ *   2) 失败时自动降级到 MyMemory / Google，不能让整篇留在英文；
+ *   3) 请求里不带 from 参数，交给它自动识别 —— 实测已中标的句子会原样返回，
+ *      带 from=en 反而可能把中文改坏。
  *
  * 因此这里做四件事：按通道上限切分、按通道顺序降级、长段落分段后再拼回、
  * 译文按「通道 + 目标语言 + 内容哈希」缓存。
@@ -15,11 +26,20 @@
  */
 import type { KV } from './storage'
 
-export type TranslateChannel = 'auto' | 'azure' | 'google' | 'mymemory'
+export type TranslateChannel = 'auto' | 'edge' | 'azure' | 'google' | 'mymemory'
 
 export const TRANSLATE_CHANNELS: { key: TranslateChannel; label: string; hint: string }[] = [
-  { key: 'auto', label: '自动', hint: '有微软密钥就先走微软，失败退回 MyMemory / Google' },
-  { key: 'azure', label: '微软', hint: '需要免费的 Azure 翻译密钥，单次可翻整段，速度最快' },
+  {
+    key: 'auto',
+    label: '自动',
+    hint: '优先 Edge 免密钥通道（单次能翻整篇），失败再退微软密钥 / MyMemory / Google',
+  },
+  {
+    key: 'edge',
+    label: 'Edge',
+    hint: '不用密钥，单次 5 万字符，国内可直连。微软 Edge 的内部接口，可能随时下线',
+  },
+  { key: 'azure', label: '微软', hint: '需要免费的 Azure 翻译密钥，官方接口最稳，单次 4 千字节' },
   { key: 'mymemory', label: 'MyMemory', hint: '不用密钥，国内可达，但单段 450 字节要切很多次' },
   { key: 'google', label: 'Google', hint: '质量不错，但国内常常连不上' },
 ]
@@ -80,6 +100,13 @@ export const MYMEMORY_MAX_BYTES = 450
 export const GOOGLE_MAX_BYTES = 1400
 /** 微软单次可到 5 万字符；分段只是为了失败时不整段丢，4000 足够稳 */
 export const AZURE_MAX_BYTES = 4000
+/**
+ * Edge 实测 5 万字符以内正常、6 万报错；这里按 UTF-8 字节保守取 48KB。
+ * 中文 3 字节/字，折合约 1.6 万字，普通 README 的整段远达不到。
+ */
+export const EDGE_MAX_BYTES = 48_000
+/** Edge 支持数组批量，一次 40 条短句（简介场景）刚好，太多怕被截断 */
+export const EDGE_BATCH = 40
 
 /** 默认走自动降级；国内网络下这是成功率最高的组合 */
 export const DEFAULT_CHANNEL: TranslateChannel = 'auto'
@@ -89,7 +116,7 @@ export const DEFAULT_AUTO_TRANSLATE = true
 /** 存进本地的通道值可能是旧版本、空白或脏数据，一律归一到合法值 */
 export function normalizeChannel(raw: string | null | undefined): TranslateChannel {
   const v = (raw ?? '').trim().toLowerCase()
-  if (v === 'google' || v === 'mymemory' || v === 'azure' || v === 'auto') return v
+  if (v === 'google' || v === 'mymemory' || v === 'azure' || v === 'edge' || v === 'auto') return v
   return DEFAULT_CHANNEL
 }
 
@@ -322,14 +349,94 @@ async function viaMyMemory(text: string, f: typeof fetch, target: TargetLang): P
   return unescapeHtml(out)
 }
 
+/** Edge 翻译端点。不带 from，让服务端自动识别语言 */
+export const EDGE_ENDPOINT = 'https://edge.microsoft.com/translate/translatetext'
+
+interface EdgeItem {
+  translations?: { text?: string; to?: string }[]
+}
+
+function parseEdgeBody(raw: string): EdgeItem[] {
+  let body: unknown
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    throw new TranslateError('Edge 返回的不是 JSON', 'edge')
+  }
+  if (!Array.isArray(body)) throw new TranslateError('Edge 返回结构异常', 'edge')
+  return body as EdgeItem[]
+}
+
+/**
+ * 微软 Edge 浏览器自带的翻译通道，免密钥。
+ *
+ * 两个必须踩准的点：
+ * 1. 不能带 `from`。带了 from=en 会把中文句子也当英文改写；不带则服务端自动识别，
+ *    已经是目标语言的段落原样返回 —— 这让我们可以把整段甚至整篇丢进去。
+ * 2. 必须带浏览器 UA（WebView 天然满足）；裸 curl 不带 UA 会 400。
+ */
+async function viaEdge(text: string, f: typeof fetch, target: TargetLang): Promise<string> {
+  const res = await f(`${EDGE_ENDPOINT}?to=${encodeURIComponent(target)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([text]),
+  })
+  if (!res.ok) {
+    throw new TranslateError(
+      res.status === 400 ? 'Edge 拒绝了这段（可能超长）' : `Edge 返回 ${res.status}`,
+      'edge',
+    )
+  }
+  const items = parseEdgeBody(await res.text())
+  const out = (items[0]?.translations?.[0]?.text ?? '').trim()
+  if (!out) throw new TranslateError('Edge 未返回译文', 'edge')
+  return unescapeHtml(out)
+}
+
+/**
+ * Edge 批量翻译：接口原生支持数组，一次请求按顺序返回。
+ * 简介这种「几十条短句」的场景用它，比逐条发快一个数量级。
+ * 失败的批次留 null，调用方可以退回逐条翻译。
+ */
+export async function translateEdgeBatch(
+  texts: string[],
+  opts: TranslateOptions = {},
+): Promise<(string | null)[]> {
+  const f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
+  const timed = withTimeout(f, opts.timeout ?? 20_000)
+  const target = opts.target ?? DEFAULT_TARGET
+  const out: (string | null)[] = new Array(texts.length).fill(null)
+  if (texts.length === 0) return out
+
+  for (let start = 0; start < texts.length; start += EDGE_BATCH) {
+    const slice = texts.slice(start, start + EDGE_BATCH)
+    try {
+      const res = await timed(`${EDGE_ENDPOINT}?to=${encodeURIComponent(target)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(slice),
+      })
+      if (!res.ok) continue
+      const items = parseEdgeBody(await res.text())
+      if (items.length !== slice.length) continue
+      items.forEach((item, i) => {
+        const text = item.translations?.[0]?.text
+        if (text) out[start + i] = unescapeHtml(text)
+      })
+    } catch {
+      /* 这一批失败，留 null 交给逐条兜底 */
+    }
+  }
+  return out
+}
+
 /**
  * 微软翻译（Azure Translator）。
  *
  * 需要用户自己在 Azure 建一个「翻译」资源，免费 F0 档每月 200 万字符。
  * 好处是单次能吞下整段（我们切到 4000 字节只是为了失败时少丢内容），
  * 长 README 的请求数比 MyMemory 少一个数量级，速度和排版连贯性都更好。
- */
-async function viaAzure(
+ */async function viaAzure(
   text: string,
   f: typeof fetch,
   opts: TranslateOptions,
@@ -403,9 +510,13 @@ export async function translateChunk(
         ? ['mymemory']
         : opts.channel === 'azure'
           ? ['azure']
-          : hasAzure
-            ? ['azure', 'mymemory', 'google']
-            : ['mymemory', 'google']
+          : opts.channel === 'edge'
+            ? ['edge']
+            : // 自动：Edge 免密钥且单次能吞整篇，成功率和速度都最好，放最前；
+              // 它挂了再退 Azure（如果填了密钥）、MyMemory、Google。
+              hasAzure
+              ? ['edge', 'azure', 'mymemory', 'google']
+              : ['edge', 'mymemory', 'google']
 
   const errors: string[] = []
   for (const ch of order) {
@@ -434,13 +545,22 @@ async function viaChannel(
   opts: TranslateOptions,
 ): Promise<string> {
   const target = opts.target ?? DEFAULT_TARGET
-  const cap = ch === 'azure' ? AZURE_MAX_BYTES : ch === 'google' ? GOOGLE_MAX_BYTES : MYMEMORY_MAX_BYTES
+  const cap =
+    ch === 'edge'
+      ? EDGE_MAX_BYTES
+      : ch === 'azure'
+        ? AZURE_MAX_BYTES
+        : ch === 'google'
+          ? GOOGLE_MAX_BYTES
+          : MYMEMORY_MAX_BYTES
   const run = (piece: string) =>
-    ch === 'azure'
-      ? viaAzure(piece, f, opts)
-      : ch === 'google'
-        ? viaGoogle(piece, f, target)
-        : viaMyMemory(piece, f, target)
+    ch === 'edge'
+      ? viaEdge(piece, f, target)
+      : ch === 'azure'
+        ? viaAzure(piece, f, opts)
+        : ch === 'google'
+          ? viaGoogle(piece, f, target)
+          : viaMyMemory(piece, f, target)
 
   if (byteLength(text) <= cap) return run(text)
 
@@ -468,11 +588,14 @@ async function viaChannel(
 /** 当前通道单次请求的字节上限 */
 export function maxBytesFor(opts: TranslateOptions = {}): number {
   if (opts.maxBytes) return opts.maxBytes
-  const ch = opts.channel ?? 'auto'
+  const ch = opts.channel ?? DEFAULT_CHANNEL
+  if (ch === 'edge') return EDGE_MAX_BYTES
   if (ch === 'azure') return AZURE_MAX_BYTES
   if (ch === 'google') return GOOGLE_MAX_BYTES
   if (ch === 'mymemory') return MYMEMORY_MAX_BYTES
-  return (opts.azureKey ?? '').trim() ? AZURE_MAX_BYTES : MYMEMORY_MAX_BYTES
+  // 自动模式按首选通道（Edge）切，请求数最少；真降级到 MyMemory 时
+  // viaChannel 会在块内再切一次，不会因为超长直接判死。
+  return EDGE_MAX_BYTES
 }
 
 /**

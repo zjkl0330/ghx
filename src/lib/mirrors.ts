@@ -61,21 +61,206 @@ export function normalizeBase(base: string): string {
   return withScheme.replace(/\/+$/, '')
 }
 
+/* ---------------- 用户自定义站点 ---------------- */
+
+/**
+ * 加速站会换域名（自建 worker 尤其如此），所以站点表不能写死在代码里：
+ *
+ * - overrides：内置站点的「改地址」。id 不变（zjkl / ghproxy…），
+ *   地址换成新的，这样所有引用该站的地方自动跟着变，不用改代码重打包。
+ * - custom：用户自己加的站点。给个名字、地址、路径风格就能参与测速。
+ *
+ * 两者都存本地，启动时喂给 setMirrorRegistry()，让 githubUrlAt / rawUrlAt
+ * 这类「只知道 base 不知道 style」的函数也能查回风格。
+ */
+export interface MirrorStore {
+  overrides: Record<string, string>
+  custom: MirrorDef[]
+}
+
+export const EMPTY_STORE: MirrorStore = { overrides: {}, custom: [] }
+
+/** 容错解析：旧版本、损坏 JSON、脏字段一律退化成空表，不能让界面启动就崩 */
+export function parseMirrorStore(raw: string | null | undefined): MirrorStore {
+  if (!raw) return { overrides: {}, custom: [] }
+  try {
+    const d = JSON.parse(raw) as Partial<MirrorStore>
+    const overrides: Record<string, string> = {}
+    for (const [k, v] of Object.entries(d.overrides ?? {})) {
+      const base = normalizeBase(String(v ?? ''))
+      if (k && base) overrides[k] = base
+    }
+    const custom: MirrorDef[] = []
+    for (const item of Array.isArray(d.custom) ? d.custom : []) {
+      const base = normalizeBase(String(item?.base ?? ''))
+      if (!base) continue
+      const id = String(item?.id ?? '').trim() || `u-${base}`
+      if (custom.some((c) => c.id === id || c.base.toLowerCase() === base.toLowerCase())) continue
+      custom.push({
+        id,
+        label: String(item?.label ?? '').trim() || base.replace(/^https?:\/\//, ''),
+        base,
+        style: item?.style === 'url' ? 'url' : 'path',
+        ...(item?.page ? { page: true } : {}),
+      })
+    }
+    return { overrides, custom }
+  } catch {
+    return { overrides: {}, custom: [] }
+  }
+}
+
+export function serializeMirrorStore(store: MirrorStore): string {
+  return JSON.stringify({ overrides: store.overrides ?? {}, custom: store.custom ?? [] })
+}
+
+/** 把 overrides 应用到内置表：id 保持不变，只换地址 */
+export function applyOverrides(
+  list: MirrorDef[],
+  overrides: Record<string, string> = {},
+): MirrorDef[] {
+  return list.map((m) => {
+    const base = normalizeBase(overrides[m.id] ?? '')
+    return base ? { ...m, base } : m
+  })
+}
+
+/** 最终生效的站点表：内置（已套用改地址）+ 自定义（与内置重复的丢掉） */
+export function effectiveMirrors(store: MirrorStore = EMPTY_STORE): MirrorDef[] {
+  const builtin = applyOverrides(BUILTIN_MIRRORS, store.overrides)
+  const seen = new Set(builtin.map((m) => m.base.toLowerCase()))
+  const custom: MirrorDef[] = []
+  for (const c of store.custom ?? []) {
+    const base = normalizeBase(c.base)
+    if (!base || seen.has(base.toLowerCase())) continue
+    seen.add(base.toLowerCase())
+    custom.push({ ...c, base, style: c.style === 'url' ? 'url' : 'path' })
+  }
+  return [...builtin, ...custom]
+}
+
+/** 模块级注册表：给只拿到 base 的调用方（图片、release 下载）反查风格 */
+let REGISTRY: MirrorDef[] = []
+
+export function setMirrorRegistry(list: MirrorDef[]): void {
+  REGISTRY = list.map((m) => ({ ...m, base: normalizeBase(m.base) })).filter((m) => m.base)
+}
+
+export function resetMirrorRegistry(): void {
+  REGISTRY = []
+}
+
+/** 当前注册表（测试与设置页展示用） */
+export function mirrorRegistry(): MirrorDef[] {
+  return REGISTRY
+}
+
+/** 可翻 HTML 页面的站点：注册表里第一个带 page 的，其次是自建站 */
+export function fallbackPageBase(): string {
+  const hit = REGISTRY.find((m) => m.page && m.base)
+  return hit?.base ?? DEFAULT_MIRROR
+}
+
+/**
+ * 校验用户填的地址。
+ * 不校验「必须能访问」——那要联网，交给测速按钮；这里只管格式别把配置写坏。
+ */
+export function validateMirrorBase(raw: string): { ok: boolean; base: string; error?: string } {
+  const base = normalizeBase(raw)
+  if (!base) return { ok: false, base: '', error: '地址不能为空' }
+  let url: URL
+  try {
+    url = new URL(base)
+  } catch {
+    return { ok: false, base, error: '地址格式不对，示例：gh.example.com' }
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    return { ok: false, base, error: '只支持 http / https' }
+  }
+  if (!url.hostname || (!url.hostname.includes('.') && url.hostname !== 'localhost')) {
+    return { ok: false, base, error: '域名不完整' }
+  }
+  if (url.search || url.hash) {
+    return { ok: false, base, error: '地址不要带 ? 或 #' }
+  }
+  return { ok: true, base }
+}
+
+/** 自定义站 id：加时间戳 + 自增序号，避免同一毫秒内连加两个导致 id 撞车 */
+let customSeq = 0
+function nextCustomId(): string {
+  customSeq += 1
+  return `u${Date.now().toString(36)}${customSeq.toString(36)}`
+}
+
+/** 加一个自定义站点；地址与内置重复时返回原表（由调用方提示） */
+export function addCustomMirror(
+  store: MirrorStore,
+  input: { label?: string; base: string; style: MirrorStyle; page?: boolean },
+): MirrorStore {
+  const base = normalizeBase(input.base)
+  if (!base) return store
+  const all = effectiveMirrors(store)
+  if (all.some((m) => m.base.toLowerCase() === base.toLowerCase())) return store
+  const def: MirrorDef = {
+    id: nextCustomId(),
+    label: (input.label ?? '').trim() || base.replace(/^https?:\/\//, ''),
+    base,
+    style: input.style === 'url' ? 'url' : 'path',
+    ...(input.page ? { page: true } : {}),
+  }
+  return { ...store, custom: [...store.custom, def] }
+}
+
+export function removeCustomMirror(store: MirrorStore, id: string): MirrorStore {
+  return { ...store, custom: store.custom.filter((c) => c.id !== id) }
+}
+
+/** 改地址：内置站点写进 overrides，自定义站点直接改 base */
+export function setMirrorBase(store: MirrorStore, id: string, rawBase: string): MirrorStore {
+  const base = normalizeBase(rawBase)
+  const builtin = BUILTIN_MIRRORS.find((m) => m.id === id)
+  if (builtin) {
+    const next = { ...store.overrides }
+    if (!base || base === builtin.base) delete next[id]
+    else next[id] = base
+    return { ...store, overrides: next }
+  }
+  return {
+    ...store,
+    custom: store.custom.map((c) => (c.id === id ? { ...c, base: base || c.base } : c)),
+  }
+}
+
+/** 恢复某个内置站点的原始地址 */
+export function resetMirrorBase(store: MirrorStore, id: string): MirrorStore {
+  const next = { ...store.overrides }
+  delete next[id]
+  return { ...store, overrides: next }
+}
+
+export function isOverridden(store: MirrorStore, id: string): boolean {
+  return !!normalizeBase(store.overrides[id] ?? '')
+}
+
 /** 已知站点查表；自定义地址按 path 风格处理（最常见） */
 export function mirrorDefFor(base: string): MirrorDef {
   const target = normalizeBase(base).toLowerCase()
-  const hit = BUILTIN_MIRRORS.find((m) => m.base.toLowerCase() === target)
+  const hit =
+    REGISTRY.find((m) => m.base.toLowerCase() === target) ??
+    BUILTIN_MIRRORS.find((m) => m.base.toLowerCase() === target)
   if (hit) return hit
   return { id: 'custom', label: normalizeBase(base) || '未设置', base: normalizeBase(base), style: 'path' }
 }
 
 /**
- * 参与测速与展示的站点：内置表 + 当前自定义站。
- * 自定义站不在内置表里时补在最前面，否则用户选中了却在列表里看不见。
+ * 参与测速与展示的站点：注册表（含自定义与改地址）+ 当前自定义站。
+ * 当前站不在表里时补在最前面，否则用户选中了却在列表里看不见。
  */
 export function mirrorCandidates(current: string): { base: string; label: string; note?: string }[] {
   const cur = normalizeBase(current)
-  const rows = BUILTIN_MIRRORS.map((m) => ({ base: m.base, label: m.label, note: m.note }))
+  const source = REGISTRY.length > 0 ? REGISTRY : BUILTIN_MIRRORS
+  const rows = source.map((m) => ({ base: m.base, label: m.label, note: m.note }))
   if (cur && !rows.some((r) => r.base.toLowerCase() === cur.toLowerCase())) {
     rows.unshift({ base: cur, label: cur.replace(/^https?:\/\//, ''), note: '自定义' })
   }
@@ -124,10 +309,10 @@ export function releaseDownloadUrl(
   return githubUrlAt(base, `${seg(owner)}/${seg(repo)}/releases/download/${seg(tag)}/${seg(asset)}`)
 }
 
-/** Release 页面（HTML）。当前镜像不翻页时退回自建站点，保证按钮点得开 */
+/** Release 页面（HTML）。当前镜像不翻页时退回能翻页的站点，保证按钮点得开 */
 export function releasePageUrl(base: string, owner: string, repo: string, tag?: string): string {
   const def = mirrorDefFor(base)
-  const useBase = def.page ? def.base : DEFAULT_MIRROR
+  const useBase = def.page ? def.base : fallbackPageBase()
   const tail = tag ? `/releases/tag/${seg(tag)}` : '/releases'
   return githubUrlAt(useBase, `${seg(owner)}/${seg(repo)}${tail}`)
 }

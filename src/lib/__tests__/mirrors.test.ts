@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   BUILTIN_MIRRORS,
   DEFAULT_MIRROR,
+  EMPTY_STORE,
   OFFICIAL_MIRROR,
   PROBE_BYTES,
   SPEED_TTL,
@@ -10,8 +11,20 @@ import {
   kbpsOf,
   mirrorCandidates,
   mirrorDefFor,
+  addCustomMirror,
+  effectiveMirrors,
+  fallbackPageBase,
+  isOverridden,
   mirrorLabel,
   normalizeBase,
+  parseMirrorStore,
+  removeCustomMirror,
+  resetMirrorBase,
+  resetMirrorRegistry,
+  serializeMirrorStore,
+  setMirrorBase,
+  setMirrorRegistry,
+  validateMirrorBase,
   parseSnapshot,
   pickFastest,
   probeAll,
@@ -319,5 +332,141 @@ describe('测速结果快照', () => {
   it('写入再读回保持一致', () => {
     const snap = snapshotOf([ok('https://a.example', 400)], 42)
     expect(parseSnapshot(JSON.stringify(snap))).toEqual(snap)
+  })
+})
+
+describe('站点表（改地址 / 自定义）', () => {
+  it('默认表就是内置表，没有多余站点', () => {
+    const list = effectiveMirrors(EMPTY_STORE)
+    expect(list.map((m) => m.base)).toEqual(BUILTIN_MIRRORS.map((m) => m.base))
+  })
+
+  it('改地址只换 base，id 与风格保持不变', () => {
+    const store = setMirrorBase(EMPTY_STORE, 'zjkl', 'gh2.example.com')
+    const list = effectiveMirrors(store)
+    const hit = list.find((m) => m.id === 'zjkl')
+    expect(hit?.base).toBe('https://gh2.example.com')
+    expect(hit?.style).toBe('path')
+    expect(hit?.page).toBe(true)
+    expect(isOverridden(store, 'zjkl')).toBe(true)
+  })
+
+  it('改地址后 githubUrlAt 立刻走新域名', () => {
+    const store = setMirrorBase(EMPTY_STORE, 'zjkl', 'https://gh2.example.com')
+    setMirrorRegistry(effectiveMirrors(store))
+    try {
+      expect(githubUrlAt('https://gh2.example.com', 'o/r')).toBe('https://gh2.example.com/o/r')
+    } finally {
+      resetMirrorRegistry()
+    }
+  })
+
+  it('改回原地址等价于恢复默认', () => {
+    const store = setMirrorBase(EMPTY_STORE, 'zjkl', DEFAULT_MIRROR)
+    expect(store.overrides.zjkl).toBeUndefined()
+  })
+
+  it('恢复默认会删掉 override', () => {
+    const store = setMirrorBase(EMPTY_STORE, 'zjkl', 'gh2.example.com')
+    expect(resetMirrorBase(store, 'zjkl').overrides.zjkl).toBeUndefined()
+  })
+
+  it('添加自定义站点后能参与候选与查表', () => {
+    const store = addCustomMirror(EMPTY_STORE, { label: '我的', base: 'my.example.com', style: 'url' })
+    expect(store.custom).toHaveLength(1)
+    const list = effectiveMirrors(store)
+    expect(list.some((m) => m.base === 'https://my.example.com' && m.style === 'url')).toBe(true)
+    setMirrorRegistry(list)
+    try {
+      expect(mirrorCandidates('https://my.example.com').some((r) => r.label === '我的')).toBe(true)
+      expect(mirrorDefFor('https://my.example.com').style).toBe('url')
+    } finally {
+      resetMirrorRegistry()
+    }
+  })
+
+  it('重复地址不重复添加', () => {
+    const a = addCustomMirror(EMPTY_STORE, { base: DEFAULT_MIRROR, style: 'path' })
+    expect(a).toBe(EMPTY_STORE)
+  })
+
+  it('删除自定义站点只影响它自己', () => {
+    const one = addCustomMirror(EMPTY_STORE, { base: 'a.example', style: 'path' })
+    const two = addCustomMirror(one, { base: 'b.example', style: 'path' })
+    const back = removeCustomMirror(two, two.custom[0].id)
+    expect(back.custom.map((c) => c.base)).toEqual(['https://b.example'])
+  })
+
+  it('解析容错：脏 JSON / 脏字段都不抛错', () => {
+    expect(parseMirrorStore('{oops')).toEqual({ overrides: {}, custom: [] })
+    expect(parseMirrorStore(null)).toEqual({ overrides: {}, custom: [] })
+    const s = parseMirrorStore(
+      JSON.stringify({
+        overrides: { zjkl: 'gh3.example', bad: '' },
+        custom: [{ base: 'x.example' }, { base: 'x.example' }, { base: '' }, { base: 'y.example', style: 'url' }],
+      }),
+    )
+    expect(s.overrides).toEqual({ zjkl: 'https://gh3.example' })
+    expect(s.custom.map((c) => c.base)).toEqual(['https://x.example', 'https://y.example'])
+    expect(s.custom[1].style).toBe('url')
+  })
+
+  it('序列化再解析保持等价', () => {
+    const store = addCustomMirror(setMirrorBase(EMPTY_STORE, 'ghproxy', 'p.example'), {
+      label: '自建',
+      base: 'w.example',
+      style: 'path',
+      page: true,
+    })
+    expect(parseMirrorStore(serializeMirrorStore(store))).toEqual(store)
+  })
+
+  it('地址校验：补协议、拒绝空与非法', () => {
+    expect(validateMirrorBase('gh.example.com').base).toBe('https://gh.example.com')
+    expect(validateMirrorBase('').ok).toBe(false)
+    expect(validateMirrorBase('not a url').ok).toBe(false)
+    expect(validateMirrorBase('https://x.example/?a=1').ok).toBe(false)
+    expect(validateMirrorBase('ftp://x.example').ok).toBe(false)
+  })
+
+  it('能翻网页的兜底站点跟着 override 走', () => {
+    const store = setMirrorBase(EMPTY_STORE, 'zjkl', 'https://gh9.example')
+    setMirrorRegistry(effectiveMirrors(store))
+    try {
+      expect(fallbackPageBase()).toBe('https://gh9.example')
+    } finally {
+      resetMirrorRegistry()
+    }
+  })
+})
+
+describe('改地址后全局生效', () => {
+  it('安装包下载与自述图片都改用新域名', () => {
+    const store = setMirrorBase(EMPTY_STORE, 'zjkl', 'https://gh-new.example.com')
+    setMirrorRegistry(effectiveMirrors(store))
+    try {
+      const base = 'https://gh-new.example.com'
+      expect(releaseDownloadUrl(base, 'o', 'r', 'v1.0.0', 'a.apk')).toBe(
+        'https://gh-new.example.com/o/r/releases/download/v1.0.0/a.apk',
+      )
+      expect(rawUrlAt(base, 'o', 'r', 'main', 'docs/a.png')).toBe(
+        'https://gh-new.example.com/o/r/raw/main/docs/a.png',
+      )
+      // 完整地址风格的站点拼法不同，改地址不能把风格改掉
+      const store2 = setMirrorBase(EMPTY_STORE, 'ghproxy', 'https://p2.example.com')
+      setMirrorRegistry(effectiveMirrors(store2))
+      expect(releaseDownloadUrl('https://p2.example.com', 'o', 'r', 'v1', 'a.apk')).toBe(
+        'https://p2.example.com/https://github.com/o/r/releases/download/v1/a.apk',
+      )
+    } finally {
+      resetMirrorRegistry()
+    }
+  })
+
+  it('只改一台不影响其它站点', () => {
+    const store = setMirrorBase(EMPTY_STORE, 'zjkl', 'https://gh-new.example.com')
+    const list = effectiveMirrors(store)
+    expect(list.find((m) => m.id === 'ghproxy')?.base).toBe('https://gh-proxy.com')
+    expect(list.find((m) => m.id === 'ghfast')?.base).toBe('https://ghfast.top')
   })
 })

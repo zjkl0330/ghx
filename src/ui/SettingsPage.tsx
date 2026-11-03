@@ -50,6 +50,10 @@ interface Props {
   mirrorAuto: boolean
   mirrorSpeed: number | null
   mirrorCheckedAt: number | null
+  /** 用户自己加的站点数 */
+  mirrorCustom: number
+  /** 改过地址的内置站点数 */
+  mirrorChanged: number
   onOpenMirrors: () => void
   onOpenTokens: () => void
   onBack: () => void
@@ -205,6 +209,12 @@ export function SettingsPage(p: Props) {
             <div className="hint" style={{ marginTop: 9 }}>
               {TRANSLATE_CHANNELS.find((c) => c.key === p.translateChannel)?.hint ?? ''}
             </div>
+            {p.translateChannel === 'edge' && (
+              <div className="hint" style={{ marginTop: 4 }}>
+                Edge 是微软浏览器自带的翻译接口，免密钥也不用注册，实测国内可直连。它不是公开 API，微软随时可能关掉；
+                真关了就切回「自动」（会自动降级到别的通道），或填一个微软密钥。
+              </div>
+            )}
 
             {azureRelevant && (
               <div className="field" style={{ marginTop: 12 }}>
@@ -230,7 +240,7 @@ export function SettingsPage(p: Props) {
                 </div>
                 <div className="hint">
                   在 Azure 门户创建「翻译」资源后可拿到密钥，免费 F0 档每月 200 万字符。填了之后
-                  自动模式优先走微软：一次能翻整段，比 MyMemory 少几十个请求，也基本不会漏段。
+                  它是 Edge 之后的第二选择：Edge 被关掉或不通时自动接上，也可在上面手动选「微软」只用它。
                 </div>
                 <button
                   className="btn ghost block"
@@ -351,12 +361,14 @@ export function SettingsPage(p: Props) {
                     {p.mirrorAuto ? '自动选最快' : '手动指定'}
                     {p.mirrorSpeed != null ? ` · ${formatSpeed(p.mirrorSpeed)}` : ''}
                     {p.mirrorCheckedAt ? ` · ${ago(p.mirrorCheckedAt).replace('检查', '测速')}` : ''}
+                    {p.mirrorCustom > 0 ? ` · ${p.mirrorCustom} 个自定义站点` : ''}
+                    {p.mirrorChanged > 0 ? ` · ${p.mirrorChanged} 个已改地址` : ''}
                   </i>
                 </span>
                 <Icon name="chevron" size={13} className="linkrow-arrow" />
               </button>
               <div className="hint">
-                APK 与自述图片都从加速站下载，因为 github.com 直连通常不通。内置多个站点，进页面可以测速选最快的；查询版本走 API，与下载是两个通道。
+                APK 与自述图片都从加速站下载，因为 github.com 直连通常不通。站点域名换了不用重装 App：进页面点每个站点右边的铅笔直接改地址，改完立即全局生效（图片、安装包、发行版页一起跟着走）。也能添加自己的站点并测速。
               </div>
             </div>
           </div>

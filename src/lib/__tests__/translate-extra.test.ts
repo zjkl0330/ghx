@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  EDGE_BATCH,
   cacheKeyFor,
   hasChinese,
   needsTranslation,
   translateAzureBatch,
   translateBlocks,
   translateChunk,
+  translateEdgeBatch,
   translateLongText,
 } from '../translate'
 
@@ -99,10 +101,18 @@ describe('微软通道', () => {
     expect(JSON.parse(String(init.body))).toEqual([{ Text: 'hello' }])
   })
 
-  it('自动模式配了密钥就先走微软，一次成功', async () => {
+  it('自动模式先 Edge，Edge 不可用才退到微软密钥', async () => {
     const calls: string[] = []
     const f = vi.fn(async (url: string) => {
-      calls.push(url.includes('microsoft') ? 'azure' : url.includes('mymemory') ? 'mymemory' : 'google')
+      if (url.includes('edge.microsoft.com')) {
+        calls.push('edge')
+        throw new Error('blocked')
+      }
+      if (url.includes('cognitive.microsofttranslator')) {
+        calls.push('azure')
+        return AZURE_OK('嗨')
+      }
+      calls.push(url.includes('mymemory') ? 'mymemory' : 'google')
       return AZURE_OK('嗨')
     })
     const r = await translateChunk('hi', {
@@ -110,7 +120,7 @@ describe('微软通道', () => {
       azureKey: 'k',
     })
     expect(r.channel).toBe('azure')
-    expect(calls).toEqual(['azure'])
+    expect(calls).toEqual(['edge', 'azure'])
   })
 
   it('没填密钥时微软通道直接报可读错误', async () => {
@@ -198,5 +208,64 @@ describe('README 块翻译不再漏段', () => {
     })
     expect(out.translated).toBe(1)
     expect(out.blocks[0].text).toBe('混合译文')
+  })
+})
+
+describe('Edge 批量翻译', () => {
+  const EDGE_OK = (list: string[]) =>
+    ({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(list.map((text) => ({ translations: [{ text, to: 'zh-Hans' }] }))),
+    }) as unknown as Response
+
+  it('一次请求按顺序返回，解析 text/plain 里的 JSON', async () => {
+    const f = vi.fn(async () => EDGE_OK(['甲', '乙', '丙']))
+    const out = await translateEdgeBatch(['a', 'b', 'c'], { fetchImpl: f as unknown as typeof fetch })
+    expect(out).toEqual(['甲', '乙', '丙'])
+    expect(f).toHaveBeenCalledTimes(1)
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).not.toMatch(/[?&]from=/)
+    expect(JSON.parse(String(init.body))).toEqual(['a', 'b', 'c'])
+  })
+
+  it('超过 40 条自动分批，结果顺序不错位', async () => {
+    const calls: number[] = []
+    const f = vi.fn(async (_url: string, init: RequestInit) => {
+      const slice = JSON.parse(String(init.body)) as string[]
+      calls.push(slice.length)
+      return EDGE_OK(slice.map((s) => `译:${s}`))
+    })
+    const texts = Array.from({ length: EDGE_BATCH + 5 }, (_, i) => `s${i}`)
+    const out = await translateEdgeBatch(texts, { fetchImpl: f as unknown as typeof fetch })
+    expect(calls).toEqual([EDGE_BATCH, 5])
+    expect(out).toHaveLength(texts.length)
+    expect(out[0]).toBe('译:s0')
+    expect(out[texts.length - 1]).toBe(`译:s${texts.length - 1}`)
+  })
+
+  it('某一批失败时那批留 null，其余照常返回', async () => {
+    let n = 0
+    const f = vi.fn(async () => {
+      n += 1
+      if (n === 1) return { ok: false, status: 500, text: async () => '' } as unknown as Response
+      return EDGE_OK(['好'])
+    })
+    const texts = Array.from({ length: EDGE_BATCH + 1 }, (_, i) => `x${i}`)
+    const out = await translateEdgeBatch(texts, { fetchImpl: f as unknown as typeof fetch })
+    expect(out.slice(0, EDGE_BATCH).every((x) => x === null)).toBe(true)
+    expect(out[EDGE_BATCH]).toBe('好')
+  })
+
+  it('返回条数与请求不一致时不硬塞，全部留 null', async () => {
+    const f = vi.fn(async () => EDGE_OK(['只有一条']))
+    const out = await translateEdgeBatch(['a', 'b'], { fetchImpl: f as unknown as typeof fetch })
+    expect(out).toEqual([null, null])
+  })
+
+  it('空输入不发请求', async () => {
+    const f = vi.fn()
+    expect(await translateEdgeBatch([], { fetchImpl: f as unknown as typeof fetch })).toEqual([])
+    expect(f).not.toHaveBeenCalled()
   })
 })

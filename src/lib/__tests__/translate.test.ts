@@ -26,6 +26,15 @@ function jsonResponse(body: unknown, status = 200) {
   } as unknown as Response
 }
 
+/** Edge 端点返回的是 text/plain 的 JSON 串，走 res.text() */
+function textResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+  } as unknown as Response
+}
+
 const mymemoryOk = (text: string) =>
   vi.fn(async () => jsonResponse({ responseData: { translatedText: text }, responseStatus: 200 }))
 
@@ -103,17 +112,59 @@ describe('通道', () => {
     ).rejects.toBeInstanceOf(TranslateError)
   })
 
-  it('自动模式先 MyMemory，失败再 Google', async () => {
+  it('自动模式先 Edge，失败再 MyMemory / Google', async () => {
     const calls: string[] = []
     const f = vi.fn(async (url: string) => {
-      calls.push(url.includes('mymemory') ? 'mymemory' : 'google')
-      if (url.includes('mymemory')) throw new Error('blocked')
+      const kind = url.includes('edge.microsoft.com')
+        ? 'edge'
+        : url.includes('mymemory')
+          ? 'mymemory'
+          : 'google'
+      calls.push(kind)
+      if (kind !== 'google') throw new Error('blocked')
       return jsonResponse([[['你好', 'hello', null, null, 10]], null, 'en'])
     })
     const r = await translateChunk('hello', { fetchImpl: f as unknown as typeof fetch })
     expect(r.channel).toBe('google')
     expect(r.text).toBe('你好')
-    expect(calls).toEqual(['mymemory', 'google'])
+    expect(calls).toEqual(['edge', 'mymemory', 'google'])
+  })
+
+  it('Edge 通道正常返回，且不带 from 让服务端自动识别', async () => {
+    const f = vi.fn(async () => textResponse([{ translations: [{ text: '你好，世界', to: 'zh-Hans' }] }]))
+    const r = await translateChunk('hello world', {
+      fetchImpl: f as unknown as typeof fetch,
+      channel: 'edge',
+    })
+    expect(r.channel).toBe('edge')
+    expect(r.text).toBe('你好，世界')
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toContain('edge.microsoft.com/translate/translatetext')
+    expect(url).toContain('to=zh-CN')
+    // 带 from=en 会把中文段落改坏，所以必须省略
+    expect(url).not.toMatch(/[?&]from=/)
+    expect(JSON.parse(String(init.body))).toEqual(['hello world'])
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json')
+  })
+
+  it('Edge 返回 400 时抛错，交给下一个通道', async () => {
+    const f = vi.fn(async () => textResponse({ error: 'too long' }, 400))
+    await expect(
+      translateChunk('hi', { fetchImpl: f as unknown as typeof fetch, channel: 'edge' }),
+    ).rejects.toBeInstanceOf(TranslateError)
+  })
+
+  it('Edge 返回非 JSON 时按结构异常处理', async () => {
+    const f = vi.fn(async () => ({ ok: true, status: 200, text: async () => '<html>' }) as unknown as Response)
+    await expect(
+      translateChunk('hi', { fetchImpl: f as unknown as typeof fetch, channel: 'edge' }),
+    ).rejects.toThrow(/JSON/)
+  })
+
+  it('指定 edge 时不打其它通道', async () => {
+    const f = vi.fn(async () => textResponse([{ translations: [{ text: '嗨' }] }]))
+    await translateChunk('hi', { fetchImpl: f as unknown as typeof fetch, channel: 'edge' })
+    expect(f).toHaveBeenCalledTimes(1)
   })
 
   it('指定 google 时不会去试 MyMemory', async () => {

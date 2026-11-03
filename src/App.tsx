@@ -6,17 +6,23 @@ import { appendAudit, clearAudit, readAudit } from './lib/audit'
 import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
 import {
   DEFAULT_MIRROR,
+  EMPTY_STORE,
+  effectiveMirrors,
   mirrorCandidates,
   mirrorDefFor,
   mirrorLabel,
   normalizeBase,
+  parseMirrorStore,
   parseSnapshot,
   pickFastest,
   probeAll,
   rawUrlAt,
   releaseDownloadUrl,
+  serializeMirrorStore,
+  setMirrorRegistry,
   snapshotFresh,
   snapshotOf,
+  type MirrorStore,
   type ProbeResult,
 } from './lib/mirrors'
 import { buildPlan, countBy, filterRepos, runBatch } from './lib/repos'
@@ -99,6 +105,8 @@ type Sheet = SheetName
 const MIRROR_KEY = 'ghx.mirror'
 const MIRROR_AUTO_KEY = 'ghx.mirror.auto'
 const MIRROR_SPEED_KEY = 'ghx.mirror.speed'
+/** 站点表的「改地址 + 自定义站」，与当前选中的是哪台分开存 */
+const MIRROR_STORE_KEY = 'ghx.mirror.store'
 const SORT_KEY = 'ghx.sort'
 const AUTO_TRANSLATE_KEY = 'ghx.readme.auto'
 const TRANSLATE_CHANNEL_KEY = 'ghx.readme.channel'
@@ -169,6 +177,8 @@ export default function App() {
   const [activeWorkflow, setActiveWorkflow] = useState<{ repo: Repo; workflow: Workflow } | null>(null)
   const [activeRun, setActiveRun] = useState<{ repo: Repo; run: WorkflowRun } | null>(null)
   const [mirror, setMirror] = useState(DEFAULT_MIRROR)
+  /** 站点表：内置站点的改地址 + 用户自定义站点。改一处，全局（图片/安装包/发行版页）跟着变 */
+  const [mirrorStore, setMirrorStore] = useState<MirrorStore>(EMPTY_STORE)
   /** 是否让测速结果自动挑站；关掉就是用户自己指定 */
   const [mirrorAuto, setMirrorAuto] = useState(true)
   const [probe, setProbe] = useState<MirrorProbeState>({
@@ -383,14 +393,18 @@ export default function App() {
     setLoadingRepos(true)
     setRepoError(null)
     try {
+      // 每页 100（GitHub 上限），最多 20 页 = 2000 个仓库。
+      // 旧实现写死 6 页 ×30，最多只拉 180 个 —— 仓库多的人会「看不到自己的仓库」。
+      const PER_PAGE = 100
+      const MAX_PAGES = 20
       const acc: Repo[] = []
-      for (let page = 1; page <= 6; page += 1) {
-        const { data, rate } = await c.listRepos(page, 30, fresh)
+      for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const { data, rate } = await c.listRepos(page, PER_PAGE, fresh)
         acc.push(...data)
         if (rate && tokenId) {
           setQuota((q) => ({ ...q, [tokenId]: { remaining: rate.remaining, limit: rate.limit } }))
         }
-        if (data.length < 30) break
+        if (data.length < PER_PAGE) break
       }
       setRepos(acc)
       setSnapshotAt(null)
@@ -501,7 +515,15 @@ export default function App() {
         const savedMirror = await kv.get(MIRROR_KEY)
         const savedAutoMirror = await kv.get(MIRROR_AUTO_KEY)
         const savedSpeed = await kv.get(MIRROR_SPEED_KEY)
+        const savedMirrorStore = await kv.get(MIRROR_STORE_KEY)
         if (cancelled) return
+
+        // 先恢复站点表再谈「当前用哪台」：改过地址的站点必须先进注册表，
+        // 后面的 mirrorDefFor / githubUrlAt 才知道新域名该走哪种路径风格。
+        const store = parseMirrorStore(savedMirrorStore)
+        setMirrorStore(store)
+        setMirrorRegistry(effectiveMirrors(store))
+
         if (savedMirror) setMirror(savedMirror)
 
         // 加速站：自动模式下直接沿用上次测速选出的那台，冷启动不重复测
@@ -899,6 +921,30 @@ export default function App() {
   const openMirrors = useCallback((from: SheetName) => {
     setMirrorReturn(from)
     setSheet('mirrors')
+  }, [])
+
+  /**
+   * 只切当前站点，不改「自动/手动」偏好，也不关面板。
+   * 用在「给正在用的站点改地址」：用户只想换域名，不该顺手把自动测速关掉。
+   */
+  const applyMirror = useCallback((base: string) => {
+    const next = normalizeBase(base) || DEFAULT_MIRROR
+    setMirror(next)
+    if (kvRef.current) void kvRef.current.set(MIRROR_KEY, next)
+  }, [])
+
+  /**
+   * 保存站点表（改地址 / 加站 / 删站）。
+   *
+   * 这里必须同步更新模块级注册表：图片、安装包、发行版页只拿到 base，
+   * 靠注册表才知道该走「路径」还是「整段 URL」风格。改完不清空测速结果的话，
+   * 用户会看到旧域名还标着速度 —— 所以顺手作废本轮测速。
+   */
+  const saveMirrorStore = useCallback((next: MirrorStore) => {
+    setMirrorStore(next)
+    setMirrorRegistry(effectiveMirrors(next))
+    if (kvRef.current) void kvRef.current.set(MIRROR_STORE_KEY, serializeMirrorStore(next))
+    setProbe((prev) => ({ ...prev, results: [], at: null, error: null }))
   }, [])
 
   /**
@@ -1301,6 +1347,8 @@ export default function App() {
           mirrorAuto={mirrorAuto}
           mirrorSpeed={currentSpeed}
           mirrorCheckedAt={probe.at}
+          mirrorCustom={mirrorStore.custom.length}
+          mirrorChanged={Object.keys(mirrorStore.overrides).length}
           onOpenMirrors={() => openMirrors('none')}
           onOpenTokens={() => pushScreen('tokens')}
           onBack={popScreen}
@@ -1591,12 +1639,15 @@ export default function App() {
           current={mirror}
           auto={mirrorAuto}
           probe={probe}
+          store={mirrorStore}
           onProbe={() => void speedTest()}
           onUse={(base) => {
             useMirror(base)
             setSheet(mirrorReturn)
           }}
           onAuto={setAutoMirror}
+          onStore={saveMirrorStore}
+          onSwitch={applyMirror}
           onClose={() => setSheet(mirrorReturn)}
         />
       )}

@@ -4,6 +4,7 @@ import {
   hashText,
   needsTranslation,
   translateAzureBatch,
+  translateEdgeBatch,
   translateLongText,
   type TargetLang,
   type TranslateChannel,
@@ -23,20 +24,21 @@ export interface DescOptions {
   store: TranslationStore | null
 }
 
-/** 一次最多翻多少条简介。列表滚到底会换一批，不必一次全翻 */
-const LIMIT = 30
-/** 没有微软密钥时收着点：30 条短句能瞬间把 MyMemory 的免费额度打空 */
+/** 能批量发的时候一次翻这么多条：Edge / Azure 都是数组接口，一请求顶几十条 */
+const LIMIT_BATCH = 60
+/** 只能逐条翻的时候收着点：MyMemory 的免费额度经不起 60 条短句瞬间打空 */
 const LIMIT_FREE = 12
-/** 逐条翻的并发；MyMemory 给 2 就够，微软给 5 */
-const WORKERS = 4
+/** 逐条翻的并发；MyMemory 给 2 就够，Edge / 微软给 6 */
+const WORKERS = 6
 
 /**
  * 仓库简介的机翻缓存。
  *
  * 列表里每行都发一次请求会又慢又费额度，所以：
- * 1. 只翻当前列表前 30 条 + 正在看的详情；
+ * 1. 只翻当前列表前 N 条 + 正在看的详情；
  * 2. 先查本地译文缓存，命中直接显示；
- * 3. 配了微软密钥就批量发（25 条一请求），没有才逐条并发。
+ * 3. Edge / 微软都支持数组批量，优先一次发一整批（Edge 40 条/请求），
+ *    失败的部分才退回逐条 —— 这是「翻译慢」的主要来源，已按通道分开处理。
  */
 export function useDescTranslation(items: DescItem[], opts: DescOptions): Record<string, string> {
   const [map, setMap] = useState<Record<string, string>>({})
@@ -52,11 +54,26 @@ export function useDescTranslation(items: DescItem[], opts: DescOptions): Record
     let alive = true
 
     void (async () => {
+      const azureKey = (opts.azureKey ?? '').trim()
+
+      // 通道路由：显式选了谁就只认谁；自动模式 Edge 优先（免密钥、批量、国内可达）
+      const batchKind: 'edge' | 'azure' | null =
+        opts.channel === 'edge'
+          ? 'edge'
+          : opts.channel === 'azure'
+            ? azureKey
+              ? 'azure'
+              : null
+            : opts.channel === 'mymemory' || opts.channel === 'google'
+              ? null
+              : azureKey
+                ? 'azure'
+                : 'edge'
+
+      const limit = batchKind ? LIMIT_BATCH : LIMIT_FREE
       const hits: Record<string, string> = {}
       const pending: { key: string; text: string; cache: string }[] = []
 
-      const hasAzureKey = !!(opts.azureKey ?? '').trim()
-      const limit = hasAzureKey ? LIMIT : LIMIT_FREE
       for (const it of itemsRef.current.slice(0, limit)) {
         const text = (it.text ?? '').trim()
         if (!text || !needsTranslation(text, opts.target)) continue
@@ -70,26 +87,37 @@ export function useDescTranslation(items: DescItem[], opts: DescOptions): Record
       if (pending.length === 0) return
 
       let rest = pending
-      const azureKey = (opts.azureKey ?? '').trim()
-      if (azureKey && opts.channel !== 'mymemory' && opts.channel !== 'google') {
-        const out = await translateAzureBatch(
-          pending.map((p) => p.text),
-          { target: opts.target, azureKey },
-        )
-        if (!alive) return
+
+      /** 用某个批量通道发一批，返回没翻成的部分 */
+      async function runBatch(kind: 'edge' | 'azure'): Promise<typeof pending> {
+        const texts = rest.map((p) => p.text)
+        const out =
+          kind === 'edge'
+            ? await translateEdgeBatch(texts, { target: opts.target })
+            : await translateAzureBatch(texts, { target: opts.target, azureKey })
+        if (!alive) return []
         const add: Record<string, string> = {}
         out.forEach((text, i) => {
           if (!text) return
-          add[pending[i].key] = text
-          void store.set(pending[i].cache, text)
+          add[rest[i].key] = text
+          void store.set(rest[i].cache, text)
         })
         if (Object.keys(add).length > 0) setMap((prev) => ({ ...prev, ...add }))
-        rest = pending.filter((_, i) => !out[i])
-        if (rest.length === 0) return
+        return rest.filter((_, i) => !out[i])
       }
 
+      if (batchKind === 'edge') {
+        rest = await runBatch('edge')
+        // Edge 整批失败（被墙 / 接口下线）时，有微软密钥就再试一次批量
+        if (rest.length === pending.length && azureKey) rest = await runBatch('azure')
+      } else if (batchKind === 'azure') {
+        rest = await runBatch('azure')
+      }
+      if (!alive || rest.length === 0) return
+
+      // 剩下逐条走完整降级链（Edge → 微软 → MyMemory → Google）
       let cursor = 0
-      const workers = hasAzureKey ? WORKERS : 2
+      const workers = batchKind ? WORKERS : 2
       async function worker() {
         while (cursor < rest.length) {
           const p = rest[cursor]

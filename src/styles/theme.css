@@ -2044,9 +2044,11 @@ h1.title {
 
 .mrow-stat.bad {
   color: var(--red);
-  max-width: 108px;
+  max-width: 78px;
+  font-size: 9.5px;
   text-align: right;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 /* 更新页里可以点的镜像行 */
@@ -2275,4 +2277,91 @@ h1.title {
   font-size: 11px;
   line-height: 1.6;
   color: var(--text-dim);
+}
+
+/* ---- 加速站：站点管理（改地址 / 增删） ---- */
+.mrow-box {
+  border-top: 1px solid var(--line);
+}
+
+.mrow-box:first-child {
+  border-top: 0;
+}
+
+.mrow-box.on {
+  background: var(--blue-soft);
+}
+
+.mrow-line {
+  display: flex;
+  align-items: stretch;
+}
+
+.mrow-line .mrow {
+  flex: 1;
+  width: auto;
+  border-top: 0;
+}
+
+.mrow-line .mrow.on {
+  background: transparent;
+}
+
+.mrow-act {
+  flex: none;
+  width: 42px;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  border-left: 1px solid var(--line);
+  background: transparent;
+}
+
+.mrow-act:active {
+  background: var(--surface-2);
+}
+
+.mrow-tag {
+  font-style: normal;
+  font-size: 9.5px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+}
+
+.medit {
+  padding: 10px 12px 12px;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--line);
+}
+
+.medit .field {
+  margin-top: 10px;
+}
+
+.medit .field:first-child {
+  margin-top: 0;
+}
+
+.medit .seg {
+  margin: 6px 0 0;
+}
+
+.medit-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.medit-btns .btn {
+  flex: 1;
+  min-width: 0;
+}
+
+.seg.sm button {
+  font-size: 10.5px;
+  padding: 6px 0;
 }

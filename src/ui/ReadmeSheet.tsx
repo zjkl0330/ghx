@@ -184,15 +184,15 @@ export function ReadmeSheet(p: Props) {
         skip > 0 && translatedRef.current ? translatedRef.current : source.map((b) => ({ ...b }))
       if (skip === 0) applyTranslated(base)
       try {
-        const hasAzure = !!p.azureKey.trim()
+        // Edge 与微软单次都能吞整段，批量和并发可以开大；MyMemory 要克制，否则被限流
+        const bulk = !!p.azureKey.trim() || p.channel === 'edge' || p.channel === 'auto'
         const res = await translateBlocks(base, {
           channel: p.channel,
           store: p.store,
           target: p.target,
           azureKey: p.azureKey,
-          // 微软一次能吞整段，批量也能开大些；MyMemory 则要克制，否则会被限流
-          maxBlocks: hasAzure ? 40 : 20,
-          concurrency: hasAzure ? 5 : 3,
+          maxBlocks: bulk ? 40 : 20,
+          concurrency: bulk ? 6 : 3,
           skip,
           onProgress: (done, total) => setProgress({ done, total }),
           onBlock: (index, text) => {
@@ -447,10 +447,14 @@ export function ReadmeSheet(p: Props) {
           {zhFile
             ? '上面显示的是仓库自带的中文版，原样呈现，未做机翻。'
             : p.channel === 'google'
-              ? '当前使用 Google 通道，国内网络可能连不上，可在设置里换成 MyMemory 或微软。'
-              : `机翻仅作参考，代码块与专有名词不翻译。译文按内容缓存，同一份自述不会重复消耗额度。目标语言：${
-                TARGET_LANGS.find((t) => t.key === p.target)?.label ?? p.target
-              }。`}
+              ? '当前使用 Google 通道，国内网络可能连不上，可在设置里换成 Edge 或 MyMemory。'
+              : p.channel === 'edge'
+                ? `当前使用 Edge 免密钥通道，单次能翻整篇。目标语言：${
+                    TARGET_LANGS.find((t) => t.key === p.target)?.label ?? p.target
+                  }。译文按内容缓存，同一份自述不会重复消耗额度。`
+                : `机翻仅作参考，代码块与专有名词不翻译。译文按内容缓存，同一份自述不会重复消耗额度。目标语言：${
+                    TARGET_LANGS.find((t) => t.key === p.target)?.label ?? p.target
+                  }。`}
         </div>
       </div>
     </div>
