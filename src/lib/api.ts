@@ -1,4 +1,5 @@
 import { ResponseCache, ttlFor } from './cache'
+import { normalizeReadme, type RawReadme, type ReadmeFile } from './readme'
 import { normalizeRepo, type RawRepo } from './repos'
 import type {
   Fork,
@@ -273,6 +274,22 @@ export class GitHubClient {
       { fresh },
     )
     return { data: (data ?? []).map(normalizeRepo), rate, scopes }
+  }
+
+  /**
+   * 仓库自述。没有 README 时返回 null 而不是抛错 —— 空仓库很正常，
+   * 不该让详情页弹一个红色警告。
+   */
+  async readme(owner: string, name: string, fresh = false): Promise<Page<ReadmeFile | null>> {
+    try {
+      const res = await this.request<RawReadme>(`/repos/${owner}/${name}/readme`, {}, { fresh })
+      return { data: normalizeReadme(res.data), rate: res.rate, scopes: res.scopes }
+    } catch (err) {
+      if (err instanceof GitHubError && err.status === 404) {
+        return { data: null, rate: this.rate, scopes: this.scopes }
+      }
+      throw err
+    }
   }
 
   /**

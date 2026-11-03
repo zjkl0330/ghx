@@ -5,6 +5,8 @@ import { GitHubClient } from './lib/api'
 import { appendAudit, clearAudit, readAudit } from './lib/audit'
 import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
 import { buildPlan, countBy, filterRepos, runBatch } from './lib/repos'
+import { loadSnapshot, saveSnapshot, type Snapshot } from './lib/snapshot'
+import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
 import { createKV, type KV } from './lib/storage'
 import {
   applyTheme,
@@ -17,6 +19,16 @@ import {
   type ThemePref,
 } from './lib/theme'
 import { probeToken } from './lib/tokens'
+import {
+  DEFAULT_AUTO_TRANSLATE,
+  DEFAULT_CHANNEL,
+  TRANSLATE_CHANNELS,
+  normalizeAutoTranslate,
+  normalizeChannel,
+  kvStore,
+  type TranslateChannel,
+  type TranslationStore,
+} from './lib/translate'
 import {
   APP_VERSION,
   DEFAULT_MIRROR,
@@ -43,11 +55,13 @@ import { HotPage } from './ui/HotPage'
 import { LockedScreen } from './ui/LockedScreen'
 import { PipelinesPage } from './ui/PipelinesPage'
 import { ReleasesSheet } from './ui/ReleasesSheet'
+import { ReadmeSheet } from './ui/ReadmeSheet'
 import { RepoDetailSheet } from './ui/RepoDetailSheet'
 import { RepoList } from './ui/RepoList'
 import { RepoPickerSheet } from './ui/RepoPickerSheet'
 import { RunSheet } from './ui/RunSheet'
 import { SettingsPage } from './ui/SettingsPage'
+import { SortSheet } from './ui/SortSheet'
 import { StarsPage } from './ui/StarsPage'
 import { TokenVault } from './ui/TokenVault'
 import { UnlockScreen } from './ui/UnlockScreen'
@@ -62,6 +76,9 @@ type Tab = 'repos' | 'stars' | 'hot' | 'pipelines' | 'tokens' | 'settings'
 type Sheet = SheetName
 
 const MIRROR_KEY = 'ghx.mirror'
+const SORT_KEY = 'ghx.sort'
+const AUTO_TRANSLATE_KEY = 'ghx.readme.auto'
+const TRANSLATE_CHANNEL_KEY = 'ghx.readme.channel'
 
 export default function App() {
   const kvRef = useRef<KV | null>(null)
@@ -92,6 +109,13 @@ export default function App() {
   const [repos, setRepos] = useState<Repo[]>([])
   const [loadingRepos, setLoadingRepos] = useState(false)
   const [repoError, setRepoError] = useState<string | null>(null)
+  /** 当前列表来自本地快照的时间戳；有值说明还在后台刷新 */
+  const [snapshotAt, setSnapshotAt] = useState<number | null>(null)
+  const [sort, setSort] = useState<RepoSort>(DEFAULT_SORT)
+  /** 自述自动机翻的偏好，落盘后冷启动沿用 */
+  const [autoTranslate, setAutoTranslate] = useState(DEFAULT_AUTO_TRANSLATE)
+  const [translateChannel, setTranslateChannel] = useState<TranslateChannel>(DEFAULT_CHANNEL)
+  const [translateStore, setTranslateStore] = useState<TranslationStore | null>(null)
 
   const [tab, setTab] = useState<Tab>('repos')
   const [query, setQuery] = useState('')
@@ -300,6 +324,11 @@ export default function App() {
         if (data.length < 30) break
       }
       setRepos(acc)
+      setSnapshotAt(null)
+      setRepoError(null)
+      if (kvRef.current && tokenId) {
+        void saveSnapshot(kvRef.current, 'repos', tokenId, acc)
+      }
     } catch (err) {
       setRepoError((err as Error).message)
     } finally {
@@ -322,7 +351,19 @@ export default function App() {
       setSelectMode(false)
       setPipelineRepo(null)
       setSheet('none')
-      await loadRepos(c, id)
+
+      // 冷启动时先拿本地快照顶上，界面立刻有内容；网络请求放后台跑，
+      // 否则要等 6 页全部回来才能看到第一屏
+      const kv = kvRef.current
+      const snap: Snapshot<Repo[]> | null = kv
+        ? ((await loadSnapshot<Repo[]>(kv, 'repos', id)) as Snapshot<Repo[]> | null)
+        : null
+      if (snap) {
+        setRepos(snap.data)
+        setSnapshotAt(snap.at)
+        setLoadingRepos(true)
+      }
+      void loadRepos(c, id)
 
       // 后台确认归属与 scopes，失败不打断主流程，也不把令牌误标为失效
       void probeToken(c, rec.expiresAt)
@@ -390,6 +431,18 @@ export default function App() {
         const savedMirror = await kv.get(MIRROR_KEY)
         if (cancelled) return
         if (savedMirror) setMirror(savedMirror)
+
+        const savedSort = await kv.get(SORT_KEY)
+        if (cancelled) return
+        setSort(normalizeSort(savedSort))
+
+        // 自述翻译的偏好与译文缓存：译文按内容哈希存，重开 App 不必重新消耗额度
+        const savedAuto = await kv.get(AUTO_TRANSLATE_KEY)
+        const savedChannel = await kv.get(TRANSLATE_CHANNEL_KEY)
+        if (cancelled) return
+        setAutoTranslate(normalizeAutoTranslate(savedAuto))
+        setTranslateChannel(normalizeChannel(savedChannel))
+        setTranslateStore(kvStore(kv))
 
         const state = await v.autoUnlock()
         if (cancelled) return
@@ -794,8 +847,8 @@ export default function App() {
   }, [repos])
 
   const filtered = useMemo(
-    () => filterRepos(repos, { query, visibility, includeArchived: false }),
-    [repos, query, visibility],
+    () => sortRepos(filterRepos(repos, { query, visibility, includeArchived: false }), sort),
+    [repos, query, visibility, sort],
   )
 
   const activeRecord = records.find((r) => r.id === activeId) ?? null
@@ -880,6 +933,9 @@ export default function App() {
           }}
           updateVersion={updateResult?.hasUpdate ? (updateResult.info?.version ?? null) : null}
           onOpenUpdate={() => void runCheck(true)}
+          sort={sort}
+          onOpenSort={() => setSheet('sort')}
+          snapshotAt={snapshotAt}
           onCreate={() => {
             setCreateError(null)
             setSheet('create')
@@ -975,6 +1031,18 @@ export default function App() {
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}
+          autoTranslate={autoTranslate}
+          translateChannel={translateChannel}
+          onAutoTranslate={(on) => {
+            setAutoTranslate(on)
+            if (kvRef.current) void kvRef.current.set(AUTO_TRANSLATE_KEY, on ? 'on' : 'off')
+            showToast(on ? '打开自述时自动翻成中文' : '自述默认显示原文')
+          }}
+          onTranslateChannel={(ch) => {
+            setTranslateChannel(ch)
+            if (kvRef.current) void kvRef.current.set(TRANSLATE_CHANNEL_KEY, ch)
+            showToast(`翻译通道已切到${TRANSLATE_CHANNELS.find((c) => c.key === ch)?.label ?? ch}`)
+          }}
           secureMode={secureMode}
           guarded={guarded}
           onSetGuard={() => {
@@ -1111,6 +1179,7 @@ export default function App() {
           }}
           onOpenReleases={() => setSheet('releases')}
           onOpenForks={() => setSheet('forks')}
+          onOpenReadme={() => setSheet('readme')}
         />
       )}
 
@@ -1137,6 +1206,18 @@ export default function App() {
             setDetailRepo(r)
             setSheet('detail')
           }}
+        />
+      )}
+
+      {sheet === 'readme' && detailRepo && (
+        <ReadmeSheet
+          repo={detailRepo}
+          client={client}
+          autoTranslate={autoTranslate}
+          channel={translateChannel}
+          store={translateStore}
+          onClose={() => setSheet('detail')}
+          onToast={showToast}
         />
       )}
 
@@ -1185,6 +1266,17 @@ export default function App() {
             setPipelineRepo(r)
             setSheet('none')
             setPipelineReload((n) => n + 1)
+          }}
+          onClose={() => setSheet('none')}
+        />
+      )}
+
+      {sheet === 'sort' && (
+        <SortSheet
+          current={sort}
+          onPick={(next) => {
+            setSort(next)
+            if (kvRef.current) void kvRef.current.set(SORT_KEY, next)
           }}
           onClose={() => setSheet('none')}
         />

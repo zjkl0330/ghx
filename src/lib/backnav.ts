@@ -17,6 +17,8 @@ export type SheetName =
   | 'workflow'
   | 'run'
   | 'repoPick'
+  | 'sort'
+  | 'readme'
 
 /** 首页页签：从任何其他页签返回都回到这里 */
 export const HOME_TAB = 'repos'
@@ -50,6 +52,7 @@ export function sheetBackTarget(sheet: SheetName, hasWorkflow: boolean): SheetNa
     // 这两个是仓库详情的子页，关掉后回到详情，而不是整屏收起
     case 'releases':
     case 'forks':
+    case 'readme':
       return 'detail'
     case 'run':
       return hasWorkflow ? 'workflow' : 'none'

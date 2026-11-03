@@ -15,6 +15,7 @@ interface Props {
   onDeleted: (fullName: string) => void
   onAudit: (action: AuditEntry['action'], detail: { target: string; text: string }) => void
   onToast: (msg: string) => void
+  onOpenReadme: () => void
   onOpenWorkflows: () => void
   onOpenReleases: () => void
   onOpenForks: () => void
@@ -222,6 +223,7 @@ export function RepoDetailSheet(p: Props) {
               },
             )}
 
+          {action('readme', 'book', '项目自述', 'README 原文，可一键翻成中文', async () => p.onOpenReadme())}
           {action('workflows', 'play', '工作流', '查看 Actions、启停与手动运行', async () => p.onOpenWorkflows())}
 
           {action('releases', 'package', '发行版', '查看标签、附件与下载', async () => p.onOpenReleases())}

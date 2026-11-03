@@ -262,3 +262,35 @@ describe('请求缓存', () => {
     expect(res.total).toBe(1)
   })
 })
+
+describe('README', () => {
+  const b64 = (s: string) => Buffer.from(s, 'utf-8').toString('base64')
+
+  it('解码 base64 内容，中文不乱码', async () => {
+    const fn = mockFetch(200, {
+      name: 'README.md',
+      path: 'README.md',
+      size: 10,
+      encoding: 'base64',
+      content: `${b64('# 标题\n\n中文说明')}\n`,
+    })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    const res = await client.readme('o', 'a')
+    expect(res.data?.text).toContain('中文说明')
+    expect(res.data?.name).toBe('README.md')
+  })
+
+  it('没有 README 时返回 null 而不是抛错', async () => {
+    const fn = mockFetch(404, { message: 'Not Found' })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await expect(client.readme('o', 'a')).resolves.toEqual(
+      expect.objectContaining({ data: null }),
+    )
+  })
+
+  it('其他错误照常抛出', async () => {
+    const fn = mockFetch(500, { message: 'boom' })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await expect(client.readme('o', 'a')).rejects.toBeInstanceOf(GitHubError)
+  })
+})

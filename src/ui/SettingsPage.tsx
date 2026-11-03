@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
 import type { ResolvedTheme, ThemePref } from '../lib/theme'
+import { TRANSLATE_CHANNELS, type TranslateChannel } from '../lib/translate'
 import { DEFAULT_MIRROR } from '../lib/update'
 import { Icon } from './icons'
 
@@ -18,6 +19,10 @@ interface Props {
   themePref: ThemePref
   resolvedTheme: ResolvedTheme
   onTheme: (pref: ThemePref) => void
+  autoTranslate: boolean
+  translateChannel: TranslateChannel
+  onAutoTranslate: (on: boolean) => void
+  onTranslateChannel: (ch: TranslateChannel) => void
   secureMode: 'device' | 'passphrase'
   guarded: boolean
   onSetGuard: () => void
@@ -120,6 +125,39 @@ export function SettingsPage(p: Props) {
             <div className="hint" style={{ marginTop: 9 }}>
               当前显示{p.resolvedTheme === 'dark' ? '深色' : '浅色'}
               {p.themePref === 'system' ? '（跟随系统）' : ''}。切换立即生效，不用重启。
+            </div>
+          </div>
+
+          <div className="section-title">阅读</div>
+          <div className="panel">
+            <div className="seg" style={{ margin: 0 }}>
+              <button className={p.autoTranslate ? 'on' : ''} onClick={() => p.onAutoTranslate(true)}>
+                自动翻成中文
+              </button>
+              <button className={!p.autoTranslate ? 'on' : ''} onClick={() => p.onAutoTranslate(false)}>
+                只看原文
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 9 }}>
+              打开仓库的「项目自述」时，英文 README 会自动机翻成中文，随时可以切回原文。译文按内容缓存，同一份自述不会重复消耗免费额度。
+            </div>
+
+            <div className="section-title" style={{ marginTop: 16 }}>
+              翻译通道
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              {TRANSLATE_CHANNELS.map((c) => (
+                <button
+                  key={c.key}
+                  className={p.translateChannel === c.key ? 'on' : ''}
+                  onClick={() => p.onTranslateChannel(c.key)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <div className="hint" style={{ marginTop: 9 }}>
+              {TRANSLATE_CHANNELS.find((c) => c.key === p.translateChannel)?.hint ?? ''}
             </div>
           </div>
 

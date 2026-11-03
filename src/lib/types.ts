@@ -35,6 +35,7 @@ export interface Repo {
   stargazers_count: number
   forks_count: number
   pushed_at: string
+  updated_at?: string
   /** 搜索接口会返回，普通列表不一定有；热门页用它算日均 star */
   created_at?: string
   topics?: string[]

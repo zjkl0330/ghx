@@ -1,5 +1,16 @@
+import { snapshotAge } from '../lib/snapshot'
+import type { RepoSort } from '../lib/sort'
 import type { Repo } from '../lib/types'
 import { Icon } from './icons'
+
+/** 顶栏空间紧，排序按钮只放两三个字的简称 */
+const SORT_SHORT: Record<RepoSort, string> = {
+  pushed: '推送',
+  updated: '更新',
+  created: '创建',
+  stars: 'Star',
+  name: '名称',
+}
 
 const LANG_COLOR: Record<string, string> = {
   TypeScript: '#3178c6',
@@ -54,6 +65,10 @@ interface Props {
   onOpenUpdate: () => void
   onCreate: () => void
   canCreate: boolean
+  sort: RepoSort
+  onOpenSort: () => void
+  /** 有值表示当前列表来自本地快照，网络刷新还在后面跑 */
+  snapshotAt: number | null
 }
 
 export function RepoList(p: Props) {
@@ -98,22 +113,28 @@ export function RepoList(p: Props) {
         )}
       </div>
 
-      <div className="seg">
-        {(
-          [
-            ['all', `全部 ${p.counts.total}`],
-            ['public', `公开 ${p.counts.public}`],
-            ['private', `私有 ${p.counts.private}`],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            className={p.visibility === key ? 'on' : ''}
-            onClick={() => p.onVisibility(key)}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="segrow">
+        <div className="seg" style={{ margin: 0, flex: 1 }}>
+          {(
+            [
+              ['all', `全部 ${p.counts.total}`],
+              ['public', `公开 ${p.counts.public}`],
+              ['private', `私有 ${p.counts.private}`],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              className={p.visibility === key ? 'on' : ''}
+              onClick={() => p.onVisibility(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <button className="sortbtn" onClick={p.onOpenSort} aria-label="排列方式">
+          <Icon name="sort" size={13} />
+          {SORT_SHORT[p.sort]}
+        </button>
       </div>
 
       <div className="page" style={{ marginTop: 0 }}>
@@ -122,6 +143,12 @@ export function RepoList(p: Props) {
             <Icon name="download" size={14} />
             <span>新版本 v{p.updateVersion} 可用</span>
             <button onClick={p.onOpenUpdate}>查看</button>
+          </div>
+        )}
+
+        {p.snapshotAt !== null && p.loading && (
+          <div className="snapbar">
+            显示 {snapshotAge(p.snapshotAt)} 的本地数据，正在刷新…
           </div>
         )}
 

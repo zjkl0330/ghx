@@ -151,6 +151,18 @@ const P: Record<string, ReactNode> = {
     </>
   ),
   stop: <rect x="6.5" y="6.5" width="11" height="11" rx="2" />,
+  sort: (
+    <>
+      <path d="M7 4.5v15M7 19.5l-3-3M7 19.5l3-3" />
+      <path d="M17 19.5v-15M17 4.5l-3 3M17 4.5l3 3" />
+    </>
+  ),
+  book: (
+    <>
+      <path d="M4 5.5A1.5 1.5 0 015.5 4H11v16H5.5A1.5 1.5 0 014 18.5z" />
+      <path d="M20 5.5A1.5 1.5 0 0018.5 4H13v16h5.5A1.5 1.5 0 0020 18.5z" />
+    </>
+  ),
   trend: (
     <>
       <path d="M3 17l6-6 4 4 7-7" />
