@@ -2074,3 +2074,205 @@ h1.title {
   font-weight: 500;
   color: var(--blue);
 }
+
+/* ---- 个人页与二级页面 ---- */
+.avatar-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  border-radius: 50%;
+}
+
+.avatar-btn:active {
+  opacity: 0.75;
+}
+
+.who-btn {
+  text-align: left;
+  padding: 0;
+}
+
+.avatar-lg {
+  width: 58px;
+  height: 58px;
+  font-size: 22px;
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px 4px;
+}
+
+.profile-login {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-sub {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.profile-stats {
+  display: flex;
+  gap: 8px;
+  margin: 14px 16px 0;
+}
+
+.profile-stats > div {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 0;
+  text-align: center;
+}
+
+.profile-stats b {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.profile-stats i {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.profile-body {
+  padding: 0 16px;
+}
+
+.profile-body .section-title {
+  margin-top: 20px;
+}
+
+.profile-foot {
+  margin-top: 26px;
+  padding-bottom: 26px;
+  font-size: 10.5px;
+  line-height: 1.8;
+  color: var(--text-dim);
+}
+
+/* 开关行 */
+.tglrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+
+.tglrow:first-of-type {
+  border-top: 0;
+}
+
+.tgl-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.tgl-main b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.tgl-main i {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.tgl {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 40px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--line);
+  position: relative;
+  transition: background 0.16s ease;
+}
+
+.tgl::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.16s ease;
+}
+
+.tgl:checked {
+  background: var(--blue);
+}
+
+.tgl:checked::after {
+  transform: translateX(16px);
+}
+
+.tgl-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.keyrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg-deep);
+  border-radius: 8px;
+  padding: 0 4px 0 10px;
+  height: 38px;
+}
+
+.keyrow input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+/* 机翻标记 */
+.tr-mark {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  line-height: 1.6;
+  background: var(--blue-soft);
+  color: var(--blue);
+  vertical-align: 1px;
+}
+
+.det-src {
+  margin-top: 6px;
+  padding-left: 9px;
+  border-left: 2px solid var(--line);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}

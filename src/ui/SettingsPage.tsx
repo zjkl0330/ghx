@@ -1,8 +1,15 @@
 import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
-import type { ResolvedTheme, ThemePref } from '../lib/theme'
-import { TRANSLATE_CHANNELS, type TranslateChannel } from '../lib/translate'
 import { formatSpeed, mirrorLabel } from '../lib/mirrors'
+import type { ResolvedTheme, ThemePref } from '../lib/theme'
+import { TAB_DEFS, type TabKey } from '../lib/tabs'
+import {
+  TARGET_LANGS,
+  TRANSLATE_CHANNELS,
+  type TargetLang,
+  type TranslateChannel,
+  type TranslateScope,
+} from '../lib/translate'
 import { Icon } from './icons'
 
 interface Props {
@@ -19,10 +26,20 @@ interface Props {
   themePref: ThemePref
   resolvedTheme: ResolvedTheme
   onTheme: (pref: ThemePref) => void
-  autoTranslate: boolean
+  /** 哪些内容需要机翻 */
+  scope: TranslateScope
+  onScope: (next: TranslateScope) => void
+  /** 译文语言 */
+  target: TargetLang
+  onTarget: (t: TargetLang) => void
   translateChannel: TranslateChannel
-  onAutoTranslate: (on: boolean) => void
   onTranslateChannel: (ch: TranslateChannel) => void
+  /** 微软翻译密钥，空串表示没配 */
+  azureKey: string
+  onAzureKey: (key: string) => void
+  /** 底栏显示哪几个页签 */
+  tabs: TabKey[]
+  onToggleTab: (key: TabKey) => void
   secureMode: 'device' | 'passphrase'
   guarded: boolean
   onSetGuard: () => void
@@ -30,13 +47,12 @@ interface Props {
   onClearGuard: () => void
   onMigrate: () => void
   onSaveBaseUrl: (url: string) => void
-  /** 当前镜像是否由测速自动选择 */
   mirrorAuto: boolean
-  /** 当前镜像实测速度（KB/s） */
   mirrorSpeed: number | null
-  /** 上次测速时间 */
   mirrorCheckedAt: number | null
   onOpenMirrors: () => void
+  onOpenTokens: () => void
+  onBack: () => void
   onCheckUpdate: () => void
   onLock: () => void
   onOpenAudit: () => void
@@ -52,61 +68,51 @@ function ago(ts: number | null): string {
   return `${Math.floor(diff / 86_400_000)} 天前检查`
 }
 
+/** 开关行：整行可点，右侧一个滑动开关 */
+function SwitchRow(p: {
+  label: string
+  hint: string
+  on: boolean
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <label className="tglrow">
+      <span className="tgl-main">
+        <b>{p.label}</b>
+        <i>{p.hint}</i>
+      </span>
+      <input
+        type="checkbox"
+        className="tgl"
+        checked={p.on}
+        onChange={(e) => p.onChange(e.target.checked)}
+      />
+    </label>
+  )
+}
+
 export function SettingsPage(p: Props) {
   const [url, setUrl] = useState(p.baseUrl)
+  const [key, setKey] = useState(p.azureKey)
+  const [showKey, setShowKey] = useState(false)
   const changed = url.trim() !== p.baseUrl
+  const keyChanged = key.trim() !== p.azureKey.trim()
+  const azureRelevant = p.translateChannel === 'auto' || p.translateChannel === 'azure'
 
   return (
     <>
       <div className="topbar">
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.3px' }}>设置</div>
-          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3 }}>
-            {p.login ? `已连接 @${p.login}` : '未连接账号'}
-          </div>
+        <button className="icon-btn" onClick={p.onBack} aria-label="返回">
+          <Icon name="back" size={18} />
+        </button>
+        <div style={{ minWidth: 0 }}>
+          <div className="page-title">设置</div>
+          <div className="page-sub ellipsis">{p.login ? `已连接 @${p.login}` : '未连接账号'}</div>
         </div>
       </div>
 
       <div className="page">
         <div style={{ padding: '4px 16px 0' }}>
-          <div className="field">
-            <label htmlFor="base">API 地址</label>
-            <input
-              id="base"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder={DEFAULT_BASE_URL}
-              autoCapitalize="off"
-              spellCheck={false}
-            />
-            <div className="hint">
-              默认 {DEFAULT_BASE_URL}。github.com 网页打不开时该域名通常仍可用；如遇污染可改为可信镜像地址，只影响请求域名，令牌仍只发给你填的地址。
-            </div>
-          </div>
-          <button
-            className="btn ghost block"
-            style={{ marginTop: 10 }}
-            disabled={!changed}
-            onClick={() => p.onSaveBaseUrl(url.trim() || DEFAULT_BASE_URL)}
-          >
-            保存并重连
-          </button>
-
-          <div style={{ display: 'flex', gap: 8, marginTop: 22 }}>
-            <div className="tk" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>{p.repoCount}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>仓库</div>
-            </div>
-            <div className="tk" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>{p.tokenCount}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>令牌</div>
-            </div>
-            <div className="tk" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>{p.auditCount}</div>
-              <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>审计</div>
-            </div>
-          </div>
-
           <div className="section-title">外观</div>
           <div className="panel">
             <div className="seg" style={{ margin: 0 }}>
@@ -130,26 +136,62 @@ export function SettingsPage(p: Props) {
               当前显示{p.resolvedTheme === 'dark' ? '深色' : '浅色'}
               {p.themePref === 'system' ? '（跟随系统）' : ''}。切换立即生效，不用重启。
             </div>
+
+            <div className="section-title" style={{ marginTop: 18 }}>
+              底栏显示
+            </div>
+            <div className="chips" style={{ padding: '0 0 2px' }}>
+              {TAB_DEFS.map((t) => (
+                <button
+                  key={t.key}
+                  className={`chip${p.tabs.includes(t.key) ? ' on' : ''}`}
+                  onClick={() => p.onToggleTab(t.key)}
+                >
+                  {p.tabs.includes(t.key) ? '✓ ' : ''}
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              只影响底栏入口，功能都在。至少保留一个；流水线也随时能从仓库详情里进。
+            </div>
           </div>
 
-          <div className="section-title">阅读</div>
+          <div className="section-title">翻译</div>
           <div className="panel">
-            <div className="seg" style={{ margin: 0 }}>
-              <button className={p.autoTranslate ? 'on' : ''} onClick={() => p.onAutoTranslate(true)}>
-                自动翻成中文
-              </button>
-              <button className={!p.autoTranslate ? 'on' : ''} onClick={() => p.onAutoTranslate(false)}>
-                只看原文
-              </button>
-            </div>
-            <div className="hint" style={{ marginTop: 9 }}>
-              打开仓库的「项目自述」时，英文 README 会自动机翻成中文，随时可以切回原文。译文按内容缓存，同一份自述不会重复消耗免费额度。
+            <div className="tgl-label">译成</div>
+            <div className="chips" style={{ padding: '2px 0 0' }}>
+              {TARGET_LANGS.map((t) => (
+                <button
+                  key={t.key}
+                  className={`chip${p.target === t.key ? ' on' : ''}`}
+                  onClick={() => p.onTarget(t.key)}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
 
-            <div className="section-title" style={{ marginTop: 16 }}>
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              翻译哪些内容
+            </div>
+            <SwitchRow
+              label="项目自述"
+              hint="打开 README 时自动翻，边翻边显示"
+              on={p.scope.readme}
+              onChange={(v) => p.onScope({ ...p.scope, readme: v })}
+            />
+            <SwitchRow
+              label="仓库简介"
+              hint="列表与详情里的描述翻成中文，缓存后不再请求"
+              on={p.scope.desc}
+              onChange={(v) => p.onScope({ ...p.scope, desc: v })}
+            />
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
               翻译通道
             </div>
-            <div className="seg" style={{ margin: 0 }}>
+            <div className="seg" style={{ margin: 0, flexWrap: 'wrap' }}>
               {TRANSLATE_CHANNELS.map((c) => (
                 <button
                   key={c.key}
@@ -163,6 +205,77 @@ export function SettingsPage(p: Props) {
             <div className="hint" style={{ marginTop: 9 }}>
               {TRANSLATE_CHANNELS.find((c) => c.key === p.translateChannel)?.hint ?? ''}
             </div>
+
+            {azureRelevant && (
+              <div className="field" style={{ marginTop: 12 }}>
+                <label htmlFor="azure">微软翻译密钥</label>
+                <div className="keyrow">
+                  <input
+                    id="azure"
+                    type={showKey ? 'text' : 'password'}
+                    value={key}
+                    onChange={(e) => setKey(e.target.value)}
+                    placeholder="Azure 翻译资源的密钥，可留空"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    className="icon-btn"
+                    onClick={() => setShowKey((v) => !v)}
+                    aria-label={showKey ? '隐藏密钥' : '显示密钥'}
+                  >
+                    <Icon name={showKey ? 'eyeOff' : 'eye'} size={16} />
+                  </button>
+                </div>
+                <div className="hint">
+                  在 Azure 门户创建「翻译」资源后可拿到密钥，免费 F0 档每月 200 万字符。填了之后
+                  自动模式优先走微软：一次能翻整段，比 MyMemory 少几十个请求，也基本不会漏段。
+                </div>
+                <button
+                  className="btn ghost block"
+                  style={{ marginTop: 8 }}
+                  disabled={!keyChanged}
+                  onClick={() => p.onAzureKey(key.trim())}
+                >
+                  保存密钥
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="section-title">账号与网络</div>
+          <div className="panel">
+            <button className="linkrow" onClick={p.onOpenTokens}>
+              <span className="linkrow-main">
+                <b>令牌保险库</b>
+                <i>{p.tokenCount > 0 ? `${p.tokenCount} 个凭据 · 点此切换或校验` : '还没有令牌'}</i>
+              </span>
+              <Icon name="chevron" size={13} className="linkrow-arrow" />
+            </button>
+
+            <div className="field" style={{ marginTop: 12 }}>
+              <label htmlFor="base">API 地址</label>
+              <input
+                id="base"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder={DEFAULT_BASE_URL}
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+              <div className="hint">
+                默认 {DEFAULT_BASE_URL}。github.com 网页打不开时该域名通常仍可用；如遇污染可改为可信镜像地址，只影响请求域名，令牌仍只发给你填的地址。
+              </div>
+            </div>
+            <button
+              className="btn ghost block"
+              style={{ marginTop: 10 }}
+              disabled={!changed}
+              onClick={() => p.onSaveBaseUrl(url.trim() || DEFAULT_BASE_URL)}
+            >
+              保存并重连
+            </button>
           </div>
 
           <div className="section-title">安全</div>
@@ -263,22 +376,14 @@ export function SettingsPage(p: Props) {
             </button>
           </div>
 
-          <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ marginTop: 20 }}>
             <button className="btn ghost block" onClick={p.onLock}>
               <Icon name="lock" size={14} />
               锁定保险库
             </button>
           </div>
 
-          <div
-            style={{
-              marginTop: 28,
-              fontSize: 10.5,
-              color: 'var(--text-dim)',
-              lineHeight: 1.8,
-              paddingBottom: 24,
-            }}
-          >
+          <div className="profile-foot" style={{ marginTop: 26 }}>
             ghx v{p.version} · 无后端、无遥测
             <br />
             令牌只在发起请求时于内存中解密，请求直连你配置的 API 地址。

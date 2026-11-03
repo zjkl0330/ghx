@@ -63,6 +63,10 @@ interface Props {
   account: string | null
   /** 真实头像；加载失败或为空时回退到首字母 */
   avatarUrl?: string | null
+  /** 打开个人页（点头像进） */
+  onOpenProfile: () => void
+  /** 已翻好的仓库简介，按 full_name 索引 */
+  descZh?: Record<string, string>
   onOpenRepo: (repo: Repo) => void
   updateVersion: string | null
   onOpenUpdate: () => void
@@ -82,20 +86,22 @@ export function RepoList(p: Props) {
   return (
     <>
       <div className="topbar">
-        {showAvatar ? (
-          <img
-            className="avatar avatar-img"
-            src={p.avatarUrl as string}
-            alt={p.account ?? '头像'}
-            onError={() => setAvatarFailed(true)}
-          />
-        ) : (
-          <div className="avatar">{initial}</div>
-        )}
-        <div className="who">
+        <button className="avatar-btn" onClick={p.onOpenProfile} aria-label="打开个人页">
+          {showAvatar ? (
+            <img
+              className="avatar avatar-img"
+              src={p.avatarUrl as string}
+              alt={p.account ?? '头像'}
+              onError={() => setAvatarFailed(true)}
+            />
+          ) : (
+            <div className="avatar">{initial}</div>
+          )}
+        </button>
+        <button className="who who-btn" onClick={p.onOpenProfile}>
           {p.account ? `@${p.account}` : '未连接账号'}
           <span> · {p.counts.total} 个仓库</span>
-        </div>
+        </button>
         <div className="spacer" />
         <button className="icon-btn" onClick={p.onRefresh} aria-label="刷新">
           <Icon name="refresh" size={17} />
@@ -182,7 +188,7 @@ export function RepoList(p: Props) {
         {!p.loading && p.repos.length === 0 && !p.error && (
           <div className="empty">
             <b>没有匹配的仓库</b>
-            {p.hasToken ? '换个筛选条件，或点右上角刷新。' : '先到「令牌」页导入一个 PAT。'}
+            {p.hasToken ? '换个筛选条件，或点右上角刷新。' : '点左上角头像进「令牌保险库」，导入一个 PAT。'}
           </div>
         )}
 
@@ -214,7 +220,17 @@ export function RepoList(p: Props) {
                       <span className="badge">{r.private ? 'Private' : 'Public'}</span>
                       {r.archived && <span className="badge archived">Archived</span>}
                     </span>
-                    {r.description && <span className="row-desc" style={{ display: 'block' }}>{r.description}</span>}
+                    {(() => {
+                      const zh = p.descZh?.[r.full_name]
+                      const text = zh ?? r.description
+                      if (!text) return null
+                      return (
+                        <span className="row-desc" style={{ display: 'block' }}>
+                          {text}
+                          {zh && <span className="tr-mark">译</span>}
+                        </span>
+                      )
+                    })()}
                     <span className="row-meta">
                       {r.language && (
                         <span>

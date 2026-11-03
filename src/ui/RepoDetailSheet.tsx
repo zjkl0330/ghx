@@ -12,6 +12,8 @@ interface Props {
   /** 当前登录账号，用来判断这个仓库是不是自己的 */
   login: string | null
   mirror: string
+  /** 已翻好的简介；没有就显示原文 */
+  descZh?: string | null
   onClose: () => void
   onChanged: (repo: Repo) => void
   onDeleted: (fullName: string) => void
@@ -62,6 +64,8 @@ export function RepoDetailSheet(p: Props) {
   const [topicText, setTopicText] = useState(topicsToInput(p.repo.topics))
   const [saving, setSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  /** 机翻简介旁边给一个「看原文」的开关，别让人以为原文就是这样 */
+  const [showSrc, setShowSrc] = useState(false)
 
   const owner = p.repo.owner
   const name = p.repo.name
@@ -171,7 +175,22 @@ export function RepoDetailSheet(p: Props) {
         </div>
 
         {p.repo.description && (
-          <div className="det-desc">{p.repo.description}</div>
+          <div className="det-desc">
+            {p.descZh ? (
+              <>
+                <div>
+                  {p.descZh}
+                  <span className="tr-mark">译</span>
+                </div>
+                <button className="linkbtn" style={{ marginTop: 4 }} onClick={() => setShowSrc((v) => !v)}>
+                  {showSrc ? '收起原文' : '看原文'}
+                </button>
+                {showSrc && <div className="det-src">{p.repo.description}</div>}
+              </>
+            ) : (
+              p.repo.description
+            )}
+          </div>
         )}
 
         <div className="det-stats">

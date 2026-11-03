@@ -1,27 +1,85 @@
 /**
- * README 机翻。
+ * README 与简介机翻。
  *
  * 约束来自真实的免费通道：
  * - MyMemory 单次请求上限 500 字节，超了直接返回警告串，所以必须切段；
  * - Google 的 gtx 端点没有官方承诺，国内常常连不通，只能当备选；
- * - 两者都会把换行转成 `&#10;`，要反转义回来。
+ * - 微软（Azure Translator）质量和速度最好，但需要一个免费 F0 密钥；
+ * - 三者都会把换行转成 `&#10;`，要反转义回来。
  *
- * 因此这里做三件事：按字节切分、按通道顺序降级、译文按内容哈希缓存。
+ * 因此这里做四件事：按通道上限切分、按通道顺序降级、长段落分段后再拼回、
+ * 译文按「通道 + 目标语言 + 内容哈希」缓存。
+ *
+ * 早期的坑：一个段落整块丢给 MyMemory，超过 500 字节直接被拒，
+ * 于是长段落静悄悄留在英文 —— 现在先在块内切分再翻，不会再漏。
  */
 import type { KV } from './storage'
 
-export type TranslateChannel = 'auto' | 'google' | 'mymemory'
+export type TranslateChannel = 'auto' | 'azure' | 'google' | 'mymemory'
 
 export const TRANSLATE_CHANNELS: { key: TranslateChannel; label: string; hint: string }[] = [
-  { key: 'auto', label: '自动', hint: '先用 MyMemory，失败再试 Google' },
-  { key: 'mymemory', label: 'MyMemory', hint: '国内可达，单段 500 字节上限' },
-  { key: 'google', label: 'Google', hint: '质量稍好，但国内常连不上' },
+  { key: 'auto', label: '自动', hint: '有微软密钥就先走微软，失败退回 MyMemory / Google' },
+  { key: 'azure', label: '微软', hint: '需要免费的 Azure 翻译密钥，单次可翻整段，速度最快' },
+  { key: 'mymemory', label: 'MyMemory', hint: '不用密钥，国内可达，但单段 450 字节要切很多次' },
+  { key: 'google', label: 'Google', hint: '质量不错，但国内常常连不上' },
 ]
+
+/** 可选的译文语言。默认简体中文。 */
+export type TargetLang = 'zh-CN' | 'zh-TW' | 'en' | 'ja' | 'ko'
+
+export const TARGET_LANGS: { key: TargetLang; label: string }[] = [
+  { key: 'zh-CN', label: '简体中文' },
+  { key: 'zh-TW', label: '繁體中文' },
+  { key: 'en', label: 'English' },
+  { key: 'ja', label: '日本語' },
+  { key: 'ko', label: '한국어' },
+]
+
+export const DEFAULT_TARGET: TargetLang = 'zh-CN'
+
+/** 哪些内容需要翻。设置页三个开关直接映射到这里。 */
+export interface TranslateScope {
+  /** 项目自述 */
+  readme: boolean
+  /** 仓库简介 */
+  desc: boolean
+  /** 发行版说明 */
+  release: boolean
+}
+
+export const DEFAULT_SCOPE: TranslateScope = { readme: true, desc: true, release: false }
+
+export function normalizeTarget(raw: string | null | undefined): TargetLang {
+  const v = (raw ?? '').trim()
+  const hit = TARGET_LANGS.find((t) => t.key.toLowerCase() === v.toLowerCase())
+  return hit?.key ?? DEFAULT_TARGET
+}
+
+export function targetLabel(t: TargetLang): string {
+  return TARGET_LANGS.find((x) => x.key === t)?.label ?? t
+}
+
+/** 翻译范围存成 JSON；缺字段或脏数据按默认补全，不会因为一半坏掉就全关 */
+export function parseScope(raw: string | null | undefined): TranslateScope {
+  if (!raw) return { ...DEFAULT_SCOPE }
+  try {
+    const obj = JSON.parse(raw) as Partial<TranslateScope>
+    return {
+      readme: typeof obj.readme === 'boolean' ? obj.readme : DEFAULT_SCOPE.readme,
+      desc: typeof obj.desc === 'boolean' ? obj.desc : DEFAULT_SCOPE.desc,
+      release: typeof obj.release === 'boolean' ? obj.release : DEFAULT_SCOPE.release,
+    }
+  } catch {
+    return { ...DEFAULT_SCOPE }
+  }
+}
 
 /** MyMemory 免费额度按字符算，单段留点余量 */
 export const MYMEMORY_MAX_BYTES = 450
 /** Google 走 URL 传参，太长会被截断 */
 export const GOOGLE_MAX_BYTES = 1400
+/** 微软单次可到 5 万字符；分段只是为了失败时不整段丢，4000 足够稳 */
+export const AZURE_MAX_BYTES = 4000
 
 /** 默认走自动降级；国内网络下这是成功率最高的组合 */
 export const DEFAULT_CHANNEL: TranslateChannel = 'auto'
@@ -31,7 +89,7 @@ export const DEFAULT_AUTO_TRANSLATE = true
 /** 存进本地的通道值可能是旧版本、空白或脏数据，一律归一到合法值 */
 export function normalizeChannel(raw: string | null | undefined): TranslateChannel {
   const v = (raw ?? '').trim().toLowerCase()
-  if (v === 'google' || v === 'mymemory' || v === 'auto') return v
+  if (v === 'google' || v === 'mymemory' || v === 'azure' || v === 'auto') return v
   return DEFAULT_CHANNEL
 }
 
@@ -52,6 +110,14 @@ export interface TranslateOptions {
   timeout?: number
   /** 一段原文最多切成几段，防止超长段落发出几十个请求 */
   maxChunks?: number
+  /** 译文语言，默认简体中文 */
+  target?: TargetLang
+  /** 微软翻译密钥（Azure Translator 的 Ocp-Apim-Subscription-Key） */
+  azureKey?: string
+  /** 微软翻译区域；多区域资源才需要，留空走 global */
+  azureRegion?: string
+  /** 覆盖单次请求的字节上限；默认按通道取 */
+  maxBytes?: number
 }
 
 export class TranslateError extends Error {
@@ -75,6 +141,33 @@ export function hasChinese(text: string): boolean {
   const han = text.match(/[\u4e00-\u9fa5]/g)?.length ?? 0
   const letters = text.replace(/\s/g, '').length || 1
   return han / letters > 0.15
+}
+
+/**
+ * 这段文字对目标语言来说还需不需要翻。
+ *
+ * 不能用 hasChinese 一刀切：一句中文里夹了一串英文术语（很常见），
+ * 中文占比就过线，结果整段被跳过 —— 这正是「明明有英文却没翻」的另一个来源。
+ * 这里按「非目标语言字符占比」判断，中文目标下只要还有成片的英文就翻。
+ */
+export function needsTranslation(text: string, target: TargetLang = DEFAULT_TARGET): boolean {
+  const visible = text.replace(/\s/g, '').length || 1
+  const cjk = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []).length
+  const latin = (text.match(/[A-Za-z\u00c0-\u024f]/g) ?? []).length
+
+  if (target.startsWith('zh')) {
+    // 中文已经占了大头，偶尔几个英文单词（API、Docker）不值得再翻一遍
+    if (cjk / visible >= 0.35) return false
+    return latin >= 2
+  }
+  if (target === 'ja' || target === 'ko') {
+    // 日文汉字与中文重叠，只有假名/谚文才算「已经是目标语言」
+    if (target === 'ja' && (text.match(/[\u3040-\u30ff]/g) ?? []).length > 0) return false
+    if (target === 'ko' && (text.match(/[\uac00-\ud7af]/g) ?? []).length > 0) return false
+    return latin >= 2
+  }
+  // 目标英文：拉丁字母占比够高就认为已经是英文
+  return latin / visible < 0.6
 }
 
 /** 通道返回里常见的 HTML 实体 */
@@ -193,13 +286,29 @@ function withTimeout(fetchImpl: typeof fetch, ms: number): typeof fetch {
   }
 }
 
-async function viaMyMemory(text: string, f: typeof fetch): Promise<string> {
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+async function viaMyMemory(text: string, f: typeof fetch, target: TargetLang): Promise<string> {
+  // 源语言尽量留 auto：README 不一定是英文，写死 en 会把日文仓库翻成乱码
+  const source = (text.match(/[A-Za-z]/g) ?? []).length >= text.replace(/\s/g, '').length / 2 ? 'en' : 'Autodetect'
   const url =
     'https://api.mymemory.translated.net/get?q=' +
     encodeURIComponent(text) +
-    '&langpair=en|zh-CN'
-  const res = await f(url)
-  if (!res.ok) throw new TranslateError(`MyMemory 返回 ${res.status}`, 'mymemory')
+    `&langpair=${encodeURIComponent(source)}|${encodeURIComponent(target)}`
+
+  // 免费额度很容易撞 429。撞上就退让一下再试，别一条 429 就判整段失败 ——
+  // 用户看到的就是「明明有英文却没翻」。
+  let res = await f(url)
+  for (let attempt = 0; attempt < 2 && !res.ok && (res.status === 429 || res.status >= 500); attempt += 1) {
+    await sleep(700 * (attempt + 1))
+    res = await f(url)
+  }
+  if (!res.ok) {
+    throw new TranslateError(
+      res.status === 429 ? 'MyMemory 免费额度用完了，换微软通道会快很多' : `MyMemory 返回 ${res.status}`,
+      'mymemory',
+    )
+  }
   const body = (await res.json()) as {
     responseData?: { translatedText?: string }
     responseStatus?: number | string
@@ -213,9 +322,58 @@ async function viaMyMemory(text: string, f: typeof fetch): Promise<string> {
   return unescapeHtml(out)
 }
 
-async function viaGoogle(text: string, f: typeof fetch): Promise<string> {
+/**
+ * 微软翻译（Azure Translator）。
+ *
+ * 需要用户自己在 Azure 建一个「翻译」资源，免费 F0 档每月 200 万字符。
+ * 好处是单次能吞下整段（我们切到 4000 字节只是为了失败时少丢内容），
+ * 长 README 的请求数比 MyMemory 少一个数量级，速度和排版连贯性都更好。
+ */
+async function viaAzure(
+  text: string,
+  f: typeof fetch,
+  opts: TranslateOptions,
+): Promise<string> {
+  const key = (opts.azureKey ?? '').trim()
+  if (!key) throw new TranslateError('还没填微软翻译密钥', 'azure')
+  const target = opts.target ?? DEFAULT_TARGET
+  const region = (opts.azureRegion ?? '').trim()
+  const res = await f(
+    `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${encodeURIComponent(target)}`,
+    {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': key,
+        ...(region ? { 'Ocp-Apim-Subscription-Region': region } : {}),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([{ Text: text }]),
+    },
+  )
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new TranslateError('微软密钥无效或额度用尽', 'azure')
+    }
+    if (res.status === 429) throw new TranslateError('微软翻译额度已用完', 'azure')
+    throw new TranslateError(`微软返回 ${res.status}`, 'azure')
+  }
+  const body = (await res.json()) as unknown
+  if (!Array.isArray(body) || !Array.isArray(body[0]?.translations)) {
+    throw new TranslateError('微软返回结构异常', 'azure')
+  }
+  const out = (body[0].translations as { text?: string }[])
+    .map((t) => t.text ?? '')
+    .join('')
+    .trim()
+  if (!out) throw new TranslateError('微软未返回译文', 'azure')
+  return unescapeHtml(out)
+}
+
+async function viaGoogle(text: string, f: typeof fetch, target: TargetLang): Promise<string> {
   const url =
-    'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=' +
+    'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' +
+    encodeURIComponent(target) +
+    '&dt=t&q=' +
     encodeURIComponent(text)
   const res = await f(url)
   if (!res.ok) throw new TranslateError(`Google 返回 ${res.status}`, 'google')
@@ -237,23 +395,134 @@ export async function translateChunk(
 ): Promise<{ text: string; channel: Exclude<TranslateChannel, 'auto'> }> {
   const f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
   const timed = withTimeout(f, opts.timeout ?? 12_000)
+  const hasAzure = !!(opts.azureKey ?? '').trim()
   const order: Exclude<TranslateChannel, 'auto'>[] =
     opts.channel === 'google'
       ? ['google']
       : opts.channel === 'mymemory'
         ? ['mymemory']
-        : ['mymemory', 'google']
+        : opts.channel === 'azure'
+          ? ['azure']
+          : hasAzure
+            ? ['azure', 'mymemory', 'google']
+            : ['mymemory', 'google']
 
   const errors: string[] = []
   for (const ch of order) {
     try {
-      const out = ch === 'google' ? await viaGoogle(text, timed) : await viaMyMemory(text, timed)
+      const out = await viaChannel(ch, text, timed, opts)
       return { text: out, channel: ch }
     } catch (err) {
       errors.push(`${ch}: ${(err as Error).message}`)
     }
   }
   throw new TranslateError(errors.join(' | ') || '翻译失败', order.join('+'))
+}
+
+const joinGlue = (target: TargetLang) => (target.match(/^(zh|ja|ko)/) ? '' : ' ')
+
+/**
+ * 走某个通道。手上有的是「整段」文字，但各通道各有上限：
+ * 自动模式用微软的 4000 字节上限切好、结果微软挂了退回 MyMemory 时，
+ * 这一整段仍然超 450 字节。所以这里对超限的段落就地再切一次，
+ * 保证「换通道降级」不会因为长度直接判死。
+ */
+async function viaChannel(
+  ch: Exclude<TranslateChannel, 'auto'>,
+  text: string,
+  f: typeof fetch,
+  opts: TranslateOptions,
+): Promise<string> {
+  const target = opts.target ?? DEFAULT_TARGET
+  const cap = ch === 'azure' ? AZURE_MAX_BYTES : ch === 'google' ? GOOGLE_MAX_BYTES : MYMEMORY_MAX_BYTES
+  const run = (piece: string) =>
+    ch === 'azure'
+      ? viaAzure(piece, f, opts)
+      : ch === 'google'
+        ? viaGoogle(piece, f, target)
+        : viaMyMemory(piece, f, target)
+
+  if (byteLength(text) <= cap) return run(text)
+
+  const parts = splitByBytes(text, cap)
+  const out: string[] = new Array(parts.length)
+  let cursor = 0
+  let ok = 0
+  async function worker() {
+    while (cursor < parts.length) {
+      const i = cursor
+      cursor += 1
+      try {
+        out[i] = await run(parts[i])
+        ok += 1
+      } catch {
+        out[i] = parts[i]
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, parts.length) }, worker))
+  if (ok === 0) throw new TranslateError('分段后仍然全部失败', ch)
+  return out.join(joinGlue(target))
+}
+
+/** 当前通道单次请求的字节上限 */
+export function maxBytesFor(opts: TranslateOptions = {}): number {
+  if (opts.maxBytes) return opts.maxBytes
+  const ch = opts.channel ?? 'auto'
+  if (ch === 'azure') return AZURE_MAX_BYTES
+  if (ch === 'google') return GOOGLE_MAX_BYTES
+  if (ch === 'mymemory') return MYMEMORY_MAX_BYTES
+  return (opts.azureKey ?? '').trim() ? AZURE_MAX_BYTES : MYMEMORY_MAX_BYTES
+}
+
+/**
+ * 翻译任意长度的一段文字：超上限就切分，逐段翻完按原顺序拼回。
+ * 单独一段失败只留那一段的原文，不会把整段（或整篇）拖垮 —— 这是
+ * 「长段落整块发出去被 MyMemory 拒绝、结果一直显示英文」的根治办法。
+ */
+export async function translateLongText(
+  text: string,
+  opts: TranslateOptions & { concurrency?: number } = {},
+): Promise<{ text: string; channel: string }> {
+  const trimmed = text.trim()
+  if (!trimmed) return { text: '', channel: 'none' }
+  const parts = splitByBytes(trimmed, maxBytesFor(opts))
+  if (parts.length <= 1) {
+    const r = await translateChunk(trimmed, opts)
+    return { text: r.text, channel: r.channel }
+  }
+
+  const out: string[] = new Array(parts.length)
+  let channel = 'cached'
+  let okCount = 0
+  let cursor = 0
+  const limit = Math.max(1, opts.concurrency ?? 3)
+  async function worker() {
+    while (cursor < parts.length) {
+      const i = cursor
+      cursor += 1
+      try {
+        const r = await translateChunk(parts[i], opts)
+        out[i] = r.text
+        channel = r.channel
+        okCount += 1
+      } catch {
+        out[i] = parts[i]
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, parts.length) }, worker))
+  if (okCount === 0) throw new TranslateError('分段翻译全部失败', opts.channel ?? 'auto')
+  // 中文/日文/韩文之间不加空格，否则会多出一堆奇怪的空白
+  return { text: out.join(joinGlue(opts.target ?? DEFAULT_TARGET)), channel }
+}
+
+/** 缓存键：通道 + 目标语言 + 内容哈希。默认中文不带语言段，兼容旧缓存。 */
+export function cacheKeyFor(opts: TranslateOptions, text: string): string {
+  const ch = opts.channel ?? 'auto'
+  const target = opts.target ?? DEFAULT_TARGET
+  const lang = target === DEFAULT_TARGET ? '' : `${target}.`
+  return `${ch}.${lang}${hashText(text)}`
 }
 
 export interface TranslationStore {
@@ -315,7 +584,7 @@ export async function translateText(
   const trimmed = text.trim()
   if (!trimmed) return { text: '', channel: 'none', cached: 0, total: 0 }
 
-  const maxBytes = opts.channel === 'google' ? GOOGLE_MAX_BYTES : MYMEMORY_MAX_BYTES
+  const maxBytes = maxBytesFor(opts)
   let chunks = splitByBytes(trimmed, maxBytes)
   if (opts.maxChunks && chunks.length > opts.maxChunks) {
     chunks = chunks.slice(0, opts.maxChunks)
@@ -327,7 +596,7 @@ export async function translateText(
   const pending: number[] = []
 
   for (let i = 0; i < chunks.length; i += 1) {
-    const key = `${opts.channel ?? 'auto'}.${hashText(chunks[i])}`
+    const key = cacheKeyFor(opts, chunks[i])
     const hit = opts.store ? await opts.store.get(key) : null
     if (hit !== null) {
       results[i] = hit
@@ -348,7 +617,7 @@ export async function translateText(
         const r = await translateChunk(chunks[idx], opts)
         results[idx] = r.text
         channel = r.channel
-        if (opts.store) await opts.store.set(`${opts.channel ?? 'auto'}.${hashText(chunks[idx])}`, r.text)
+        if (opts.store) await opts.store.set(cacheKeyFor(opts, chunks[idx]), r.text)
       } catch {
         results[idx] = chunks[idx]
       }
@@ -406,7 +675,7 @@ export async function translateBlocks<B extends BlockLike>(
     const b = blocks[i]
     if (b.kind === 'code' || b.kind === 'hr' || b.kind === 'img') continue
     const text = (b.text ?? '').trim()
-    if (!text || hasChinese(text)) continue
+    if (!text || !needsTranslation(text, opts.target ?? DEFAULT_TARGET)) continue
     all.push(i)
   }
 
@@ -429,7 +698,7 @@ export async function translateBlocks<B extends BlockLike>(
       const idx = targets[cursor]
       cursor += 1
       const src = (blocks[idx].text ?? '').trim()
-      const key = `${opts.channel ?? 'auto'}.${hashText(src)}`
+      const key = cacheKeyFor(opts, src)
       try {
         const hit = opts.store ? await opts.store.get(key) : null
         if (hit !== null) {
@@ -437,7 +706,8 @@ export async function translateBlocks<B extends BlockLike>(
           ok += 1
           opts.onBlock?.(idx, hit)
         } else {
-          const r = await translateChunk(src, opts)
+          // 长段落先在块内按通道上限切分再翻，否则 MyMemory 直接拒绝、整段留在英文
+          const r = await translateLongText(src, opts)
           out[idx] = { ...out[idx], text: r.text }
           channel = r.channel
           ok += 1
@@ -465,4 +735,51 @@ export async function translateBlocks<B extends BlockLike>(
     next,
     remaining: Math.max(0, all.length - targets.length),
   }
+}
+
+/**
+ * 微软批量翻译：一次请求最多 100 条（这里按 25 条发，单条再长也不会撞上限）。
+ * 简介这种「几十条短句」的场景用它比逐条发快一个数量级。
+ * 失败返回 null，调用方可以退回逐条翻译。
+ */
+export async function translateAzureBatch(
+  texts: string[],
+  opts: TranslateOptions = {},
+): Promise<(string | null)[]> {
+  const key = (opts.azureKey ?? '').trim()
+  const f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
+  const out: (string | null)[] = new Array(texts.length).fill(null)
+  if (!key || texts.length === 0) return out
+  const target = opts.target ?? DEFAULT_TARGET
+  const timed = withTimeout(f, opts.timeout ?? 15_000)
+  const region = (opts.azureRegion ?? '').trim()
+  const BATCH = 25
+
+  for (let start = 0; start < texts.length; start += BATCH) {
+    const slice = texts.slice(start, start + BATCH)
+    try {
+      const res = await timed(
+        `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${encodeURIComponent(target)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Ocp-Apim-Subscription-Key': key,
+            ...(region ? { 'Ocp-Apim-Subscription-Region': region } : {}),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(slice.map((Text) => ({ Text }))),
+        },
+      )
+      if (!res.ok) continue
+      const body = (await res.json()) as { translations?: { text?: string }[] }[]
+      if (!Array.isArray(body) || body.length !== slice.length) continue
+      body.forEach((item, i) => {
+        const text = item.translations?.[0]?.text
+        if (text) out[start + i] = unescapeHtml(text)
+      })
+    } catch {
+      /* 这一批失败，留 null 让调用方兜底 */
+    }
+  }
+  return out
 }

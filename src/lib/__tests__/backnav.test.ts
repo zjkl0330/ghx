@@ -12,7 +12,7 @@ function state(patch: Partial<BackState> = {}): BackState {
   return {
     screen: 'app',
     guardSheetOpen: false,
-    auditOpen: false,
+    screenDepth: 0,
     sheet: 'none',
     hasWorkflow: false,
     selectMode: false,
@@ -85,13 +85,23 @@ describe('resolveBack 层级顺序', () => {
     expect(resolveBack(state({ sheet: 'run' }))).toEqual({ kind: 'sheet', to: 'none' })
   })
 
-  it('审计页是设置的子页，先退出审计', () => {
-    expect(resolveBack(state({ auditOpen: true, tab: 'settings' }))).toEqual({ kind: 'close-audit' })
+  it('二级页面先退一层，而不是回首页', () => {
+    expect(resolveBack(state({ screenDepth: 1, tab: 'stars' }))).toEqual({ kind: 'pop-screen' })
+    expect(resolveBack(state({ screenDepth: 2, sheet: 'none' }))).toEqual({ kind: 'pop-screen' })
   })
 
-  it('审计页优先于页签判断', () => {
-    const action = resolveBack(state({ auditOpen: true, tab: 'settings' }))
-    expect(action.kind).not.toBe('home')
+  it('页面栈优先于多选与页签', () => {
+    const action = resolveBack(state({ screenDepth: 1, selectMode: true, tab: 'stars' }))
+    expect(action).toEqual({ kind: 'pop-screen' })
+  })
+
+  it('页面栈里的弹层仍然先关弹层', () => {
+    expect(resolveBack(state({ screenDepth: 1, sheet: 'add' }))).toEqual({ kind: 'sheet', to: 'none' })
+  })
+
+  it('隐藏了仓库页签时，首页是底栏第一个可见项', () => {
+    expect(resolveBack(state({ tab: 'stars', homeTab: 'stars' }))).toEqual({ kind: 'exit' })
+    expect(resolveBack(state({ tab: 'hot', homeTab: 'stars' }))).toEqual({ kind: 'home' })
   })
 
   it('多选状态先退出多选', () => {
@@ -103,7 +113,7 @@ describe('resolveBack 层级顺序', () => {
   })
 
   it('非首页页签回到首页', () => {
-    for (const tab of ['stars', 'hot', 'pipelines', 'tokens', 'settings']) {
+    for (const tab of ['stars', 'hot', 'pipelines']) {
       expect(resolveBack(state({ tab }))).toEqual({ kind: 'home' })
     }
   })

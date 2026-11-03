@@ -34,14 +34,19 @@ import {
   type ThemePref,
 } from './lib/theme'
 import { probeToken } from './lib/tokens'
+import { DEFAULT_TABS, TAB_DEFS, fallbackTab, normalizeTabs, toggleTab, type TabKey } from './lib/tabs'
 import {
-  DEFAULT_AUTO_TRANSLATE,
   DEFAULT_CHANNEL,
-  TRANSLATE_CHANNELS,
+  DEFAULT_SCOPE,
+  DEFAULT_TARGET,
+  kvStore,
   normalizeAutoTranslate,
   normalizeChannel,
-  kvStore,
+  normalizeTarget,
+  parseScope,
+  type TargetLang,
   type TranslateChannel,
+  type TranslateScope,
   type TranslationStore,
 } from './lib/translate'
 import { APP_VERSION, checkForUpdate, UPDATE_OWNER, UPDATE_REPO, type UpdateCheckResult } from './lib/update'
@@ -65,6 +70,7 @@ import { HotPage } from './ui/HotPage'
 import { LockedScreen } from './ui/LockedScreen'
 import { MirrorSheet, type MirrorProbeState } from './ui/MirrorSheet'
 import { PipelinesPage } from './ui/PipelinesPage'
+import { ProfilePage } from './ui/ProfilePage'
 import { ReleasesSheet } from './ui/ReleasesSheet'
 import { ReadmeSheet } from './ui/ReadmeSheet'
 import { RepoDetailSheet } from './ui/RepoDetailSheet'
@@ -79,10 +85,14 @@ import { UnlockScreen } from './ui/UnlockScreen'
 import { UpdateSheet, type UpdatePhase } from './ui/UpdateSheet'
 import { VisibilitySheet } from './ui/VisibilitySheet'
 import { WorkflowSheet } from './ui/WorkflowSheet'
+import { useDescTranslation } from './ui/useDescTranslation'
 import { Icon } from './ui/icons'
 import './styles/theme.css'
 
-type Tab = 'repos' | 'stars' | 'hot' | 'pipelines' | 'tokens' | 'settings'
+/** 底栏页签：只有仓库 / 星标 / 热门，用户可在设置里勾掉其中几个 */
+type Tab = TabKey
+/** 二级页面。settings / tokens / audit 都从个人页进，流水线从仓库详情或底栏进 */
+type Screen = 'main' | 'profile' | 'settings' | 'tokens' | 'audit' | 'pipelines'
 /** 弹层类型与返回栈共用一套定义，避免两边漏改 */
 type Sheet = SheetName
 
@@ -92,6 +102,10 @@ const MIRROR_SPEED_KEY = 'ghx.mirror.speed'
 const SORT_KEY = 'ghx.sort'
 const AUTO_TRANSLATE_KEY = 'ghx.readme.auto'
 const TRANSLATE_CHANNEL_KEY = 'ghx.readme.channel'
+const TRANSLATE_TARGET_KEY = 'ghx.tr.target'
+const TRANSLATE_SCOPE_KEY = 'ghx.tr.scope'
+const AZURE_KEY = 'ghx.tr.azure'
+const TABS_KEY = 'ghx.tabs'
 
 export default function App() {
   const kvRef = useRef<KV | null>(null)
@@ -125,12 +139,19 @@ export default function App() {
   /** 当前列表来自本地快照的时间戳；有值说明还在后台刷新 */
   const [snapshotAt, setSnapshotAt] = useState<number | null>(null)
   const [sort, setSort] = useState<RepoSort>(DEFAULT_SORT)
-  /** 自述自动机翻的偏好，落盘后冷启动沿用 */
-  const [autoTranslate, setAutoTranslate] = useState(DEFAULT_AUTO_TRANSLATE)
+  /** 要翻哪些内容（自述 / 简介），落盘后冷启动沿用 */
+  const [scope, setScope] = useState<TranslateScope>(DEFAULT_SCOPE)
   const [translateChannel, setTranslateChannel] = useState<TranslateChannel>(DEFAULT_CHANNEL)
+  const [translateTarget, setTranslateTarget] = useState<TargetLang>(DEFAULT_TARGET)
+  const [azureKey, setAzureKey] = useState('')
   const [translateStore, setTranslateStore] = useState<TranslationStore | null>(null)
 
   const [tab, setTab] = useState<Tab>('repos')
+  /** 底栏要显示哪些入口，用户可在设置里勾 */
+  const [tabs, setTabs] = useState<TabKey[]>(DEFAULT_TABS)
+  /** 二级页面栈。第一层是主界面，后面的全部叠在上面 */
+  const [screenStack, setScreenStack] = useState<Screen[]>(['main'])
+  const screen = screenStack[screenStack.length - 1] ?? 'main'
   const [query, setQuery] = useState('')
   const [visibility, setVisibility] = useState<'all' | 'public' | 'private'>('all')
   const [selectMode, setSelectMode] = useState(false)
@@ -147,7 +168,6 @@ export default function App() {
   const [pipelineReload, setPipelineReload] = useState(0)
   const [activeWorkflow, setActiveWorkflow] = useState<{ repo: Repo; workflow: Workflow } | null>(null)
   const [activeRun, setActiveRun] = useState<{ repo: Repo; run: WorkflowRun } | null>(null)
-  const [auditOpen, setAuditOpen] = useState(false)
   const [mirror, setMirror] = useState(DEFAULT_MIRROR)
   /** 是否让测速结果自动挑站；关掉就是用户自己指定 */
   const [mirrorAuto, setMirrorAuto] = useState(true)
@@ -200,11 +220,12 @@ export default function App() {
   const backStateRef = useRef<BackState>({
     screen: 'app',
     guardSheetOpen: false,
-    auditOpen: false,
+    screenDepth: 0,
     sheet: 'none',
     hasWorkflow: false,
     selectMode: false,
     tab: 'repos',
+    homeTab: 'repos',
     mirrorReturn: 'none',
   })
 
@@ -212,14 +233,25 @@ export default function App() {
   backStateRef.current = {
     screen: unlocked ? 'app' : needPass ? 'unlock' : 'locked',
     guardSheetOpen: guardSheet !== null,
-    auditOpen,
+    screenDepth: Math.max(0, screenStack.length - 1),
     sheet,
     hasWorkflow: activeWorkflow !== null,
     selectMode,
     tab,
+    homeTab: tabs[0] ?? 'repos',
     mirrorReturn,
     sheetLocked: sheet === 'visibility' && phase === 'running',
   }
+
+  /** 打开二级页面（个人页 / 设置 / 令牌 / 审计 / 流水线） */
+  const pushScreen = useCallback((next: Screen) => {
+    setScreenStack((prev) => [...prev, next])
+  }, [])
+
+  /** 二级页面退一层；已经在主界面就什么都不做 */
+  const popScreen = useCallback(() => {
+    setScreenStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev))
+  }, [])
 
   const requestExit = useCallback(async () => {
     // 网页里没有「退出 App」这回事，只提示，避免按下去毫无反应
@@ -266,16 +298,15 @@ export default function App() {
         setGuardSheet(null)
         setGuardError(null)
         return
-      case 'close-audit':
-        setAuditOpen(false)
+      case 'pop-screen':
+        popScreen()
         return
       case 'exit-select':
         setSelectMode(false)
         setSelected(new Set())
         return
       case 'home':
-        setTab('repos')
-        setAuditOpen(false)
+        setTab(tabs[0] ?? 'repos')
         return
       case 'sheet':
         closeSheetTo(action.to)
@@ -286,7 +317,7 @@ export default function App() {
       default:
         void requestExit()
     }
-  }, [closeSheetTo, requestExit])
+  }, [closeSheetTo, popScreen, requestExit, tabs])
 
   // 物理返回键：接管后系统不再直接 finish 掉 Activity
   useEffect(() => {
@@ -506,10 +537,21 @@ export default function App() {
         // 自述翻译的偏好与译文缓存：译文按内容哈希存，重开 App 不必重新消耗额度
         const savedAuto = await kv.get(AUTO_TRANSLATE_KEY)
         const savedChannel = await kv.get(TRANSLATE_CHANNEL_KEY)
+        const savedScope = await kv.get(TRANSLATE_SCOPE_KEY)
+        const savedTarget = await kv.get(TRANSLATE_TARGET_KEY)
+        const savedAzure = await kv.get(AZURE_KEY)
+        const savedTabs = await kv.get(TABS_KEY)
         if (cancelled) return
-        setAutoTranslate(normalizeAutoTranslate(savedAuto))
+        // 旧版只存了「自述自动翻译」一个开关，迁移成翻译范围里的自述项
+        const legacyZh = normalizeAutoTranslate(savedAuto)
+        setScope(savedScope ? parseScope(savedScope) : { ...DEFAULT_SCOPE, readme: legacyZh })
+        setTranslateTarget(normalizeTarget(savedTarget))
+        setAzureKey(savedAzure ?? '')
         setTranslateChannel(normalizeChannel(savedChannel))
         setTranslateStore(kvStore(kv))
+        const savedTabList = normalizeTabs(savedTabs)
+        setTabs(savedTabList)
+        setTab((cur) => fallbackTab(savedTabList, cur))
 
         const state = await v.autoUnlock()
         if (cancelled) return
@@ -991,7 +1033,7 @@ export default function App() {
     // 锁屏前把弹层一并收起，否则解锁后会直接弹回上次那个面板
     setSheet('none')
     setGuardSheet(null)
-    setAuditOpen(false)
+    setScreenStack(['main'])
     setTab('repos')
     showToast(needsPassword ? '已锁定，需要口令解锁' : '已锁定，数据已从内存清除')
   }
@@ -1010,15 +1052,33 @@ export default function App() {
 
   // 进入流水线页默认选最近推送的仓库，省得每次都要先挑一遍
   useEffect(() => {
-    if (tab !== 'pipelines') return
+    if (screen !== 'pipelines') return
     if (pipelineRepo && repos.some((r) => r.full_name === pipelineRepo.full_name)) return
     if (repos.length > 0) setPipelineRepo(repos[0])
-  }, [tab, pipelineRepo, repos])
+  }, [screen, pipelineRepo, repos])
 
   function go(next: Tab) {
     setTab(next)
-    setAuditOpen(false)
+    setScreenStack(['main'])
   }
+
+  // 简介机翻：只翻当前列表前 30 条 + 正在看的详情，结果按 full_name 索引。
+  // 钩子必须放在口令屏 / 锁定屏的提前 return 之前，否则钩子数量会不固定。
+  const descItems = useMemo(() => {
+    const list = filtered.slice(0, 30).map((r) => ({ key: r.full_name, text: r.description }))
+    if (detailRepo && !list.some((x) => x.key === detailRepo.full_name)) {
+      list.push({ key: detailRepo.full_name, text: detailRepo.description })
+    }
+    return list
+  }, [filtered, detailRepo])
+
+  const descZh = useDescTranslation(descItems, {
+    enabled: scope.desc,
+    channel: translateChannel,
+    target: translateTarget,
+    azureKey,
+    store: translateStore,
+  })
 
   if (!ready) {
     return (
@@ -1069,7 +1129,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {tab === 'repos' && (
+      {screen === 'main' && tab === 'repos' && (
         <RepoList
           repos={filtered}
           loading={loadingRepos}
@@ -1091,6 +1151,8 @@ export default function App() {
           hasToken={records.length > 0}
           account={activeRecord?.login ?? null}
           avatarUrl={activeRecord?.avatarUrl ?? null}
+          onOpenProfile={() => pushScreen('profile')}
+          descZh={descZh}
           onOpenRepo={(r) => {
             setDetailRepo(r)
             setSheet('detail')
@@ -1108,23 +1170,7 @@ export default function App() {
         />
       )}
 
-      {tab === 'tokens' && (
-        <TokenVault
-          records={records}
-          activeId={activeId}
-          checking={checking}
-          onActivate={(id) => void activate(id)}
-          onAdd={() => {
-            setAddError(null)
-            setSheet('add')
-          }}
-          onRemove={(id) => void removeToken(id)}
-          onCheck={(id) => void checkToken(id)}
-          quota={quota}
-        />
-      )}
-
-      {tab === 'stars' && (
+      {screen === 'main' && tab === 'stars' && (
         <StarsPage
           client={client}
           login={activeRecord?.login ?? null}
@@ -1150,7 +1196,7 @@ export default function App() {
         />
       )}
 
-      {tab === 'hot' && (
+      {screen === 'main' && tab === 'hot' && (
         <HotPage
           client={client}
           onOpenRepo={(r) => {
@@ -1161,26 +1207,26 @@ export default function App() {
         />
       )}
 
-      {tab === 'pipelines' && (
-        <PipelinesPage
-          client={client}
-          repo={pipelineRepo}
-          reloadKey={pipelineReload}
-          onPickRepo={() => setSheet('repoPick')}
-          onOpenWorkflow={(w) => {
-            if (!pipelineRepo) return
-            setActiveWorkflow({ repo: pipelineRepo, workflow: w })
-            setSheet('workflow')
-          }}
-          onOpenRun={(r) => {
-            if (!pipelineRepo) return
-            setActiveRun({ repo: pipelineRepo, run: r })
-            setSheet('run')
-          }}
+      {screen === 'profile' && (
+        <ProfilePage
+          login={activeRecord?.login ?? null}
+          avatarUrl={activeRecord?.avatarUrl ?? null}
+          repoCount={repos.length}
+          tokenCount={records.length}
+          auditCount={audit.length}
+          version={APP_VERSION}
+          latestVersion={updateResult?.latest ?? null}
+          hasUpdate={!!updateResult?.hasUpdate}
+          onBack={popScreen}
+          onOpenTokens={() => pushScreen('tokens')}
+          onOpenSettings={() => pushScreen('settings')}
+          onOpenAudit={() => pushScreen('audit')}
+          onCheckUpdate={() => void runCheck(true)}
+          onLock={lockVault}
         />
       )}
 
-      {tab === 'settings' && !auditOpen && (
+      {screen === 'settings' && (
         <SettingsPage
           baseUrl={baseUrl}
           login={activeRecord?.login ?? null}
@@ -1195,17 +1241,44 @@ export default function App() {
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}
-          autoTranslate={autoTranslate}
-          translateChannel={translateChannel}
-          onAutoTranslate={(on) => {
-            setAutoTranslate(on)
-            if (kvRef.current) void kvRef.current.set(AUTO_TRANSLATE_KEY, on ? 'on' : 'off')
-            showToast(on ? '打开自述时自动翻成中文' : '自述默认显示原文')
+          scope={scope}
+          onScope={(next) => {
+            setScope(next)
+            if (kvRef.current) void kvRef.current.set(TRANSLATE_SCOPE_KEY, JSON.stringify(next))
+            showToast(
+              next.readme || next.desc
+                ? `翻译范围：${[next.readme ? '自述' : '', next.desc ? '简介' : ''].filter(Boolean).join('、')}`
+                : '已关闭机翻',
+            )
           }}
+          target={translateTarget}
+          onTarget={(t) => {
+            setTranslateTarget(t)
+            if (kvRef.current) void kvRef.current.set(TRANSLATE_TARGET_KEY, t)
+            showToast(`译文语言改为${t}`)
+          }}
+          translateChannel={translateChannel}
           onTranslateChannel={(ch) => {
             setTranslateChannel(ch)
             if (kvRef.current) void kvRef.current.set(TRANSLATE_CHANNEL_KEY, ch)
-            showToast(`翻译通道已切到${TRANSLATE_CHANNELS.find((c) => c.key === ch)?.label ?? ch}`)
+            showToast(`翻译通道已切换`)
+          }}
+          azureKey={azureKey}
+          onAzureKey={(key) => {
+            setAzureKey(key)
+            if (kvRef.current) void kvRef.current.set(AZURE_KEY, key)
+            showToast(key ? '微软翻译密钥已保存' : '已清除微软翻译密钥')
+          }}
+          tabs={tabs}
+          onToggleTab={(key) => {
+            const next = toggleTab(tabs, key)
+            if (next === tabs) {
+              showToast('底栏至少要留一个入口')
+              return
+            }
+            setTabs(next)
+            setTab((cur) => fallbackTab(next, cur))
+            if (kvRef.current) void kvRef.current.set(TABS_KEY, JSON.stringify(next))
           }}
           secureMode={secureMode}
           guarded={guarded}
@@ -1229,10 +1302,12 @@ export default function App() {
           mirrorSpeed={currentSpeed}
           mirrorCheckedAt={probe.at}
           onOpenMirrors={() => openMirrors('none')}
+          onOpenTokens={() => pushScreen('tokens')}
+          onBack={popScreen}
           onCheckUpdate={() => void runCheck(true)}
           onSaveBaseUrl={(url) => void saveBaseUrl(url)}
           onLock={lockVault}
-          onOpenAudit={() => setAuditOpen(true)}
+          onOpenAudit={() => pushScreen('audit')}
           onClearAudit={() => {
             if (!kvRef.current) return
             void clearAudit(kvRef.current).then(() => {
@@ -1243,10 +1318,27 @@ export default function App() {
         />
       )}
 
-      {tab === 'settings' && auditOpen && (
+      {screen === 'tokens' && (
+        <TokenVault
+          records={records}
+          activeId={activeId}
+          checking={checking}
+          onActivate={(id) => void activate(id)}
+          onAdd={() => {
+            setAddError(null)
+            setSheet('add')
+          }}
+          onRemove={(id) => void removeToken(id)}
+          onCheck={(id) => void checkToken(id)}
+          quota={quota}
+          onBack={popScreen}
+        />
+      )}
+
+      {screen === 'audit' && (
         <AuditLog
           entries={audit}
-          onBack={() => setAuditOpen(false)}
+          onBack={popScreen}
           onClear={() => {
             if (!kvRef.current) return
             void clearAudit(kvRef.current).then(() => {
@@ -1257,7 +1349,27 @@ export default function App() {
         />
       )}
 
-      {selectMode && selected.size > 0 && (
+      {screen === 'pipelines' && (
+        <PipelinesPage
+          client={client}
+          repo={pipelineRepo}
+          reloadKey={pipelineReload}
+          onBack={popScreen}
+          onPickRepo={() => setSheet('repoPick')}
+          onOpenWorkflow={(w) => {
+            if (!pipelineRepo) return
+            setActiveWorkflow({ repo: pipelineRepo, workflow: w })
+            setSheet('workflow')
+          }}
+          onOpenRun={(r) => {
+            if (!pipelineRepo) return
+            setActiveRun({ repo: pipelineRepo, run: r })
+            setSheet('run')
+          }}
+        />
+      )}
+
+      {screen === 'main' && selectMode && selected.size > 0 && (
         <div className="actionbar">
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>已选 {selected.size}</span>
           <div className="spacer" />
@@ -1270,32 +1382,29 @@ export default function App() {
         </div>
       )}
 
-      <nav className="tabbar">
-        <button className={tab === 'repos' ? 'on' : ''} onClick={() => go('repos')}>
-          <Icon name="repo" size={19} />
-          仓库
-        </button>
-        <button className={tab === 'stars' ? 'on' : ''} onClick={() => go('stars')}>
-          <Icon name="star" size={19} />
-          星标
-        </button>
-        <button className={tab === 'hot' ? 'on' : ''} onClick={() => go('hot')}>
-          <Icon name="trend" size={19} />
-          热门
-        </button>
-        <button className={tab === 'pipelines' ? 'on' : ''} onClick={() => go('pipelines')}>
-          <Icon name="play" size={19} />
-          流水线
-        </button>
-        <button className={tab === 'tokens' ? 'on' : ''} onClick={() => go('tokens')}>
-          <Icon name="key" size={19} />
-          令牌
-        </button>
-        <button className={tab === 'settings' ? 'on' : ''} onClick={() => go('settings')}>
-          <Icon name="gear" size={19} />
-          设置
-        </button>
-      </nav>
+      {screen === 'main' && (
+        <nav className="tabbar">
+          {tabs.map((key) => {
+            const def = TAB_DEFS.find((t) => t.key === key)
+            if (!def) return null
+            const on = tab === key
+            return (
+              <button
+                key={key}
+                className={on ? 'on' : ''}
+                onClick={() => {
+                  if (key === 'pipelines') pushScreen('pipelines')
+                  else go(key)
+                }}
+              >
+                <Icon name={def.icon} size={19} />
+                {def.label}
+              </button>
+            )
+          })}
+        </nav>
+      )}
+
 
       {sheet === 'add' && (
         <AddTokenSheet
@@ -1329,6 +1438,7 @@ export default function App() {
           client={client}
           login={activeRecord?.login ?? null}
           mirror={mirror}
+          descZh={descZh[detailRepo.full_name] ?? null}
           onClose={() => setSheet('none')}
           onChanged={patchRepo}
           onDeleted={(fullName) => {
@@ -1342,7 +1452,7 @@ export default function App() {
           onOpenWorkflows={() => {
             setPipelineRepo(detailRepo)
             setSheet('none')
-            setTab('pipelines')
+            pushScreen('pipelines')
           }}
           onOpenReleases={() => setSheet('releases')}
           onOpenForks={() => setSheet('forks')}
@@ -1381,8 +1491,10 @@ export default function App() {
           repo={detailRepo}
           client={client}
           mirror={mirror}
-          autoTranslate={autoTranslate}
+          autoTranslate={scope.readme}
           channel={translateChannel}
+          target={translateTarget}
+          azureKey={azureKey}
           store={translateStore}
           onClose={() => setSheet('detail')}
           onToast={showToast}

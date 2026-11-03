@@ -9,6 +9,8 @@ interface Props {
   repo: Repo | null
   /** 外部动作（触发、取消、切换仓库）后加一，用来强制刷新 */
   reloadKey?: number
+  /** 作为二级页面时的返回 */
+  onBack: () => void
   onPickRepo: () => void
   onOpenWorkflow: (workflow: Workflow) => void
   onOpenRun: (run: WorkflowRun) => void
@@ -75,6 +77,9 @@ export function PipelinesPage(p: Props) {
   return (
     <>
       <div className="topbar">
+        <button className="icon-btn" onClick={p.onBack} aria-label="返回">
+          <Icon name="back" size={18} />
+        </button>
         <div style={{ minWidth: 0 }}>
           <div className="page-title">流水线</div>
           <div className="page-sub ellipsis">

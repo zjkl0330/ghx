@@ -254,6 +254,25 @@ describe('请求缓存', () => {
     expect(fn.mock.calls.length).toBe(3)
   })
 
+  it('搜索按最佳匹配时不带 sort 参数，交给 GitHub 相关性排序', async () => {
+    const fn = counted({ total_count: 1, incomplete_results: false, items: [repo] })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.searchRepos('docker', { sort: 'best' })
+    const url = String((fn.mock.calls[0] as unknown[])[0])
+    expect(url).toContain('/search/repositories')
+    expect(url).toContain('q=docker')
+    expect(url).not.toContain('sort=')
+  })
+
+  it('搜索指定排序时带上 sort 与 order', async () => {
+    const fn = counted({ total_count: 1, incomplete_results: false, items: [repo] })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.searchRepos('docker', { sort: 'updated' })
+    const url = String((fn.mock.calls[0] as unknown[])[0])
+    expect(url).toContain('sort=updated')
+    expect(url).toContain('order=desc')
+  })
+
   it('搜索接口走自己的路径键', async () => {
     const fn = counted({ total_count: 1, incomplete_results: false, items: [repo] })
     const client = new GitHubClient({ token: 't', fetchImpl: fn })

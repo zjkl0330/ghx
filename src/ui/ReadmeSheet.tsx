@@ -6,7 +6,9 @@ import { parseMarkdown, type Block } from '../lib/markdown'
 import { looksChinese, type ReadmeFile } from '../lib/readme'
 import { openExternal } from '../lib/update'
 import {
+  TARGET_LANGS,
   translateBlocks,
+  type TargetLang,
   type TranslateChannel,
   type TranslationStore,
 } from '../lib/translate'
@@ -21,6 +23,10 @@ interface Props {
   /** 设置里「自动翻译自述」的开关 */
   autoTranslate: boolean
   channel: TranslateChannel
+  /** 译文语言 */
+  target: TargetLang
+  /** 微软翻译密钥；有值时一次能翻整段 */
+  azureKey: string
   store: TranslationStore | null
   onClose: () => void
   onToast: (msg: string) => void
@@ -178,11 +184,15 @@ export function ReadmeSheet(p: Props) {
         skip > 0 && translatedRef.current ? translatedRef.current : source.map((b) => ({ ...b }))
       if (skip === 0) applyTranslated(base)
       try {
+        const hasAzure = !!p.azureKey.trim()
         const res = await translateBlocks(base, {
           channel: p.channel,
           store: p.store,
-          maxBlocks: 20,
-          concurrency: 3,
+          target: p.target,
+          azureKey: p.azureKey,
+          // 微软一次能吞整段，批量也能开大些；MyMemory 则要克制，否则会被限流
+          maxBlocks: hasAzure ? 40 : 20,
+          concurrency: hasAzure ? 5 : 3,
           skip,
           onProgress: (done, total) => setProgress({ done, total }),
           onBlock: (index, text) => {
@@ -196,6 +206,11 @@ export function ReadmeSheet(p: Props) {
         if (res.translated === 0 && skip === 0) {
           setView('source')
           if (res.total > 0) setTranslateError('所有段落都没翻成功，网络可能不通，先看原文吧')
+        } else if (res.translated < res.total) {
+          // 部分失败也要说清楚，否则用户只会看到「怎么还有几段英文」
+          setTranslateError(
+            `有 ${res.total - res.translated} 段没翻成（免费通道容易限流），点重试只补翻这些段`,
+          )
         }
       } catch (err) {
         setTranslateError((err as Error).message)
@@ -204,7 +219,7 @@ export function ReadmeSheet(p: Props) {
         setTranslating(false)
       }
     },
-    [p.channel, p.store, applyTranslated],
+    [p.channel, p.store, p.target, p.azureKey, applyTranslated],
   )
 
   const load = useCallback(
@@ -432,8 +447,10 @@ export function ReadmeSheet(p: Props) {
           {zhFile
             ? '上面显示的是仓库自带的中文版，原样呈现，未做机翻。'
             : p.channel === 'google'
-              ? '当前使用 Google 通道，国内网络可能连不上，可在设置里换成 MyMemory。'
-              : '机翻仅作参考，代码块与专有名词不翻译。译文按内容缓存，同一份自述不会重复消耗额度。'}
+              ? '当前使用 Google 通道，国内网络可能连不上，可在设置里换成 MyMemory 或微软。'
+              : `机翻仅作参考，代码块与专有名词不翻译。译文按内容缓存，同一份自述不会重复消耗额度。目标语言：${
+                TARGET_LANGS.find((t) => t.key === p.target)?.label ?? p.target
+              }。`}
         </div>
       </div>
     </div>

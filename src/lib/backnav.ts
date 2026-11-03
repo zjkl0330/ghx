@@ -21,19 +21,22 @@ export type SheetName =
   | 'readme'
   | 'mirrors'
 
-/** 首页页签：从任何其他页签返回都回到这里 */
+/** 首页页签：底栏第一项就是「首页」，返回时回到它 */
 export const HOME_TAB = 'repos'
 
 export interface BackState {
   /** app = 主界面；unlock / locked = 口令屏与锁定挡屏 */
   screen: 'app' | 'unlock' | 'locked'
   guardSheetOpen: boolean
-  auditOpen: boolean
+  /** 二级页面栈深度：个人页 / 设置 / 令牌 / 审计 / 流水线都算一层 */
+  screenDepth: number
   sheet: SheetName
   /** 运行详情是从工作流详情点进来的，返回时应回到上一层而不是直接关掉 */
   hasWorkflow: boolean
   selectMode: boolean
   tab: string
+  /** 底栏第一个页签。用户可以把仓库页签藏起来，返回目标要跟着变 */
+  homeTab?: string
   /** 弹层里有不可中断的任务（如在跑的批量改可见度），返回不放行 */
   sheetLocked?: boolean
   /** 加速站面板从哪个弹层进来的，返回时回到那一层 */
@@ -43,8 +46,8 @@ export interface BackState {
 export type BackAction =
   | { kind: 'exit' }
   | { kind: 'close-guard' }
-  | { kind: 'close-audit' }
   | { kind: 'sheet'; to: SheetName }
+  | { kind: 'pop-screen' }
   | { kind: 'exit-select' }
   | { kind: 'home' }
   | { kind: 'blocked' }
@@ -87,11 +90,12 @@ export function resolveBack(state: BackState): BackAction {
     return { kind: 'sheet', to: sheetBackTarget(state.sheet, state.hasWorkflow, state.mirrorReturn) }
   }
 
-  if (state.auditOpen) return { kind: 'close-audit' }
+  // 二级页面（个人页、设置、令牌、审计、流水线）先退一层
+  if (state.screenDepth > 0) return { kind: 'pop-screen' }
 
   if (state.selectMode) return { kind: 'exit-select' }
 
-  if (state.tab !== HOME_TAB) return { kind: 'home' }
+  if (state.tab !== (state.homeTab ?? HOME_TAB)) return { kind: 'home' }
 
   return { kind: 'exit' }
 }

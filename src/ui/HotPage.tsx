@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
 import {
   COMMON_LANGUAGES,
@@ -9,6 +9,13 @@ import {
   trendingQuery,
   type TrendingRange,
 } from '../lib/trending'
+import {
+  SEARCH_SORTS,
+  emptySearchHint,
+  hasKeyword,
+  repoSearchQuery,
+  type SearchSort,
+} from '../lib/search'
 import type { Repo } from '../lib/types'
 import { Icon } from './icons'
 
@@ -29,42 +36,78 @@ function relTime(iso: string | undefined): string {
   return `${Math.floor(days / 365)} 年前`
 }
 
+/**
+ * 热门 / 仓库搜索。
+ *
+ * 空关键词时走 trending 查询（最近创建 + 日均涨星排序）；
+ * 输入关键词后切到 GitHub 全区搜索，可按相关度 / 星数 / 更新时间排序。
+ * 两者共用一条列表，避免再开一个页面。
+ */
 export function HotPage(p: Props) {
   const [range, setRange] = useState<TrendingRange>('week')
   const [lang, setLang] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<SearchSort>('best')
   const [repos, setRepos] = useState<Repo[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** 搜索结果不返回「我是否 star 过」，这里只记本次会话里的手动操作 */
   const [starred, setStarred] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
+  /** 连打关键词时只认最后一次请求的结果，避免旧响应把新结果盖掉 */
+  const seq = useRef(0)
+
+  const searchMode = hasKeyword(query)
 
   const load = useCallback(
     async (fresh = false) => {
       if (!p.client) {
         setRepos([])
+        setTotal(0)
         return
       }
+      const mine = seq.current + 1
+      seq.current = mine
       setLoading(true)
       setError(null)
       try {
-        const { data } = await p.client.searchRepos(trendingQuery(range, lang), {
-          perPage: 30,
-          fresh,
-        })
-        setRepos(rankHot(data))
+        if (!searchMode) {
+          const { data } = await p.client.searchRepos(trendingQuery(range, lang), {
+            perPage: 30,
+            fresh,
+          })
+          if (seq.current !== mine) return
+          const ranked = rankHot(data)
+          setRepos(ranked)
+          setTotal(ranked.length)
+        } else {
+          const q = repoSearchQuery(query, { language: lang })
+          const { data, total: count } = await p.client.searchRepos(q, {
+            sort,
+            perPage: 30,
+            fresh,
+          })
+          if (seq.current !== mine) return
+          setRepos(data)
+          setTotal(count)
+        }
       } catch (err) {
+        if (seq.current !== mine) return
         setError((err as Error).message)
       } finally {
-        setLoading(false)
+        if (seq.current === mine) setLoading(false)
       }
     },
-    [p.client, range, lang],
+    [p.client, range, lang, query, sort, searchMode],
   )
 
+  // 搜索框边打边搜，别的条件变化立即重查
   useEffect(() => {
-    void load()
-  }, [load])
+    const delay = searchMode ? 400 : 0
+    const timer = window.setTimeout(() => void load(), delay)
+    return () => window.clearTimeout(timer)
+  }, [load, searchMode])
 
   async function toggleStar(repo: Repo) {
     if (!p.client || busy) return
@@ -90,8 +133,14 @@ export function HotPage(p: Props) {
     <>
       <div className="topbar">
         <div style={{ minWidth: 0 }}>
-          <div className="page-title">热门</div>
-          <div className="page-sub ellipsis">最近创建 · 按日均涨星排序</div>
+          <div className="page-title">{searchMode ? '搜索' : '热门'}</div>
+          <div className="page-sub ellipsis">
+            {searchMode
+              ? loading
+                ? '正在搜索…'
+                : `找到 ${total} 个仓库${total > 30 ? ' · 显示前 30 个' : ''}`
+              : '最近创建 · 按日均涨星排序'}
+          </div>
         </div>
         <div className="spacer" />
         <button className="icon-btn" onClick={() => void load(true)} aria-label="刷新">
@@ -99,13 +148,41 @@ export function HotPage(p: Props) {
         </button>
       </div>
 
-      <div className="seg" style={{ margin: '10px 16px 0' }}>
-        {TRENDING_RANGES.map((r) => (
-          <button key={r} className={range === r ? 'on' : ''} onClick={() => setRange(r)}>
-            {RANGE_LABEL[r]}
+      <div className="search">
+        <Icon name="search" size={14} />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索 GitHub 仓库，支持 topic: / user: 等限定符"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="search"
+        />
+        {query && (
+          <button onClick={() => setQuery('')} aria-label="清空" style={{ color: 'inherit' }}>
+            <Icon name="close" size={13} />
           </button>
-        ))}
+        )}
       </div>
+
+      {searchMode ? (
+        <div className="seg" style={{ margin: '10px 16px 0' }}>
+          {SEARCH_SORTS.map((s) => (
+            <button key={s.key} className={sort === s.key ? 'on' : ''} onClick={() => setSort(s.key)}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="seg" style={{ margin: '10px 16px 0' }}>
+          {TRENDING_RANGES.map((r) => (
+            <button key={r} className={range === r ? 'on' : ''} onClick={() => setRange(r)}>
+              {RANGE_LABEL[r]}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="chips" style={{ paddingTop: 8 }}>
         <button className={`chip${lang === null ? ' on' : ''}`} onClick={() => setLang(null)}>
@@ -130,12 +207,16 @@ export function HotPage(p: Props) {
           </div>
         )}
 
-        {loading && repos.length === 0 && <div className="empty">正在找最近的热门…</div>}
+        {loading && repos.length === 0 && (
+          <div className="empty">{searchMode ? '正在搜索…' : '正在找最近的热门…'}</div>
+        )}
 
         {!loading && !error && repos.length === 0 && (
           <div className="empty">
-            <b>这个范围内没有结果</b>
-            换个时间范围或语言试试。筛选条件是最近创建且 star 不少于 10。
+            <b>{searchMode ? '没有找到仓库' : '这个范围内没有结果'}</b>
+            {searchMode
+              ? emptySearchHint(query, lang)
+              : '换个时间范围或语言试试。筛选条件是最近创建且 star 不少于 10。'}
           </div>
         )}
 
@@ -146,7 +227,13 @@ export function HotPage(p: Props) {
               const perDay = Math.round(dailyStars(r))
               return (
                 <div className="row hot-row" key={r.id}>
-                  <span className={`hot-rank${i < 3 ? ' top' : ''}`}>{i + 1}</span>
+                  {searchMode ? (
+                    <span className="row-ic">
+                      <Icon name="repo" size={15} />
+                    </span>
+                  ) : (
+                    <span className={`hot-rank${i < 3 ? ' top' : ''}`}>{i + 1}</span>
+                  )}
                   <button className="row-hit" onClick={() => p.onOpenRepo(r)}>
                     <span className="row-l1">
                       <span className="row-owner">{r.owner}/</span>
@@ -156,8 +243,14 @@ export function HotPage(p: Props) {
                     <span className="row-meta">
                       {r.language && <span>{r.language}</span>}
                       <span>★ {r.stargazers_count}</span>
-                      <span className="hot-rate">+{perDay}/天</span>
-                      {r.created_at && <span>{relTime(r.created_at)}创建</span>}
+                      {searchMode ? (
+                        <span>{relTime(r.pushed_at)}更新</span>
+                      ) : (
+                        <>
+                          <span className="hot-rate">+{perDay}/天</span>
+                          {r.created_at && <span>{relTime(r.created_at)}创建</span>}
+                        </>
+                      )}
                     </span>
                   </button>
                   <button

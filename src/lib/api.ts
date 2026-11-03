@@ -380,18 +380,27 @@ export class GitHubClient {
   /**
    * 搜索仓库。热门页用它代替官方 trending —— GitHub 没有 trending API，
    * 这里按「最近创建 + star 排序」取新晋热门，语义写入界面文案里。
+   * sort 传 best 时不带排序参数，交给 GitHub 的相关性排序。
    */
   async searchRepos(
     q: string,
-    opts: { page?: number; perPage?: number; sort?: 'stars' | 'forks' | 'updated'; fresh?: boolean } = {},
+    opts: {
+      page?: number
+      perPage?: number
+      sort?: 'best' | 'stars' | 'forks' | 'updated'
+      fresh?: boolean
+    } = {},
   ) {
+    const sort = opts.sort ?? 'stars'
     const query = new URLSearchParams({
       q,
-      sort: opts.sort ?? 'stars',
-      order: 'desc',
       per_page: String(opts.perPage ?? 30),
       page: String(opts.page ?? 1),
     })
+    if (sort !== 'best') {
+      query.set('sort', sort)
+      query.set('order', 'desc')
+    }
     const { data, rate, scopes } = await this.request<{
       total_count: number
       incomplete_results: boolean

@@ -21,6 +21,7 @@ interface Props {
   onRemove: (id: string) => void
   onCheck: (id: string) => void
   quota: Record<string, { remaining: number; limit: number }>
+  onBack: () => void
 }
 
 export function TokenVault(p: Props) {
@@ -36,6 +37,9 @@ export function TokenVault(p: Props) {
   return (
     <>
       <div className="topbar">
+        <button className="icon-btn" onClick={p.onBack} aria-label="返回">
+          <Icon name="back" size={18} />
+        </button>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.3px' }}>令牌保险库</div>
           <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3 }}>
