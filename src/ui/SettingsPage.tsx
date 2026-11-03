@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
+import type { ResolvedTheme, ThemePref } from '../lib/theme'
 import { DEFAULT_MIRROR } from '../lib/update'
 import { Icon } from './icons'
 
@@ -14,6 +15,9 @@ interface Props {
   updateCheckedAt: number | null
   latestVersion: string | null
   hasUpdate: boolean
+  themePref: ThemePref
+  resolvedTheme: ResolvedTheme
+  onTheme: (pref: ThemePref) => void
   secureMode: 'device' | 'passphrase'
   guarded: boolean
   onSetGuard: () => void
@@ -90,6 +94,31 @@ export function SettingsPage(p: Props) {
             <div className="tk" style={{ flex: 1, margin: 0, textAlign: 'center' }}>
               <div style={{ fontSize: 20, fontWeight: 700 }}>{p.auditCount}</div>
               <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>审计</div>
+            </div>
+          </div>
+
+          <div className="section-title">外观</div>
+          <div className="panel">
+            <div className="seg" style={{ margin: 0 }}>
+              <button
+                className={p.themePref === 'system' ? 'on' : ''}
+                onClick={() => p.onTheme('system')}
+              >
+                跟随系统
+              </button>
+              <button
+                className={p.themePref === 'light' ? 'on' : ''}
+                onClick={() => p.onTheme('light')}
+              >
+                浅色
+              </button>
+              <button className={p.themePref === 'dark' ? 'on' : ''} onClick={() => p.onTheme('dark')}>
+                深色
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 9 }}>
+              当前显示{p.resolvedTheme === 'dark' ? '深色' : '浅色'}
+              {p.themePref === 'system' ? '（跟随系统）' : ''}。切换立即生效，不用重启。
             </div>
           </div>
 

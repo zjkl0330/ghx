@@ -3,6 +3,16 @@ import { GitHubClient } from './lib/api'
 import { appendAudit, clearAudit, readAudit } from './lib/audit'
 import { buildPlan, countBy, filterRepos, runBatch } from './lib/repos'
 import { createKV, type KV } from './lib/storage'
+import {
+  applyTheme,
+  readThemePref,
+  resolveTheme,
+  syncStatusBar,
+  watchSystemTheme,
+  writeThemePref,
+  type ResolvedTheme,
+  type ThemePref,
+} from './lib/theme'
 import { probeToken } from './lib/tokens'
 import {
   APP_VERSION,
@@ -49,6 +59,8 @@ export default function App() {
   const [guardSheet, setGuardSheet] = useState<GuardMode | null>(null)
   const [guardBusy, setGuardBusy] = useState(false)
   const [guardError, setGuardError] = useState<string | null>(null)
+  const [themePref, setThemePref] = useState<ThemePref>(() => readThemePref())
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(readThemePref()))
 
   const [records, setRecords] = useState<TokenRecord[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -95,6 +107,29 @@ export default function App() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(null), 2600)
   }, [])
+
+  /** 配色：首屏已由 index.html 内联脚本处理，这里负责后续切换与系统监听。 */
+  useEffect(() => {
+    const apply = () => {
+      const next = resolveTheme(themePref)
+      applyTheme(next)
+      setResolvedTheme(next)
+      void syncStatusBar(next)
+    }
+    apply()
+    if (themePref !== 'system') return
+    return watchSystemTheme(apply)
+  }, [themePref])
+
+  function changeTheme(pref: ThemePref) {
+    writeThemePref(pref)
+    setThemePref(pref)
+    if (pref === 'system') {
+      showToast(`已跟随系统 · 当前${resolveTheme('system') === 'dark' ? '深色' : '浅色'}`)
+    } else {
+      showToast(pref === 'dark' ? '已切换深色' : '已切换浅色')
+    }
+  }
 
   const refreshAudit = useCallback(async () => {
     if (!kvRef.current) return
@@ -721,6 +756,9 @@ export default function App() {
           updateCheckedAt={updateCheckedAt}
           latestVersion={updateResult?.latest ?? null}
           hasUpdate={!!updateResult?.hasUpdate}
+          themePref={themePref}
+          resolvedTheme={resolvedTheme}
+          onTheme={changeTheme}
           secureMode={secureMode}
           guarded={guarded}
           onSetGuard={() => {

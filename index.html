@@ -1,11 +1,31 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#0d1117" />
     <title>ghx · GitHub 控制台</title>
+    <!--
+      首屏前同步应用配色，避免先渲染深色再跳浅色。
+      这段必须内联在 head 里：等 React 挂载再切换会闪一帧。
+    -->
+    <script>
+      ;(function () {
+        try {
+          var pref = localStorage.getItem('ghx.theme')
+          var dark =
+            pref === 'dark' ||
+            (pref !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          var root = document.documentElement
+          root.dataset.theme = dark ? 'dark' : 'light'
+          root.style.colorScheme = dark ? 'dark' : 'light'
+          root.style.backgroundColor = dark ? '#0d1117' : '#ffffff'
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', dark ? '#0d1117' : '#ffffff')
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -7,3 +7,6 @@ project(':capacitor-browser').projectDir = new File('../node_modules/.pnpm/@capa
 
 include ':capacitor-preferences'
 project(':capacitor-preferences').projectDir = new File('../node_modules/.pnpm/@capacitor+preferences@7.0.4_@capacitor+core@7.6.10/node_modules/@capacitor/preferences/android')
+
+include ':capacitor-status-bar'
+project(':capacitor-status-bar').projectDir = new File('../node_modules/.pnpm/@capacitor+status-bar@7.0.6_@capacitor+core@7.6.10/node_modules/@capacitor/status-bar/android')

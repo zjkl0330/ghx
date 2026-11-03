@@ -20,6 +20,9 @@ importers:
       '@capacitor/preferences':
         specifier: ^7.0.0
         version: 7.0.4(@capacitor/core@7.6.10)
+      '@capacitor/status-bar':
+        specifier: ^7.0.6
+        version: 7.0.6(@capacitor/core@7.6.10)
       react:
         specifier: ^19.0.0
         version: 19.3.1
@@ -157,6 +160,11 @@ packages:
 
   '@capacitor/preferences@7.0.4':
     resolution: {integrity: sha512-TJhkwaI2RCs/iDC9PjNczZV4h6JM4gUtTuKMeFdy0OwGgFEHf4TrtW2mFMc1TnPDalYQ91p9NT+UKgiJs9/xtg==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
+
+  '@capacitor/status-bar@7.0.6':
+    resolution: {integrity: sha512-7AVqj46b26QikImQzWfsJmzG8NUJZBGkrVSuoeTo+SX/YH3hXH0MqwwFgMqMGHfa/BICDgSvTjM9miVFlq0+RQ==}
     peerDependencies:
       '@capacitor/core': '>=7.0.0'
 
@@ -1329,6 +1337,10 @@ snapshots:
       tslib: 2.9.1
 
   '@capacitor/preferences@7.0.4(@capacitor/core@7.6.10)':
+    dependencies:
+      '@capacitor/core': 7.6.10
+
+  '@capacitor/status-bar@7.0.6(@capacitor/core@7.6.10)':
     dependencies:
       '@capacitor/core': 7.6.10
 
