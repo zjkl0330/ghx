@@ -1,3 +1,4 @@
+import { ResponseCache, ttlFor } from './cache'
 import { normalizeRepo, type RawRepo } from './repos'
 import type {
   Fork,
@@ -81,6 +82,8 @@ export class GitHubClient {
   readonly baseUrl: string
   private readonly token: string
   private readonly fetchImpl: typeof fetch
+  /** 请求级缓存，跟着 client 走：换令牌就是新实例，不会串数据 */
+  private readonly cache = new ResponseCache()
   rate: RateLimit | null = null
   scopes: string[] = []
 
@@ -90,7 +93,34 @@ export class GitHubClient {
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
   }
 
-  async request<T>(path: string, init: RequestInit = {}): Promise<Page<T>> {
+  /** 手动清缓存。刷新按钮与下拉刷新用得到 */
+  clearCache(prefix?: string): void {
+    this.cache.invalidate(prefix)
+  }
+
+  get cacheSize(): number {
+    return this.cache.size
+  }
+
+  /**
+   * 统一的请求入口。
+   * GET 默认走缓存（TTL 按路径分档）；传 fresh 可强制回源，轮询与刷新按钮用它。
+   * 写操作成功后按前缀清掉受影响的缓存，保证改完立刻能看见新数据。
+   */
+  async request<T>(
+    path: string,
+    init: RequestInit = {},
+    opts: { fresh?: boolean } = {},
+  ): Promise<Page<T>> {
+    const method = (init.method ?? 'GET').toUpperCase()
+    const cacheable = method === 'GET' && !opts.fresh
+
+    if (cacheable) {
+      const hit = this.cache.getEntry<T>(path, ttlFor(path))
+      // 命中时带上当前配额信息，避免把很久以前的剩余次数显示给用户
+      if (hit) return { data: hit.value, rate: this.rate, scopes: this.scopes }
+    }
+
     const url = path.startsWith('http') ? path : `${this.baseUrl}${path}`
     const res = await this.fetchImpl(url, {
       ...init,
@@ -113,7 +143,10 @@ export class GitHubClient {
         .filter(Boolean)
     }
 
-    if (res.status === 204) return { data: null as T, rate, scopes: this.scopes }
+    if (res.status === 204) {
+      if (method !== 'GET') this.cache.applyInvalidation(method, path)
+      return { data: null as T, rate, scopes: this.scopes }
+    }
 
     const text = await res.text()
     const body: unknown = text ? safeJson(text) : null
@@ -124,6 +157,9 @@ export class GitHubClient {
       }
       throw new GitHubError(describeError(res.status, body), res.status, body)
     }
+
+    if (cacheable) this.cache.set(path, body as T)
+    if (method !== 'GET') this.cache.applyInvalidation(method, path)
 
     return { data: body as T, rate, scopes: this.scopes }
   }
@@ -142,7 +178,7 @@ export class GitHubClient {
   }
 
   /** 分页拉取当前账号可见的仓库，按最近推送排序。 */
-  async listRepos(page = 1, perPage = 30) {
+  async listRepos(page = 1, perPage = 30, fresh = false) {
     const query = new URLSearchParams({
       per_page: String(perPage),
       page: String(page),
@@ -150,7 +186,7 @@ export class GitHubClient {
       direction: 'desc',
       affiliation: 'owner,collaborator,organization_member',
     })
-    const { data, rate, scopes } = await this.request<RawRepo[]>(`/user/repos?${query.toString()}`)
+    const { data, rate, scopes } = await this.request<RawRepo[]>(`/user/repos?${query.toString()}`, {}, { fresh })
     return { data: (data ?? []).map(normalizeRepo), rate, scopes }
   }
 
@@ -163,8 +199,8 @@ export class GitHubClient {
     return { data: normalizeRepo(data), rate, scopes }
   }
 
-  async repo(owner: string, name: string) {
-    const { data, rate, scopes } = await this.request<RawRepo>(`/repos/${owner}/${name}`)
+  async repo(owner: string, name: string, fresh = false) {
+    const { data, rate, scopes } = await this.request<RawRepo>(`/repos/${owner}/${name}`, {}, { fresh })
     return { data: normalizeRepo(data), rate, scopes }
   }
 
@@ -224,21 +260,55 @@ export class GitHubClient {
   }
 
   /** 我 star 过的仓库，按 star 时间倒序。 */
-  async listStarred(page = 1, perPage = 50) {
+  async listStarred(page = 1, perPage = 50, fresh = false) {
     const query = new URLSearchParams({
       per_page: String(perPage),
       page: String(page),
       sort: 'created',
       direction: 'desc',
     })
-    const { data, rate, scopes } = await this.request<RawRepo[]>(`/user/starred?${query.toString()}`)
+    const { data, rate, scopes } = await this.request<RawRepo[]>(
+      `/user/starred?${query.toString()}`,
+      {},
+      { fresh },
+    )
     return { data: (data ?? []).map(normalizeRepo), rate, scopes }
   }
 
+  /**
+   * 搜索仓库。热门页用它代替官方 trending —— GitHub 没有 trending API，
+   * 这里按「最近创建 + star 排序」取新晋热门，语义写入界面文案里。
+   */
+  async searchRepos(
+    q: string,
+    opts: { page?: number; perPage?: number; sort?: 'stars' | 'forks' | 'updated'; fresh?: boolean } = {},
+  ) {
+    const query = new URLSearchParams({
+      q,
+      sort: opts.sort ?? 'stars',
+      order: 'desc',
+      per_page: String(opts.perPage ?? 30),
+      page: String(opts.page ?? 1),
+    })
+    const { data, rate, scopes } = await this.request<{
+      total_count: number
+      incomplete_results: boolean
+      items: RawRepo[]
+    }>(`/search/repositories?${query.toString()}`, {}, { fresh: opts.fresh })
+    return {
+      data: (data?.items ?? []).map(normalizeRepo),
+      total: data?.total_count ?? 0,
+      rate,
+      scopes,
+    }
+  }
+
   /** 仓库里所有工作流。Actions 未启用时返回空数组而不是报错。 */
-  async listWorkflows(owner: string, name: string) {
+  async listWorkflows(owner: string, name: string, fresh = false) {
     const { data, rate, scopes } = await this.request<{ total_count: number; workflows: Workflow[] }>(
       `/repos/${owner}/${name}/actions/workflows?per_page=100`,
+      {},
+      { fresh },
     )
     return { data: data?.workflows ?? [], rate, scopes }
   }
@@ -272,7 +342,7 @@ export class GitHubClient {
   async listRuns(
     owner: string,
     name: string,
-    opts: { workflowId?: number; branch?: string; perPage?: number } = {},
+    opts: { workflowId?: number; branch?: string; perPage?: number; fresh?: boolean } = {},
   ) {
     const query = new URLSearchParams({ per_page: String(opts.perPage ?? 20) })
     if (opts.branch) query.set('branch', opts.branch)
@@ -282,13 +352,17 @@ export class GitHubClient {
         : `/repos/${owner}/${name}/actions/runs`
     const { data, rate, scopes } = await this.request<{ total_count: number; workflow_runs: WorkflowRun[] }>(
       `${base}?${query.toString()}`,
+      {},
+      { fresh: opts.fresh },
     )
     return { data: data?.workflow_runs ?? [], rate, scopes }
   }
 
-  async listJobs(owner: string, name: string, runId: number) {
+  async listJobs(owner: string, name: string, runId: number, fresh = false) {
     const { data, rate, scopes } = await this.request<{ total_count: number; jobs: WorkflowJob[] }>(
       `/repos/${owner}/${name}/actions/runs/${runId}/jobs?per_page=30`,
+      {},
+      { fresh },
     )
     return { data: data?.jobs ?? [], rate, scopes }
   }
@@ -301,10 +375,12 @@ export class GitHubClient {
     return this.request<null>(`/repos/${owner}/${name}/actions/runs/${runId}/rerun`, { method: 'POST' })
   }
 
-  async listReleases(owner: string, name: string, page = 1, perPage = 20) {
+  async listReleases(owner: string, name: string, page = 1, perPage = 20, fresh = false) {
     const query = new URLSearchParams({ per_page: String(perPage), page: String(page) })
     const { data, rate, scopes } = await this.request<Release[]>(
       `/repos/${owner}/${name}/releases?${query.toString()}`,
+      {},
+      { fresh },
     )
     return { data: data ?? [], rate, scopes }
   }
@@ -333,10 +409,12 @@ export class GitHubClient {
     return this.request<null>(`/repos/${owner}/${name}/releases/${id}`, { method: 'DELETE' })
   }
 
-  async listForks(owner: string, name: string, page = 1, perPage = 30) {
+  async listForks(owner: string, name: string, page = 1, perPage = 30, fresh = false) {
     const query = new URLSearchParams({ per_page: String(perPage), page: String(page), sort: 'newest' })
     const { data, rate, scopes } = await this.request<RawRepo[]>(
       `/repos/${owner}/${name}/forks?${query.toString()}`,
+      {},
+      { fresh },
     )
     return { data: (data ?? []).map((r) => normalizeRepo(r) as Fork), rate, scopes }
   }

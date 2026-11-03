@@ -33,6 +33,7 @@ export function PipelinesPage(p: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  /** silent=true 是后台轮询：不转圈，但必须回源，否则拿到的还是缓存里的旧状态 */
   const load = useCallback(
     async (silent = false) => {
       if (!p.client || !p.repo) {
@@ -44,8 +45,8 @@ export function PipelinesPage(p: Props) {
       setError(null)
       try {
         const [wf, rs] = await Promise.all([
-          p.client.listWorkflows(p.repo.owner, p.repo.name),
-          p.client.listRuns(p.repo.owner, p.repo.name, { perPage: 20 }),
+          p.client.listWorkflows(p.repo.owner, p.repo.name, silent),
+          p.client.listRuns(p.repo.owner, p.repo.name, { perPage: 20, fresh: silent }),
         ])
         setWorkflows(wf.data)
         setRuns(rs.data)

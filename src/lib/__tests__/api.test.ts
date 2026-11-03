@@ -168,3 +168,97 @@ describe('工作流错误翻译', () => {
     expect(describeError(409, { message: 'Conflict' })).toContain('冲突')
   })
 })
+
+describe('请求缓存', () => {
+  const repo = {
+    id: 1,
+    name: 'a',
+    full_name: 'o/a',
+    owner: { login: 'o' },
+    private: false,
+    visibility: 'public',
+    archived: false,
+    disabled: false,
+    stargazers_count: 1,
+    forks_count: 0,
+    pushed_at: '2026-11-01T00:00:00Z',
+    default_branch: 'main',
+  }
+
+  function counted(body: unknown = repo) {
+    return mockFetch(200, body) as unknown as { mock: { calls: unknown[] } } & typeof fetch
+  }
+
+  it('相同 GET 第二次不再发请求', async () => {
+    const fn = counted()
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.repo('o', 'a')
+    const second = await client.repo('o', 'a')
+    expect(fn.mock.calls.length).toBe(1)
+    // 命中缓存也要拿到正确数据
+    expect(second.data.full_name).toBe('o/a')
+  })
+
+  it('fresh 为 true 时强制回源', async () => {
+    const fn = counted()
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.repo('o', 'a')
+    await client.repo('o', 'a', true)
+    expect(fn.mock.calls.length).toBe(2)
+  })
+
+  it('不同路径各自缓存', async () => {
+    const fn = counted()
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.repo('o', 'a')
+    await client.repo('o', 'b')
+    expect(fn.mock.calls.length).toBe(2)
+  })
+
+  it('写操作后同一路径会重新请求', async () => {
+    const fn = counted()
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.repo('o', 'a')
+    await client.setVisibility('o', 'a', 'private')
+    await client.repo('o', 'a')
+    // GET + PATCH + GET
+    expect(fn.mock.calls.length).toBe(3)
+  })
+
+  it('清缓存后重新请求', async () => {
+    const fn = counted()
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.repo('o', 'a')
+    client.clearCache()
+    await client.repo('o', 'a')
+    expect(fn.mock.calls.length).toBe(2)
+    expect(client.cacheSize).toBe(1)
+  })
+
+  it('失败响应不进缓存', async () => {
+    const fn = mockFetch(404, { message: 'Not Found' })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await expect(client.repo('o', 'a')).rejects.toBeInstanceOf(GitHubError)
+    await expect(client.repo('o', 'a')).rejects.toBeInstanceOf(GitHubError)
+    expect((fn as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(2)
+  })
+
+  it('star 之后星标列表会失效', async () => {
+    const fn = counted([])
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.listStarred()
+    await client.listStarred()
+    expect(fn.mock.calls.length).toBe(1)
+    await client.setStarred('o', 'a', true)
+    await client.listStarred()
+    expect(fn.mock.calls.length).toBe(3)
+  })
+
+  it('搜索接口走自己的路径键', async () => {
+    const fn = counted({ total_count: 1, incomplete_results: false, items: [repo] })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    const res = await client.searchRepos('created:>=2026-11-01')
+    expect(res.data[0].owner).toBe('o')
+    expect(res.total).toBe(1)
+  })
+})

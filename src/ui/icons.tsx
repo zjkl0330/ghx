@@ -151,6 +151,12 @@ const P: Record<string, ReactNode> = {
     </>
   ),
   stop: <rect x="6.5" y="6.5" width="11" height="11" rx="2" />,
+  trend: (
+    <>
+      <path d="M3 17l6-6 4 4 7-7" />
+      <path d="M14 8h6v6" />
+    </>
+  ),
   terminal: (
     <>
       <rect x="3.5" y="4.5" width="17" height="15" rx="2" />

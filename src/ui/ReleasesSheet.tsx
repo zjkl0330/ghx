@@ -38,12 +38,12 @@ export function ReleasesSheet(p: Props) {
   const [notes, setNotes] = useState('')
   const [pre, setPre] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     if (!p.client) return
     setLoading(true)
     setError(null)
     try {
-      const { data } = await p.client.listReleases(p.repo.owner, p.repo.name, 1, 20)
+      const { data } = await p.client.listReleases(p.repo.owner, p.repo.name, 1, 20, fresh)
       setList(sortReleases(data))
     } catch (err) {
       setError((err as Error).message)
@@ -194,7 +194,7 @@ export function ReleasesSheet(p: Props) {
 
         <div className="list-head" style={{ padding: '18px 0 4px' }}>
           <b>全部发行版</b>
-          <button onClick={() => void load()}>刷新</button>
+          <button onClick={() => void load(true)}>刷新</button>
         </div>
 
         {loading && list.length === 0 && <div className="hint">正在读取…</div>}

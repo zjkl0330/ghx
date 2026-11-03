@@ -7,6 +7,8 @@ import { Icon, type IconName } from './icons'
 interface Props {
   repo: Repo
   client: GitHubClient | null
+  /** 当前登录账号，用来判断这个仓库是不是自己的 */
+  login: string | null
   mirror: string
   onClose: () => void
   onChanged: (repo: Repo) => void
@@ -53,6 +55,11 @@ export function RepoDetailSheet(p: Props) {
 
   const owner = p.repo.owner
   const name = p.repo.name
+  // permissions 只有在 /user/repos 里才稳定存在；热门/星标搜出来的仓库可能没有，
+  // 这时退回「owner 是不是自己」来判断，避免点了才报 403
+  const canAdmin =
+    p.repo.permissions?.admin ??
+    (!!p.login && p.repo.owner.toLowerCase() === p.login.toLowerCase())
 
   useEffect(() => {
     let alive = true
@@ -183,35 +190,37 @@ export function RepoDetailSheet(p: Props) {
             },
           )}
 
-          {action(
-            'archive',
-            'archive',
-            p.repo.archived ? '取消归档' : '归档仓库',
-            p.repo.archived ? '归档后仓库只读' : '归档后变为只读，可随时撤销',
-            async () => {
-              if (!p.client) throw new Error('未连接令牌')
-              const next = !p.repo.archived
-              const { data } = await p.client.setArchived(owner, name, next)
-              p.onChanged(data ? { ...p.repo, archived: next } : { ...p.repo, archived: next })
-              p.onAudit('repo-archive', { target: p.repo.full_name, text: next ? '已归档' : '已取消归档' })
-              p.onToast(next ? '已归档' : '已取消归档')
-            },
-          )}
+          {canAdmin &&
+            action(
+              'archive',
+              'archive',
+              p.repo.archived ? '取消归档' : '归档仓库',
+              p.repo.archived ? '归档后仓库只读' : '归档后变为只读，可随时撤销',
+              async () => {
+                if (!p.client) throw new Error('未连接令牌')
+                const next = !p.repo.archived
+                const { data } = await p.client.setArchived(owner, name, next)
+                p.onChanged(data ? { ...p.repo, archived: next } : { ...p.repo, archived: next })
+                p.onAudit('repo-archive', { target: p.repo.full_name, text: next ? '已归档' : '已取消归档' })
+                p.onToast(next ? '已归档' : '已取消归档')
+              },
+            )}
 
-          {action(
-            'visibility',
-            'globe',
-            p.repo.private ? '转为公开' : '转为私有',
-            p.repo.private ? '公开后任何人可搜索到' : '公开转私有会永久失去 star 与 watcher',
-            async () => {
-              if (!p.client) throw new Error('未连接令牌')
-              const next: Visibility = p.repo.private ? 'public' : 'private'
-              await p.client.setVisibility(owner, name, next)
-              p.onChanged({ ...p.repo, private: next === 'private', visibility: next })
-              p.onAudit('visibility', { target: p.repo.full_name, text: `切换为 ${next}` })
-              p.onToast(next === 'private' ? '已转为私有' : '已转为公开')
-            },
-          )}
+          {canAdmin &&
+            action(
+              'visibility',
+              'globe',
+              p.repo.private ? '转为公开' : '转为私有',
+              p.repo.private ? '公开后任何人可搜索到' : '公开转私有会永久失去 star 与 watcher',
+              async () => {
+                if (!p.client) throw new Error('未连接令牌')
+                const next: Visibility = p.repo.private ? 'public' : 'private'
+                await p.client.setVisibility(owner, name, next)
+                p.onChanged({ ...p.repo, private: next === 'private', visibility: next })
+                p.onAudit('visibility', { target: p.repo.full_name, text: `切换为 ${next}` })
+                p.onToast(next === 'private' ? '已转为私有' : '已转为公开')
+              },
+            )}
 
           {action('workflows', 'play', '工作流', '查看 Actions、启停与手动运行', async () => p.onOpenWorkflows())}
 
@@ -235,7 +244,8 @@ export function RepoDetailSheet(p: Props) {
             },
           )}
 
-          {!confirmDelete &&
+          {canAdmin &&
+            !confirmDelete &&
             action(
               'delete',
               'trash',
@@ -247,6 +257,12 @@ export function RepoDetailSheet(p: Props) {
               'danger',
             )}
         </div>
+
+        {!canAdmin && (
+          <div className="hint" style={{ marginTop: 10 }}>
+            这是 {owner} 的仓库，你没有管理权限，所以改可见度、归档与删除的入口不显示。
+          </div>
+        )}
 
         {confirmDelete && (
           <div className="dangerbox">

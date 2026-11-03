@@ -40,12 +40,12 @@ export function RunSheet(p: Props) {
   /** 默认只展开失败的作业，其余折叠，避免 20+ 个步骤把弹层撑得很长 */
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     if (!p.client) return
     setLoading(true)
     setError(null)
     try {
-      const { data } = await p.client.listJobs(p.repo.owner, p.repo.name, p.run.id)
+      const { data } = await p.client.listJobs(p.repo.owner, p.repo.name, p.run.id, fresh)
       setJobs(data)
     } catch (err) {
       setError((err as Error).message)
@@ -128,7 +128,7 @@ export function RunSheet(p: Props) {
 
         <div className="list-head" style={{ padding: '16px 0 4px' }}>
           <b>作业 {jobs.length > 0 ? `· ${jobs.length}` : ''}</b>
-          <button onClick={() => void load()}>刷新</button>
+          <button onClick={() => void load(true)}>刷新</button>
         </div>
 
         <div className="mini-list">
@@ -195,7 +195,7 @@ export function RunSheet(p: Props) {
                   await p.client.cancelRun(p.repo.owner, p.repo.name, p.run.id)
                   p.onToast('已请求取消，状态稍后更新')
                   p.onChanged?.()
-                  window.setTimeout(() => void load(), 1500)
+                  window.setTimeout(() => void load(true), 1500)
                 })
               }
             >

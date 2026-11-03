@@ -94,7 +94,7 @@ describe('resolveBack 层级顺序', () => {
   })
 
   it('非首页页签回到首页', () => {
-    for (const tab of ['stars', 'pipelines', 'tokens', 'settings']) {
+    for (const tab of ['stars', 'hot', 'pipelines', 'tokens', 'settings']) {
       expect(resolveBack(state({ tab }))).toEqual({ kind: 'home' })
     }
   })

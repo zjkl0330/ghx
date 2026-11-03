@@ -39,6 +39,7 @@ import { AuditLog } from './ui/AuditLog'
 import { CreateRepoSheet } from './ui/CreateRepoSheet'
 import { ForksSheet } from './ui/ForksSheet'
 import { GuardSheet, type GuardMode } from './ui/GuardSheet'
+import { HotPage } from './ui/HotPage'
 import { LockedScreen } from './ui/LockedScreen'
 import { PipelinesPage } from './ui/PipelinesPage'
 import { ReleasesSheet } from './ui/ReleasesSheet'
@@ -56,7 +57,7 @@ import { WorkflowSheet } from './ui/WorkflowSheet'
 import { Icon } from './ui/icons'
 import './styles/theme.css'
 
-type Tab = 'repos' | 'stars' | 'pipelines' | 'tokens' | 'settings'
+type Tab = 'repos' | 'stars' | 'hot' | 'pipelines' | 'tokens' | 'settings'
 /** 弹层类型与返回栈共用一套定义，避免两边漏改 */
 type Sheet = SheetName
 
@@ -284,13 +285,14 @@ export default function App() {
     setAudit(await readAudit(kvRef.current))
   }, [])
 
-  const loadRepos = useCallback(async (c: GitHubClient, tokenId: string | null) => {
+  /** fresh=true 用于刷新按钮：其余情况直接吃缓存，切换页签不再重新拉一遍 */
+  const loadRepos = useCallback(async (c: GitHubClient, tokenId: string | null, fresh = false) => {
     setLoadingRepos(true)
     setRepoError(null)
     try {
       const acc: Repo[] = []
       for (let page = 1; page <= 6; page += 1) {
-        const { data, rate } = await c.listRepos(page, 30)
+        const { data, rate } = await c.listRepos(page, 30, fresh)
         acc.push(...data)
         if (rate && tokenId) {
           setQuota((q) => ({ ...q, [tokenId]: { remaining: rate.remaining, limit: rate.limit } }))
@@ -869,7 +871,7 @@ export default function App() {
             setSelectMode(false)
             setSelected(new Set())
           }}
-          onRefresh={() => client && void loadRepos(client, activeId)}
+          onRefresh={() => client && void loadRepos(client, activeId, true)}
           hasToken={records.length > 0}
           account={activeRecord?.login ?? null}
           onOpenRepo={(r) => {
@@ -925,6 +927,17 @@ export default function App() {
                 : cur,
             )
           }}
+        />
+      )}
+
+      {tab === 'hot' && (
+        <HotPage
+          client={client}
+          onOpenRepo={(r) => {
+            setDetailRepo(r)
+            setSheet('detail')
+          }}
+          onToast={showToast}
         />
       )}
 
@@ -1031,6 +1044,10 @@ export default function App() {
           <Icon name="star" size={19} />
           星标
         </button>
+        <button className={tab === 'hot' ? 'on' : ''} onClick={() => go('hot')}>
+          <Icon name="trend" size={19} />
+          热门
+        </button>
         <button className={tab === 'pipelines' ? 'on' : ''} onClick={() => go('pipelines')}>
           <Icon name="play" size={19} />
           流水线
@@ -1075,6 +1092,7 @@ export default function App() {
         <RepoDetailSheet
           repo={detailRepo}
           client={client}
+          login={activeRecord?.login ?? null}
           mirror={mirror}
           onClose={() => setSheet('none')}
           onChanged={patchRepo}

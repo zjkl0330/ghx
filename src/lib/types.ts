@@ -35,6 +35,9 @@ export interface Repo {
   stargazers_count: number
   forks_count: number
   pushed_at: string
+  /** 搜索接口会返回，普通列表不一定有；热门页用它算日均 star */
+  created_at?: string
+  topics?: string[]
   default_branch: string
   /** /user/repos 会返回；缺失时按“未知权限”处理，不预判为 blocked */
   permissions?: { admin: boolean; maintain?: boolean; push: boolean; pull: boolean }

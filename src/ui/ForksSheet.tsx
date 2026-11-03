@@ -30,12 +30,12 @@ export function ForksSheet(p: Props) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     if (!p.client) return
     setLoading(true)
     setError(null)
     try {
-      const { data } = await p.client.listForks(p.repo.owner, p.repo.name, 1, 30)
+      const { data } = await p.client.listForks(p.repo.owner, p.repo.name, 1, 30, fresh)
       setForks(sortForks(data))
     } catch (err) {
       setError((err as Error).message)
@@ -60,7 +60,7 @@ export function ForksSheet(p: Props) {
       p.onAudit(`复刻 ${p.repo.full_name}`)
       p.onToast('已提交复刻，稍后出现在你的仓库里')
       // 复刻是后台队列任务，几秒后再取一次列表
-      window.setTimeout(() => void load(), 3000)
+      window.setTimeout(() => void load(true), 3000)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -116,7 +116,7 @@ export function ForksSheet(p: Props) {
 
         <div className="list-head" style={{ padding: '16px 0 4px' }}>
           <b>全部复刻</b>
-          <button onClick={() => void load()}>刷新</button>
+          <button onClick={() => void load(true)}>刷新</button>
         </div>
 
         {loading && forks.length === 0 && <div className="hint">正在读取…</div>}
