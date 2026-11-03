@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import { GitHubClient } from './lib/api'
 import { appendAudit, clearAudit, readAudit } from './lib/audit'
+import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
 import { buildPlan, countBy, filterRepos, runBatch } from './lib/repos'
 import { createKV, type KV } from './lib/storage'
 import {
@@ -54,18 +57,8 @@ import { Icon } from './ui/icons'
 import './styles/theme.css'
 
 type Tab = 'repos' | 'stars' | 'pipelines' | 'tokens' | 'settings'
-type Sheet =
-  | 'none'
-  | 'add'
-  | 'visibility'
-  | 'update'
-  | 'detail'
-  | 'create'
-  | 'releases'
-  | 'forks'
-  | 'workflow'
-  | 'run'
-  | 'repoPick'
+/** 弹层类型与返回栈共用一套定义，避免两边漏改 */
+type Sheet = SheetName
 
 const MIRROR_KEY = 'ghx.mirror'
 
@@ -139,6 +132,129 @@ export default function App() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(null), 2600)
   }, [])
+
+  /* ---------------- 返回键 ---------------- */
+
+  const exitAtRef = useRef(0)
+  const backStateRef = useRef<BackState>({
+    screen: 'app',
+    guardSheetOpen: false,
+    auditOpen: false,
+    sheet: 'none',
+    hasWorkflow: false,
+    selectMode: false,
+    tab: 'repos',
+  })
+
+  // 每次渲染同步一份界面状态：监听器只注册一次，不必随状态反复解绑
+  backStateRef.current = {
+    screen: unlocked ? 'app' : needPass ? 'unlock' : 'locked',
+    guardSheetOpen: guardSheet !== null,
+    auditOpen,
+    sheet,
+    hasWorkflow: activeWorkflow !== null,
+    selectMode,
+    tab,
+    sheetLocked: sheet === 'visibility' && phase === 'running',
+  }
+
+  const requestExit = useCallback(async () => {
+    // 网页里没有「退出 App」这回事，只提示，避免按下去毫无反应
+    if (Capacitor.getPlatform() === 'web') {
+      showToast('已经在首页')
+      return
+    }
+    const now = Date.now()
+    if (exitDecision(exitAtRef.current, now) === 'exit') {
+      exitAtRef.current = 0
+      await CapacitorApp.exitApp()
+      return
+    }
+    exitAtRef.current = now
+    showToast('再按一次返回退出')
+  }, [showToast])
+
+  /** 关掉弹层；有两层堆叠时退到上一层而不是整屏收起 */
+  const closeSheetTo = useCallback((to: SheetName) => {
+    const from = backStateRef.current.sheet
+    if (to === 'none') {
+      if (from === 'detail') setDetailRepo(null)
+      if (from === 'workflow') setActiveWorkflow(null)
+      if (from === 'run') setActiveRun(null)
+      setSheet('none')
+      return
+    }
+    // 回到工作流详情时清掉运行对象，避免下次点进别的运行还带着旧的
+    if (from === 'run') setActiveRun(null)
+    setSheet(to)
+  }, [])
+
+  const applyBack = useCallback(() => {
+    // 软键盘开着时先收键盘，这是安卓上最符合直觉的第一层返回
+    const el = document.activeElement
+    if (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+      el.blur()
+      return
+    }
+
+    const action = resolveBack(backStateRef.current)
+    switch (action.kind) {
+      case 'close-guard':
+        setGuardSheet(null)
+        setGuardError(null)
+        return
+      case 'close-audit':
+        setAuditOpen(false)
+        return
+      case 'exit-select':
+        setSelectMode(false)
+        setSelected(new Set())
+        return
+      case 'home':
+        setTab('repos')
+        setAuditOpen(false)
+        return
+      case 'sheet':
+        closeSheetTo(action.to)
+        return
+      case 'blocked':
+        showToast('正在执行，等这一批跑完再退')
+        return
+      default:
+        void requestExit()
+    }
+  }, [closeSheetTo, requestExit])
+
+  // 物理返回键：接管后系统不再直接 finish 掉 Activity
+  useEffect(() => {
+    if (Capacitor.getPlatform() === 'web') return
+    let disposed = false
+    let remove: (() => void) | null = null
+    void CapacitorApp.addListener('backButton', () => {
+      applyBack()
+    }).then((handle) => {
+      if (disposed) void handle.remove()
+      else remove = () => void handle.remove()
+    })
+    return () => {
+      disposed = true
+      remove?.()
+    }
+  }, [applyBack])
+
+  // 网页/桌面按 Esc 走同一套返回逻辑，方便在没有真机时验证层级
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      // 根层交给浏览器自己处理，别在这里拦出一个"已在首页"的提示
+      if (resolveBack(backStateRef.current).kind === 'exit') return
+      e.preventDefault()
+      applyBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [applyBack])
+
 
   /** 配色：首屏已由 index.html 内联脚本处理，这里负责后续切换与系统监听。 */
   useEffect(() => {
@@ -657,9 +773,14 @@ export default function App() {
     setClient(null)
     setRepos([])
     setSelected(new Set())
+    setSelectMode(false)
     setPipelineRepo(null)
     setActiveWorkflow(null)
     setActiveRun(null)
+    setDetailRepo(null)
+    // 锁屏前把弹层一并收起，否则解锁后会直接弹回上次那个面板
+    setSheet('none')
+    setGuardSheet(null)
     setAuditOpen(false)
     setTab('repos')
     showToast(needsPassword ? '已锁定，需要口令解锁' : '已锁定，数据已从内存清除')
