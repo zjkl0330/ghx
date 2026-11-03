@@ -147,10 +147,21 @@ jobs:
         id: notes
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
+          # checkout 有时只留轻量引用，显式取回注解 tag，才能拿到发版说明
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}" >/dev/null 2>&1 || true
           PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+
+          if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = "tag" ]; then
+            NOTES="$(git for-each-ref --format='%(contents)' "refs/tags/$TAG")"
+          else
+            # 兜底：annotated 消息取不到时，用区间内的提交说明拼一份
+            RANGE="${PREV:+${PREV}..}${TAG}"
+            NOTES="$(git log --no-merges --pretty='%s%n%n%b' "$RANGE")"
+          fi
+
           {
             echo "body<<GHX_EOF"
-            git tag -l --format='%(contents)' "$TAG"
+            echo "$NOTES"
             echo ""
             echo "安装包：ghx-${TAG#v}-debug.apk（覆盖安装，本地令牌与审计日志不丢）"
             if [ -n "$PREV" ]; then
@@ -159,7 +170,7 @@ jobs:
             fi
             echo "GHX_EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "已收集 ${TAG} 的发版说明（上一版 ${PREV:-无}）"
+          echo "已收集 ${TAG} 的发版说明（上一版 ${PREV:-无}，来源 $([ "$(git cat-file -t "$TAG")" = tag ] && echo tag注解 || echo 提交记录)）"
 
       # 只有打 v* tag 才发 release，普通 push 只留 artifact
       - name: Publish release
