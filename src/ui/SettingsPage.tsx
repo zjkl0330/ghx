@@ -28,6 +28,7 @@ interface Props {
   onSaveMirror: (url: string) => void
   onCheckUpdate: () => void
   onLock: () => void
+  onOpenAudit: () => void
   onClearAudit: () => void
 }
 
@@ -210,14 +211,25 @@ export function SettingsPage(p: Props) {
             </button>
           </div>
 
-          <div style={{ marginTop: 26, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="section-title">本机数据</div>
+          <div className="panel">
+            <button className="linkrow" onClick={p.onOpenAudit}>
+              <span className="linkrow-main">
+                <b>审计日志</b>
+                <i>仅存本机 · {p.auditCount} 条记录</i>
+              </span>
+              <Icon name="chevron" size={13} className="linkrow-arrow" />
+            </button>
+            <button className="btn danger block" style={{ marginTop: 10 }} onClick={p.onClearAudit}>
+              <Icon name="trash" size={14} />
+              清空审计日志
+            </button>
+          </div>
+
+          <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button className="btn ghost block" onClick={p.onLock}>
               <Icon name="lock" size={14} />
               锁定保险库
-            </button>
-            <button className="btn danger block" onClick={p.onClearAudit}>
-              <Icon name="trash" size={14} />
-              清空审计日志
             </button>
           </div>
 

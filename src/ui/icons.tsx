@@ -125,6 +125,38 @@ const P: Record<string, ReactNode> = {
       <circle cx="7.5" cy="7.5" r="1.3" />
     </>
   ),
+  play: <path d="M7 4.5l12 7.5-12 7.5z" />,
+  branch: (
+    <>
+      <circle cx="7" cy="5.5" r="2.2" />
+      <circle cx="7" cy="18.5" r="2.2" />
+      <circle cx="17" cy="8.5" r="2.2" />
+      <path d="M7 7.7v8.6" />
+      <path d="M17 10.7c0 3.4-3.4 3.6-6.6 4.2" />
+    </>
+  ),
+  package: (
+    <>
+      <path d="M3.5 8.2L12 3.5l8.5 4.7v7.6L12 20.5l-8.5-4.7z" />
+      <path d="M3.5 8.2L12 12.9l8.5-4.7M12 12.9v7.6" />
+    </>
+  ),
+  fork: (
+    <>
+      <circle cx="7" cy="6" r="2.2" />
+      <circle cx="17" cy="6" r="2.2" />
+      <circle cx="12" cy="19" r="2.2" />
+      <path d="M7 8.2v1.6a2 2 0 002 2h6a2 2 0 002-2V8.2" />
+      <path d="M12 11.8v5" />
+    </>
+  ),
+  stop: <rect x="6.5" y="6.5" width="11" height="11" rx="2" />,
+  terminal: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <path d="M7 9.5l2.8 2.4L7 14.3M12.5 14.5H17" />
+    </>
+  ),
 }
 
 export type IconName = keyof typeof P

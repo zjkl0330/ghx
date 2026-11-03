@@ -11,6 +11,9 @@ const ACTION_LABEL: Record<AuditEntry['action'], string> = {
   'repo-archive': '归档仓库',
   'repo-delete': '删除仓库',
   'repo-create': '新建仓库',
+  workflow: '工作流',
+  release: '发行版',
+  fork: '复刻',
   security: '安全设置',
 }
 
@@ -21,10 +24,23 @@ function fmt(iso: string): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-export function AuditLog({ entries, onClear }: { entries: AuditEntry[]; onClear: () => void }) {
+export function AuditLog({
+  entries,
+  onClear,
+  onBack,
+}: {
+  entries: AuditEntry[]
+  onClear: () => void
+  onBack?: () => void
+}) {
   return (
     <>
       <div className="topbar">
+        {onBack && (
+          <button className="icon-btn" onClick={onBack} aria-label="返回">
+            <Icon name="back" size={17} />
+          </button>
+        )}
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.3px' }}>审计日志</div>
           <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3 }}>

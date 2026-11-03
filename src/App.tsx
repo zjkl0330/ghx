@@ -20,25 +20,52 @@ import {
   checkForUpdate,
   type UpdateCheckResult,
 } from './lib/update'
-import type { AuditEntry, BatchResult, Repo, TokenRecord, Visibility, VisibilityPlan } from './lib/types'
+import type {
+  AuditEntry,
+  BatchResult,
+  Repo,
+  TokenRecord,
+  Visibility,
+  VisibilityPlan,
+  Workflow,
+  WorkflowRun,
+} from './lib/types'
 import { Vault } from './lib/vault'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
 import { CreateRepoSheet } from './ui/CreateRepoSheet'
+import { ForksSheet } from './ui/ForksSheet'
 import { GuardSheet, type GuardMode } from './ui/GuardSheet'
 import { LockedScreen } from './ui/LockedScreen'
+import { PipelinesPage } from './ui/PipelinesPage'
+import { ReleasesSheet } from './ui/ReleasesSheet'
 import { RepoDetailSheet } from './ui/RepoDetailSheet'
 import { RepoList } from './ui/RepoList'
+import { RepoPickerSheet } from './ui/RepoPickerSheet'
+import { RunSheet } from './ui/RunSheet'
 import { SettingsPage } from './ui/SettingsPage'
+import { StarsPage } from './ui/StarsPage'
 import { TokenVault } from './ui/TokenVault'
 import { UnlockScreen } from './ui/UnlockScreen'
 import { UpdateSheet, type UpdatePhase } from './ui/UpdateSheet'
 import { VisibilitySheet } from './ui/VisibilitySheet'
+import { WorkflowSheet } from './ui/WorkflowSheet'
 import { Icon } from './ui/icons'
 import './styles/theme.css'
 
-type Tab = 'repos' | 'tokens' | 'audit' | 'settings'
-type Sheet = 'none' | 'add' | 'visibility' | 'update' | 'detail' | 'create'
+type Tab = 'repos' | 'stars' | 'pipelines' | 'tokens' | 'settings'
+type Sheet =
+  | 'none'
+  | 'add'
+  | 'visibility'
+  | 'update'
+  | 'detail'
+  | 'create'
+  | 'releases'
+  | 'forks'
+  | 'workflow'
+  | 'run'
+  | 'repoPick'
 
 const MIRROR_KEY = 'ghx.mirror'
 
@@ -85,6 +112,11 @@ export default function App() {
   const [detailRepo, setDetailRepo] = useState<Repo | null>(null)
   const [createBusy, setCreateBusy] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [pipelineRepo, setPipelineRepo] = useState<Repo | null>(null)
+  const [pipelineReload, setPipelineReload] = useState(0)
+  const [activeWorkflow, setActiveWorkflow] = useState<{ repo: Repo; workflow: Workflow } | null>(null)
+  const [activeRun, setActiveRun] = useState<{ repo: Repo; run: WorkflowRun } | null>(null)
+  const [auditOpen, setAuditOpen] = useState(false)
   const [mirror, setMirror] = useState(DEFAULT_MIRROR)
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('checking')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
@@ -170,6 +202,8 @@ export default function App() {
       setActiveId(id)
       setSelected(new Set())
       setSelectMode(false)
+      setPipelineRepo(null)
+      setSheet('none')
       await loadRepos(c, id)
 
       // 后台确认归属与 scopes，失败不打断主流程，也不把令牌误标为失效
@@ -623,6 +657,10 @@ export default function App() {
     setClient(null)
     setRepos([])
     setSelected(new Set())
+    setPipelineRepo(null)
+    setActiveWorkflow(null)
+    setActiveRun(null)
+    setAuditOpen(false)
     setTab('repos')
     showToast(needsPassword ? '已锁定，需要口令解锁' : '已锁定，数据已从内存清除')
   }
@@ -638,6 +676,18 @@ export default function App() {
   )
 
   const activeRecord = records.find((r) => r.id === activeId) ?? null
+
+  // 进入流水线页默认选最近推送的仓库，省得每次都要先挑一遍
+  useEffect(() => {
+    if (tab !== 'pipelines') return
+    if (pipelineRepo && repos.some((r) => r.full_name === pipelineRepo.full_name)) return
+    if (repos.length > 0) setPipelineRepo(repos[0])
+  }, [tab, pipelineRepo, repos])
+
+  function go(next: Tab) {
+    setTab(next)
+    setAuditOpen(false)
+  }
 
   if (!ready) {
     return (
@@ -731,20 +781,52 @@ export default function App() {
         />
       )}
 
-      {tab === 'audit' && (
-        <AuditLog
-          entries={audit}
-          onClear={() => {
-            if (!kvRef.current) return
-            void clearAudit(kvRef.current).then(() => {
-              setAudit([])
-              showToast('审计日志已清空')
-            })
+      {tab === 'stars' && (
+        <StarsPage
+          client={client}
+          login={activeRecord?.login ?? null}
+          onOpenRepo={(r) => {
+            setDetailRepo(r)
+            setSheet('detail')
+          }}
+          onToast={showToast}
+          onUnstarred={(fullName) => {
+            setRepos((prev) =>
+              prev.map((r) =>
+                r.full_name === fullName
+                  ? { ...r, stargazers_count: Math.max(0, r.stargazers_count - 1) }
+                  : r,
+              ),
+            )
+            setDetailRepo((cur) =>
+              cur && cur.full_name === fullName
+                ? { ...cur, stargazers_count: Math.max(0, cur.stargazers_count - 1) }
+                : cur,
+            )
           }}
         />
       )}
 
-      {tab === 'settings' && (
+      {tab === 'pipelines' && (
+        <PipelinesPage
+          client={client}
+          repo={pipelineRepo}
+          reloadKey={pipelineReload}
+          onPickRepo={() => setSheet('repoPick')}
+          onOpenWorkflow={(w) => {
+            if (!pipelineRepo) return
+            setActiveWorkflow({ repo: pipelineRepo, workflow: w })
+            setSheet('workflow')
+          }}
+          onOpenRun={(r) => {
+            if (!pipelineRepo) return
+            setActiveRun({ repo: pipelineRepo, run: r })
+            setSheet('run')
+          }}
+        />
+      )}
+
+      {tab === 'settings' && !auditOpen && (
         <SettingsPage
           baseUrl={baseUrl}
           login={activeRecord?.login ?? null}
@@ -781,7 +863,22 @@ export default function App() {
           onCheckUpdate={() => void runCheck(true)}
           onSaveBaseUrl={(url) => void saveBaseUrl(url)}
           onLock={lockVault}
+          onOpenAudit={() => setAuditOpen(true)}
           onClearAudit={() => {
+            if (!kvRef.current) return
+            void clearAudit(kvRef.current).then(() => {
+              setAudit([])
+              showToast('审计日志已清空')
+            })
+          }}
+        />
+      )}
+
+      {tab === 'settings' && auditOpen && (
+        <AuditLog
+          entries={audit}
+          onBack={() => setAuditOpen(false)}
+          onClear={() => {
             if (!kvRef.current) return
             void clearAudit(kvRef.current).then(() => {
               setAudit([])
@@ -805,19 +902,23 @@ export default function App() {
       )}
 
       <nav className="tabbar">
-        <button className={tab === 'repos' ? 'on' : ''} onClick={() => setTab('repos')}>
+        <button className={tab === 'repos' ? 'on' : ''} onClick={() => go('repos')}>
           <Icon name="repo" size={19} />
           仓库
         </button>
-        <button className={tab === 'tokens' ? 'on' : ''} onClick={() => setTab('tokens')}>
+        <button className={tab === 'stars' ? 'on' : ''} onClick={() => go('stars')}>
+          <Icon name="star" size={19} />
+          星标
+        </button>
+        <button className={tab === 'pipelines' ? 'on' : ''} onClick={() => go('pipelines')}>
+          <Icon name="play" size={19} />
+          流水线
+        </button>
+        <button className={tab === 'tokens' ? 'on' : ''} onClick={() => go('tokens')}>
           <Icon name="key" size={19} />
           令牌
         </button>
-        <button className={tab === 'audit' ? 'on' : ''} onClick={() => setTab('audit')}>
-          <Icon name="clock" size={19} />
-          审计
-        </button>
-        <button className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>
+        <button className={tab === 'settings' ? 'on' : ''} onClick={() => go('settings')}>
           <Icon name="gear" size={19} />
           设置
         </button>
@@ -864,6 +965,89 @@ export default function App() {
           }}
           onAudit={(action, detail) => void logAudit(action, detail.target, detail.text)}
           onToast={showToast}
+          onOpenWorkflows={() => {
+            setPipelineRepo(detailRepo)
+            setSheet('none')
+            setTab('pipelines')
+          }}
+          onOpenReleases={() => setSheet('releases')}
+          onOpenForks={() => setSheet('forks')}
+        />
+      )}
+
+      {sheet === 'releases' && detailRepo && (
+        <ReleasesSheet
+          repo={detailRepo}
+          client={client}
+          mirror={mirror}
+          onClose={() => setSheet('detail')}
+          onToast={showToast}
+          onAudit={(detail) => void logAudit('release', detailRepo.full_name, detail)}
+        />
+      )}
+
+      {sheet === 'forks' && detailRepo && (
+        <ForksSheet
+          repo={detailRepo}
+          client={client}
+          login={activeRecord?.login ?? null}
+          onClose={() => setSheet('detail')}
+          onToast={showToast}
+          onAudit={(detail) => void logAudit('fork', detailRepo.full_name, detail)}
+          onOpenRepo={(r) => {
+            setDetailRepo(r)
+            setSheet('detail')
+          }}
+        />
+      )}
+
+      {sheet === 'workflow' && activeWorkflow && (
+        <WorkflowSheet
+          repo={activeWorkflow.repo}
+          workflow={activeWorkflow.workflow}
+          client={client}
+          mirror={mirror}
+          onClose={() => {
+            setActiveWorkflow(null)
+            setSheet('none')
+          }}
+          onChanged={(next) => {
+            setActiveWorkflow((cur) => (cur ? { ...cur, workflow: next } : cur))
+            setPipelineReload((n) => n + 1)
+          }}
+          onOpenRun={(run) => {
+            setActiveRun({ repo: activeWorkflow.repo, run })
+            setSheet('run')
+          }}
+          onToast={showToast}
+          onAudit={(detail) =>
+            void logAudit('workflow', `${activeWorkflow.repo.full_name} · ${activeWorkflow.workflow.name}`, detail)
+          }
+        />
+      )}
+
+      {sheet === 'run' && activeRun && (
+        <RunSheet
+          repo={activeRun.repo}
+          run={activeRun.run}
+          client={client}
+          mirror={mirror}
+          onClose={() => setSheet(activeWorkflow ? 'workflow' : 'none')}
+          onToast={showToast}
+          onChanged={() => setPipelineReload((n) => n + 1)}
+        />
+      )}
+
+      {sheet === 'repoPick' && (
+        <RepoPickerSheet
+          repos={repos}
+          current={pipelineRepo}
+          onPick={(r) => {
+            setPipelineRepo(r)
+            setSheet('none')
+            setPipelineReload((n) => n + 1)
+          }}
+          onClose={() => setSheet('none')}
         />
       )}
 

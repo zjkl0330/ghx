@@ -1,5 +1,14 @@
 import { normalizeRepo, type RawRepo } from './repos'
-import type { Page, RateLimit, Visibility } from './types'
+import type {
+  Fork,
+  Page,
+  RateLimit,
+  Release,
+  Visibility,
+  Workflow,
+  WorkflowJob,
+  WorkflowRun,
+} from './types'
 
 export const DEFAULT_BASE_URL = 'https://api.github.com'
 
@@ -38,7 +47,18 @@ export function describeError(status: number, body: unknown): string {
         : '权限不足：该令牌没有执行此操作的 scope'
     case 404:
       return '仓库不存在，或令牌无权访问'
+    case 409:
+      return '资源状态冲突：工作流可能已停用，或该操作与当前状态不符'
     case 422:
+      if (raw.message?.includes('workflow_dispatch')) {
+        return '该工作流没有 workflow_dispatch 触发器，不能手动运行'
+      }
+      if (raw.message?.toLowerCase().includes('no ref found')) {
+        return '分支或标签不存在，检查 ref 后重试'
+      }
+      if (raw.message?.includes('already_exists')) {
+        return '同名资源已存在'
+      }
       return '组织策略拒绝：可见度可能仅允许 owner 修改'
     case 451:
       return '仓库因法律原因不可用'
@@ -201,6 +221,133 @@ export class GitHubClient {
       }),
     })
     return { data: normalizeRepo(data), rate, scopes }
+  }
+
+  /** 我 star 过的仓库，按 star 时间倒序。 */
+  async listStarred(page = 1, perPage = 50) {
+    const query = new URLSearchParams({
+      per_page: String(perPage),
+      page: String(page),
+      sort: 'created',
+      direction: 'desc',
+    })
+    const { data, rate, scopes } = await this.request<RawRepo[]>(`/user/starred?${query.toString()}`)
+    return { data: (data ?? []).map(normalizeRepo), rate, scopes }
+  }
+
+  /** 仓库里所有工作流。Actions 未启用时返回空数组而不是报错。 */
+  async listWorkflows(owner: string, name: string) {
+    const { data, rate, scopes } = await this.request<{ total_count: number; workflows: Workflow[] }>(
+      `/repos/${owner}/${name}/actions/workflows?per_page=100`,
+    )
+    return { data: data?.workflows ?? [], rate, scopes }
+  }
+
+  /** 启用或停用工作流。停用只是禁止触发，文件本身不动。 */
+  async setWorkflowEnabled(owner: string, name: string, id: number, enabled: boolean) {
+    return this.request<null>(
+      `/repos/${owner}/${name}/actions/workflows/${id}/${enabled ? 'enable' : 'disable'}`,
+      { method: 'PUT' },
+    )
+  }
+
+  /**
+   * 手动触发 workflow_dispatch。GitHub 立即返回 204，真正的运行是异步的，
+   * 所以调用方要提示「已进入队列」而不是「已完成」。
+   */
+  async dispatchWorkflow(
+    owner: string,
+    name: string,
+    id: number,
+    ref: string,
+    inputs?: Record<string, string>,
+  ) {
+    return this.request<null>(`/repos/${owner}/${name}/actions/workflows/${id}/dispatches`, {
+      method: 'POST',
+      body: JSON.stringify(inputs ? { ref, inputs } : { ref }),
+    })
+  }
+
+  /** 最近运行记录，可按工作流或分支过滤。 */
+  async listRuns(
+    owner: string,
+    name: string,
+    opts: { workflowId?: number; branch?: string; perPage?: number } = {},
+  ) {
+    const query = new URLSearchParams({ per_page: String(opts.perPage ?? 20) })
+    if (opts.branch) query.set('branch', opts.branch)
+    const base =
+      opts.workflowId != null
+        ? `/repos/${owner}/${name}/actions/workflows/${opts.workflowId}/runs`
+        : `/repos/${owner}/${name}/actions/runs`
+    const { data, rate, scopes } = await this.request<{ total_count: number; workflow_runs: WorkflowRun[] }>(
+      `${base}?${query.toString()}`,
+    )
+    return { data: data?.workflow_runs ?? [], rate, scopes }
+  }
+
+  async listJobs(owner: string, name: string, runId: number) {
+    const { data, rate, scopes } = await this.request<{ total_count: number; jobs: WorkflowJob[] }>(
+      `/repos/${owner}/${name}/actions/runs/${runId}/jobs?per_page=30`,
+    )
+    return { data: data?.jobs ?? [], rate, scopes }
+  }
+
+  async cancelRun(owner: string, name: string, runId: number) {
+    return this.request<null>(`/repos/${owner}/${name}/actions/runs/${runId}/cancel`, { method: 'POST' })
+  }
+
+  async rerunRun(owner: string, name: string, runId: number) {
+    return this.request<null>(`/repos/${owner}/${name}/actions/runs/${runId}/rerun`, { method: 'POST' })
+  }
+
+  async listReleases(owner: string, name: string, page = 1, perPage = 20) {
+    const query = new URLSearchParams({ per_page: String(perPage), page: String(page) })
+    const { data, rate, scopes } = await this.request<Release[]>(
+      `/repos/${owner}/${name}/releases?${query.toString()}`,
+    )
+    return { data: data ?? [], rate, scopes }
+  }
+
+  /** 新建发行版。tag 不存在时 GitHub 会按 target_commitish 创建标签。 */
+  async createRelease(
+    owner: string,
+    name: string,
+    input: { tag: string; title?: string; body?: string; prerelease?: boolean; target?: string },
+  ) {
+    const { data, rate, scopes } = await this.request<Release>(`/repos/${owner}/${name}/releases`, {
+      method: 'POST',
+      body: JSON.stringify({
+        tag_name: input.tag,
+        name: input.title || input.tag,
+        body: input.body ?? '',
+        draft: false,
+        prerelease: input.prerelease ?? false,
+        ...(input.target ? { target_commitish: input.target } : {}),
+      }),
+    })
+    return { data, rate, scopes }
+  }
+
+  async deleteRelease(owner: string, name: string, id: number) {
+    return this.request<null>(`/repos/${owner}/${name}/releases/${id}`, { method: 'DELETE' })
+  }
+
+  async listForks(owner: string, name: string, page = 1, perPage = 30) {
+    const query = new URLSearchParams({ per_page: String(perPage), page: String(page), sort: 'newest' })
+    const { data, rate, scopes } = await this.request<RawRepo[]>(
+      `/repos/${owner}/${name}/forks?${query.toString()}`,
+    )
+    return { data: (data ?? []).map((r) => normalizeRepo(r) as Fork), rate, scopes }
+  }
+
+  /** 复刻到当前账号。GitHub 返回 202，复刻是后台队列任务。 */
+  async createFork(owner: string, name: string) {
+    const { data, rate, scopes } = await this.request<RawRepo>(`/repos/${owner}/${name}/forks`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    return { data: data ? (normalizeRepo(data) as Fork) : null, rate, scopes }
   }
 }
 

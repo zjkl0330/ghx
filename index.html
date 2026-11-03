@@ -6,6 +6,11 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#0d1117" />
     <title>ghx · GitHub 控制台</title>
+    <!-- 内联图标，省掉浏览器对 /favicon.ico 的 404 请求 -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d1117'/%3E%3Cpath d='M13 19.5l-1.6 1.6a4.2 4.2 0 01-5.9-5.9l2.9-2.9M19 12.5l1.6-1.6a4.2 4.2 0 015.9 5.9l-2.9 2.9M11.5 16h9' stroke='%232f81f7' stroke-width='2.4' stroke-linecap='round' fill='none'/%3E%3C/svg%3E"
+    />
     <!--
       首屏前同步应用配色，避免先渲染深色再跳浅色。
       这段必须内联在 head 里：等 React 挂载再切换会闪一帧。

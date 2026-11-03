@@ -90,4 +90,81 @@ describe('GitHubClient', () => {
     expect(call[1].method).toBe('PATCH')
     expect(JSON.parse(call[1].body as string)).toEqual({ visibility: 'private' })
   })
+
+  it('星标列表把 owner 对象归一化成字符串', async () => {
+    const fn = mockFetch(200, [
+      { id: 1, name: 'ghx', full_name: 'zjkl/ghx', owner: { login: 'zjkl' }, private: false },
+    ])
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    const { data } = await client.listStarred()
+    expect(data[0].owner).toBe('zjkl')
+    const url = (fn as unknown as { mock: { calls: [string][] } }).mock.calls[0][0]
+    expect(url).toContain('/user/starred?')
+    expect(url).toContain('sort=created')
+  })
+
+  it('触发工作流走 dispatches，只带 ref', async () => {
+    const fn = mockFetch(204, null)
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.dispatchWorkflow('a', 'b', 7, 'main')
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(call[0]).toContain('/repos/a/b/actions/workflows/7/dispatches')
+    expect(call[1].method).toBe('POST')
+    expect(JSON.parse(call[1].body as string)).toEqual({ ref: 'main' })
+  })
+
+  it('启停工作流用 PUT 到 enable/disable', async () => {
+    const fn = mockFetch(204, null)
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.setWorkflowEnabled('a', 'b', 7, false)
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(call[0]).toContain('/actions/workflows/7/disable')
+    expect(call[1].method).toBe('PUT')
+  })
+
+  it('运行列表可限定工作流并带上每页条数', async () => {
+    const fn = mockFetch(200, { total_count: 0, workflow_runs: [] })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.listRuns('a', 'b', { workflowId: 7, perPage: 5 })
+    const url = (fn as unknown as { mock: { calls: [string][] } }).mock.calls[0][0]
+    expect(url).toContain('/actions/workflows/7/runs?')
+    expect(url).toContain('per_page=5')
+  })
+
+  it('新建发行版把标签与预发行标记写进请求体', async () => {
+    const fn = mockFetch(201, { id: 1, tag_name: 'v1.0.0' })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    await client.createRelease('a', 'b', { tag: 'v1.0.0', title: '首个版本', prerelease: true, target: 'main' })
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    const body = JSON.parse(call[1].body as string)
+    expect(body).toMatchObject({
+      tag_name: 'v1.0.0',
+      name: '首个版本',
+      prerelease: true,
+      target_commitish: 'main',
+      draft: false,
+    })
+  })
+
+  it('复刻走 POST /forks', async () => {
+    const fn = mockFetch(202, { id: 2, name: 'ghx', owner: { login: 'me' } })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    const { data } = await client.createFork('a', 'b')
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(call[0]).toBe('https://api.github.com/repos/a/b/forks')
+    expect(call[1].method).toBe('POST')
+    expect(data?.owner).toBe('me')
+  })
+})
+
+describe('工作流错误翻译', () => {
+  it('422 缺 workflow_dispatch 时给明确提示', () => {
+    expect(describeError(422, { message: "Workflow does not have 'workflow_dispatch' trigger" })).toContain(
+      'workflow_dispatch',
+    )
+  })
+
+  it('409 指向停用或状态冲突', () => {
+    expect(describeError(409, { message: 'Conflict' })).toContain('冲突')
+  })
 })

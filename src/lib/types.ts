@@ -47,6 +47,92 @@ export interface RateLimit {
   reset: number
 }
 
+/** 工作流状态：active 正常；disabled_manually 手动停用；disabled_inactivity 因长期无活动被自动停用。 */
+export type WorkflowState = 'active' | 'disabled_manually' | 'disabled_inactivity'
+
+export interface Workflow {
+  id: number
+  name: string
+  path: string
+  state: WorkflowState
+  html_url?: string
+  updated_at?: string
+}
+
+export type RunStatus = 'queued' | 'in_progress' | 'completed' | 'requested' | 'waiting' | 'pending'
+
+export type RunConclusion =
+  | 'success'
+  | 'failure'
+  | 'cancelled'
+  | 'skipped'
+  | 'timed_out'
+  | 'action_required'
+  | 'neutral'
+  | 'stale'
+  | null
+
+export interface WorkflowRun {
+  id: number
+  name: string | null
+  display_title?: string
+  head_branch: string | null
+  head_sha: string
+  event: string
+  status: RunStatus
+  conclusion: RunConclusion
+  run_number: number
+  workflow_id: number
+  created_at: string
+  run_started_at?: string | null
+  updated_at: string
+  html_url: string
+  path?: string
+  actor?: { login: string } | null
+}
+
+export interface WorkflowStep {
+  name: string
+  status: RunStatus
+  conclusion: RunConclusion
+  number: number
+}
+
+export interface WorkflowJob {
+  id: number
+  name: string
+  status: RunStatus
+  conclusion: RunConclusion
+  started_at: string | null
+  completed_at: string | null
+  steps?: WorkflowStep[]
+}
+
+export interface ReleaseAsset {
+  id: number
+  name: string
+  size: number
+  download_count: number
+  browser_download_url: string
+  content_type?: string
+}
+
+export interface Release {
+  id: number
+  tag_name: string
+  name: string | null
+  body: string | null
+  draft: boolean
+  prerelease: boolean
+  created_at: string
+  published_at: string | null
+  html_url: string
+  assets: ReleaseAsset[]
+}
+
+/** 复刻沿用仓库结构，只多一个创建时间，用于「复刻于」展示。 */
+export type Fork = Repo & { created_at: string }
+
 export interface Page<T> {
   data: T
   rate: RateLimit | null
@@ -75,6 +161,9 @@ export interface AuditEntry {
     | 'repo-archive'
     | 'repo-delete'
     | 'repo-create'
+    | 'workflow'
+    | 'release'
+    | 'fork'
     | 'security'
   target: string
   result: 'ok' | 'failed'

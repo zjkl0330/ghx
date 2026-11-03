@@ -13,6 +13,9 @@ interface Props {
   onDeleted: (fullName: string) => void
   onAudit: (action: AuditEntry['action'], detail: { target: string; text: string }) => void
   onToast: (msg: string) => void
+  onOpenWorkflows: () => void
+  onOpenReleases: () => void
+  onOpenForks: () => void
 }
 
 function relTime(iso: string): string {
@@ -209,6 +212,12 @@ export function RepoDetailSheet(p: Props) {
               p.onToast(next === 'private' ? '已转为私有' : '已转为公开')
             },
           )}
+
+          {action('workflows', 'play', '工作流', '查看 Actions、启停与手动运行', async () => p.onOpenWorkflows())}
+
+          {action('releases', 'package', '发行版', '查看标签、附件与下载', async () => p.onOpenReleases())}
+
+          {action('forks', 'fork', '复刻', `${p.repo.forks_count} 份复刻 · 可复刻到自己账号`, async () => p.onOpenForks())}
 
           {action('clone', 'copy', '复制克隆地址', `https://github.com/${p.repo.full_name}.git`, async () => {
             const url = `https://github.com/${p.repo.full_name}.git`
