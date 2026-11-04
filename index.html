@@ -2,7 +2,11 @@
 <html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <!--
+      不锁缩放：视力不佳的用户可以放大看。
+      viewport-fit=cover 让安全区变量拿得到值，刘海与手势条才不会压到内容。
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#0d1117" />
     <title>ghx · GitHub 控制台</title>

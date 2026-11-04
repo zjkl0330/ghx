@@ -3,10 +3,15 @@ import { Icon } from './icons'
 
 interface Props {
   login: string | null
+  /** 未校验归属时用令牌名兜底，别让顶栏显示「未连接账号」 */
+  accountName: string | null
   avatarUrl: string | null
   repoCount: number
   tokenCount: number
   auditCount: number
+  /** 已导入的账号数，用来在账号卡片上提示「可切换」 */
+  accountCount: number
+  onOpenAccounts: () => void
   version: string
   latestVersion: string | null
   hasUpdate: boolean
@@ -41,7 +46,7 @@ export function ProfilePage(p: Props) {
       </div>
 
       <div className="page">
-        <div className="profile-head">
+        <button className="profile-head profile-head-btn" onClick={p.onOpenAccounts}>
           {showAvatar ? (
             <img
               className="avatar avatar-lg avatar-img"
@@ -52,13 +57,22 @@ export function ProfilePage(p: Props) {
           ) : (
             <div className="avatar avatar-lg">{initial}</div>
           )}
-          <div style={{ minWidth: 0 }}>
-            <div className="profile-login">{p.login ? `@${p.login}` : '未连接账号'}</div>
+          <div style={{ minWidth: 0, textAlign: 'left' }}>
+            <div className="profile-login">
+              {p.login ? `@${p.login}` : (p.accountName ?? '未连接账号')}
+            </div>
             <div className="profile-sub">
-              {p.login ? `${p.repoCount} 个仓库 · 本地加密保管` : '导入 PAT 后即可管理仓库'}
+              {p.login
+                ? `${p.repoCount} 个仓库 · ${p.accountCount} 个账号 · 本地加密保管`
+                : '导入 PAT 后即可管理仓库'}
             </div>
           </div>
-        </div>
+          <div className="spacer" />
+          <span className="acct-swap">
+            {p.accountCount > 1 ? '切换' : '账号'}
+            <Icon name="chevron" size={12} />
+          </span>
+        </button>
 
         <div className="profile-stats">
           <div>

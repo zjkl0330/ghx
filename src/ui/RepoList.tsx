@@ -60,11 +60,16 @@ interface Props {
   onExitSelect: () => void
   onRefresh: () => void
   hasToken: boolean
+  /** 已格式化的账号显示名：校验过是 @login，未校验时退回令牌名 */
   account: string | null
   /** 真实头像；加载失败或为空时回退到首字母 */
   avatarUrl?: string | null
   /** 打开个人页（点头像进） */
   onOpenProfile: () => void
+  /** 打开账号切换面板（点账号名进）。只有一个账号时可以不给，退化成进个人页 */
+  onOpenAccounts?: () => void
+  /** 账号总数，大于 1 时账号名后面带一个可点的切换标记 */
+  accountCount?: number
   /** 未读通知数，大于 0 时铃铛上带红点 */
   unread?: number
   onOpenNotifications?: () => void
@@ -101,9 +106,17 @@ export function RepoList(p: Props) {
             <div className="avatar">{initial}</div>
           )}
         </button>
-        <button className="who who-btn" onClick={p.onOpenProfile}>
-          {p.account ? `@${p.account}` : '未连接账号'}
-          <span> · {p.counts.total} 个仓库</span>
+        <button
+          className="who who-btn"
+          onClick={p.onOpenAccounts ?? p.onOpenProfile}
+          aria-label={(p.accountCount ?? 0) > 1 ? '切换账号' : '打开个人页'}
+        >
+          <span className="who-name">{p.account ?? '未连接账号'}</span>
+          {/* 多账号时把「N 个仓库」让位给账号名与切换箭头，仓库数下面那行也有 */}
+          {(p.accountCount ?? 0) <= 1 && (
+            <span className="who-meta"> · {p.counts.total} 个仓库</span>
+          )}
+          {(p.accountCount ?? 0) > 1 && <Icon name="chevron" size={11} className="who-swap" />}
         </button>
         <div className="spacer" />
         {p.onOpenNotifications && (

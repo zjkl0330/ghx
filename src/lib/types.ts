@@ -180,6 +180,7 @@ export interface AuditEntry {
     | 'pull'
     | 'file'
     | 'security'
+    | 'account-switch'
   target: string
   result: 'ok' | 'failed'
   detail: string

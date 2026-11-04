@@ -178,6 +178,24 @@ textarea {
   font-size: 13px;
   font-weight: 600;
   min-width: 0;
+  /* 账号名可能很长，图标不能被挤到第二行 */
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.who-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who-meta {
+  flex: none;
+  color: var(--text-dim);
+  font-weight: 400;
 }
 
 .who span {
@@ -3186,4 +3204,244 @@ h1.title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---- 多账号切换 ---- */
+
+.avatar-sm {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+  border-radius: 50%;
+}
+
+.acct-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0 10px;
+}
+
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.acct-row.on {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+/* 当前账号虽然禁用，但不置灰 —— 它是「正在用」而不是「不可用」 */
+.acct-row:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.acct-row:active:not(:disabled) {
+  background: var(--surface-3);
+}
+
+.acct-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.acct-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.acct-line1 b {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-line2 {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-tag {
+  flex: none;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+
+.acct-tag.warn {
+  background: var(--amber-bg);
+  border: 1px solid var(--amber-line);
+  color: var(--amber);
+}
+
+.acct-end {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.acct-end.on {
+  color: var(--blue);
+}
+
+.acct-arrow {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.acct-actions {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0 10px;
+}
+
+/* 个人页顶部的账号卡片做成可点：点进去就是切换面板 */
+.profile-head-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-head-btn:active {
+  background: var(--surface);
+}
+
+.acct-swap {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10.5px;
+  color: var(--blue);
+}
+
+/* 顶栏账号名后面的切换标记，chevron 默认朝右，转 90° 朝下 */
+.who-swap {
+  transform: rotate(90deg);
+  opacity: 0.72;
+  margin-left: 2px;
+}
+
+/* ---- 多设备适配 ---- */
+
+/*
+ * 手机之外一律按一列内容居中。
+ * 不做双栏：仓库列表、diff、日志都是单列语义，分成两栏反而更难读。
+ */
+.app {
+  max-width: var(--content-max, 100%);
+  margin: 0 auto;
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* 弹层跟着内容宽度走，否则平板上一拉就是整屏宽 */
+.sheet {
+  max-width: var(--content-max, 100%);
+  margin: 0 auto;
+}
+
+/* 横屏刘海：左右各留一条安全区 */
+.tabbar,
+.topbar {
+  padding-left: calc(16px + env(safe-area-inset-left, 0px));
+  padding-right: calc(16px + env(safe-area-inset-right, 0px));
+}
+
+@media (min-width: 640px) {
+  :root {
+    --content-max: 620px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --content-max: 760px;
+  }
+}
+
+/* 小屏（360dp 以下）：收一点边距，保住可用宽度 */
+@media (max-width: 359px) {
+  .topbar {
+    padding: 8px 12px 6px;
+  }
+
+  .tk,
+  .acct-row {
+    margin-left: 12px;
+    margin-right: 12px;
+  }
+}
+
+/* 横屏矮屏：底栏与顶栏都压扁，把高度让给内容 */
+@media (orientation: landscape) and (max-height: 520px) {
+  .tabbar {
+    height: calc(48px + var(--safe-bottom));
+  }
+
+  .tabbar button {
+    font-size: 9px;
+    gap: 1px;
+  }
+
+  .topbar {
+    padding-top: 6px;
+    padding-bottom: 4px;
+  }
+
+  .sheet {
+    max-height: 94vh;
+  }
+}
+
+/* 弹层头部：标题块占满，右侧关闭按钮固定不换行 */
+.sheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.sheet-head .sheet-title {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.sheet-head .icon-btn {
+  flex: none;
 }

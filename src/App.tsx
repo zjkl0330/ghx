@@ -72,6 +72,8 @@ import type {
   WorkflowRun,
 } from './lib/types'
 import { Vault } from './lib/vault'
+import { buildAccounts, switchMessage } from './lib/accounts'
+import { AccountSheet } from './ui/AccountSheet'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
 import { CodePage, FileEditor } from './ui/CodePage'
@@ -175,6 +177,8 @@ export default function App() {
   const [client, setClient] = useState<GitHubClient | null>(null)
   const [quota, setQuota] = useState<Record<string, { remaining: number; limit: number }>>({})
   const [checking, setChecking] = useState<string | null>(null)
+  /** 正在切换的账号 id，切换期间面板上显示占位 */
+  const [switching, setSwitching] = useState<string | null>(null)
 
   const [repos, setRepos] = useState<Repo[]>([])
   const [loadingRepos, setLoadingRepos] = useState(false)
@@ -492,7 +496,16 @@ export default function App() {
       setSelected(new Set())
       setSelectMode(false)
       setPipelineRepo(null)
+      setDetailRepo(null)
       setSheet('none')
+      // 换账号时先把上一个账号的痕迹擦干净，再按新账号重新填：
+      // 路由栈压着旧 Issue/文件页会 404，仓库列表与未读数留着旧值就是串号。
+      setRouteStack([])
+      setQuery('')
+      setRepos([])
+      setSnapshotAt(null)
+      setRepoError(null)
+      setUnread(0)
 
       // 冷启动时先拿本地快照顶上，界面立刻有内容；网络请求放后台跑，
       // 否则要等 6 页全部回来才能看到第一屏
@@ -530,6 +543,38 @@ export default function App() {
     },
     [records, baseUrl, loadRepos, refreshAudit],
   )
+
+  /**
+   * 切换账号。
+   *
+   * 界面状态的清理统一在 activate 里做（路由栈、仓库列表、未读、选择态），
+   * 这里只负责切换本身与提示 —— 免得两个地方各清一半、漏掉一样就串号。
+   */
+  async function switchAccount(id: string) {
+    if (id === activeId) {
+      setSheet('none')
+      return
+    }
+    setSwitching(id)
+    try {
+      await activate(id)
+      const rec = records.find((r) => r.id === id)
+      if (kvRef.current && rec) {
+        await appendAudit(kvRef.current, {
+          action: 'account-switch',
+          target: rec.login ? `@${rec.login}` : rec.name,
+          result: 'ok',
+          detail: '已切换当前账号',
+        })
+        await refreshAudit()
+      }
+      showToast(rec ? switchMessage(buildAccounts([rec], id)[0]) : '已切换账号')
+    } catch (err) {
+      showToast((err as Error).message)
+    } finally {
+      setSwitching(null)
+    }
+  }
 
   /** 解锁成功后的统一入口：载入列表、自动激活第一条、记一条审计。 */
   const enterVault = useCallback(
@@ -780,8 +825,31 @@ export default function App() {
         })
         await refreshAudit()
       }
-      await activate(rec.id, list)
-      showToast('令牌已加密保存')
+      if (!activeId) {
+        // 首次导入：直接用它，省一步
+        await activate(rec.id, list)
+        showToast('令牌已加密保存')
+      } else {
+        // 已经有账号在用：新增不抢当前会话，否则多账号时每加一个都被踢走
+        showToast(`已添加「${rec.name}」，可在账号面板切换`)
+        void (async () => {
+          try {
+            const secret = await v.secret(rec.id)
+            const c = new GitHubClient({ token: secret, baseUrl: rec.baseUrl || baseUrl })
+            const probe = await probeToken(c, rec.expiresAt)
+            const updated = await v.update(rec.id, {
+              scopes: probe.scopes,
+              login: probe.login,
+              avatarUrl: probe.avatarUrl,
+              lastCheckedAt: probe.checkedAt,
+              lastStatus: probe.status,
+            })
+            setRecords((prev) => prev.map((r) => (r.id === rec.id ? updated : r)))
+          } catch {
+            /* 归属探测失败不打断，账号面板里会显示「未校验」 */
+          }
+        })()
+      }
     } catch (err) {
       setAddError((err as Error).message)
     } finally {
@@ -1372,9 +1440,13 @@ export default function App() {
           }}
           onRefresh={() => client && void loadRepos(client, activeId, true)}
           hasToken={records.length > 0}
-          account={activeRecord?.login ?? null}
+          account={
+            activeRecord ? (activeRecord.login ? `@${activeRecord.login}` : activeRecord.name) : null
+          }
           avatarUrl={activeRecord?.avatarUrl ?? null}
           onOpenProfile={() => pushTo({ kind: 'profile' })}
+          onOpenAccounts={() => setSheet('accounts')}
+          accountCount={records.length}
           unread={unread}
           onOpenNotifications={() => pushTo({ kind: 'notifications' })}
           descZh={descZh}
@@ -1435,10 +1507,13 @@ export default function App() {
       {route?.kind === 'profile' && (
         <ProfilePage
           login={activeRecord?.login ?? null}
+          accountName={activeRecord?.name ?? null}
           avatarUrl={activeRecord?.avatarUrl ?? null}
           repoCount={repos.length}
           tokenCount={records.length}
           auditCount={audit.length}
+          accountCount={records.length}
+          onOpenAccounts={() => setSheet('accounts')}
           version={APP_VERSION}
           latestVersion={updateResult?.latest ?? null}
           hasUpdate={!!updateResult?.hasUpdate}
@@ -1845,6 +1920,20 @@ export default function App() {
         </nav>
       )}
 
+
+      {sheet === 'accounts' && (
+        <AccountSheet
+          accounts={buildAccounts(records, activeId)}
+          switching={switching}
+          onSwitch={(id) => void switchAccount(id)}
+          onManage={() => {
+            setSheet('none')
+            pushTo({ kind: 'tokens' })
+          }}
+          onAdd={() => setSheet('add')}
+          onClose={() => setSheet('none')}
+        />
+      )}
 
       {sheet === 'add' && (
         <AddTokenSheet

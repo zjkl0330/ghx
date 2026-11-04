@@ -19,6 +19,7 @@ const ACTION_LABEL: Record<AuditEntry['action'], string> = {
   pull: 'Pull request',
   file: '编辑文件',
   security: '安全设置',
+  'account-switch': '切换账号',
 }
 
 function fmt(iso: string): string {

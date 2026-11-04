@@ -63,6 +63,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `notifications.ts` | 通知：原因文案、按仓库分组、未读数、`canUseNotifications`（classic-only 判断）、条件请求 |
 | `repo-admin.ts` | 仓库设置开关表、改名影响清单、协作员、Watch 订阅、用户资料与关注 |
 | `release-ext.ts` | 发行版编辑/发布草稿/删附件（**上传不在这里，见下方 CORS 坑**） |
+| `accounts.ts` | 多账号视图：`buildAccounts`（当前置顶）、`nextAccount`（轮换）、`accountLabel`、`switchMessage`、`needsAccountReset` |
 | `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
 
 ### ui（组件）
@@ -70,6 +71,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 `RepoList` 主列表 · `RepoDetailSheet` 仓库详情动作 · `ReadmeSheet` 自述阅读+机翻 · `StarsPage` 星标 · `HotPage` 热门/搜索 · `PipelinesPage` 流水线二级页 · `WorkflowSheet`/`RunSheet` 工作流与运行 · `LogSheet` **日志与产物** · `ReleasesSheet` · `ForksSheet` · `VisibilitySheet` 批量可见度 · `CreateRepoSheet` · `SortSheet` · `MirrorSheet` **加速站管理** · `ProfilePage` 个人页 · `SettingsPage` 设置 · `TokenVault` 令牌库 · `AuditLog` · `GuardSheet`/`UnlockScreen`/`LockedScreen` 口令三件套 · `UpdateSheet` · `RepoPickerSheet` · `useDescTranslation` 简介批量机翻 hook · `icons.tsx`
 
 第二批（v0.5.3）：`RepoPage` 仓库主页（自述/发行版/分支/流水线/复刻/设置 chips + 代码/Issues/PR/动作页签）· `IssuesPage`/`IssuePage` · `PullsPage`（含 `PullPage`）/`DiffView` · `CodePage`（含 `FileEditor`）· `CommitsPage`（含 `CommitPage`）· `RefsPage` · `NotificationsPage` · `SearchPage` · `UserPage` · `RepoAdminPage` · `ComposeSheet` 新建 Issue/PR · `MarkdownView` 通用渲染（表格/任务列表）· `PageHeader`+`PageState` 统一顶栏与状态 · `useLoad` 统一加载 hook
+
+第三批（v0.5.4）：`AccountSheet` 账号切换面板 + 多设备响应式（内容居中、safe-area、横屏矮屏）
 
 ### 样式
 
@@ -179,6 +182,11 @@ user / notifications / search / profile / settings / tokens / audit
 | 日志接口 302 到预签名 zip，浏览器必挂 | 真机走 `CapacitorHttp`（`responseType: 'arraybuffer'`）+ `fflate`，浏览器给降级说明 |
 | 通知/Watch 用 fine-grained 令牌必 403 | `canUseNotifications(scopes, kind)` 提前判断并解释 |
 | 给 `workflow_dispatch` 引 `js-yaml` | 只为 `inputs` 那一小块手写解析就够，解析失败降级成「只填 ref」 |
+| 切账号只换 `client` | 路由栈、仓库列表、未读数、搜索词会留上一个账号的；统一在 `activate()` 里清，别分散到调用方 |
+| 新账号没有本地快照时 | `activate` 必须先 `setRepos([])`，否则 `snap` 为 null 分支会把旧账号的列表留在界面上 |
+| 新增令牌后直接 `activate` | 多账号时会把正在用的账号踢掉；只在「当前没有账号」时自动激活 |
+| 大屏直接铺满 | `.app` 用 `--content-max` 居中（620 / 760 两档），弹层同步；否则平板上拉成一条横幅 |
+| 锁 `user-scalable=no` | 阻碍系统字号放大，已放开到 5 倍 |
 
 ## 版本与发布
 
@@ -200,6 +208,6 @@ user / notifications / search / profile / settings / tokens / audit
 
 ## 现在到哪一步了
 
-- 已发布 **v0.5.2**：Edge 免密钥翻译通道、加速站可改地址/自定义/测速、仓库列表全量分页。
-- **v0.5.3（未提交，等用户发话）**：ROADMAP 里 P0 六项 + P1 六项全部落地 —— 路由栈底座、Issues、PR、代码浏览与编辑、提交历史、分支/Tag、Actions 日志与产物、通知、全局搜索、用户主页、仓库设置、发行版编辑。单测 467 → 564。
+- 已发布 **v0.5.3**：ROADMAP 里 P0 六项 + P1 六项全部落地 —— 路由栈底座、Issues、PR、代码浏览与编辑、提交历史、分支/Tag、Actions 日志与产物、通知、全局搜索、用户主页、仓库设置、发行版编辑。单测 467 → 564。
+- **v0.5.4**：多账号切换（顶栏账号名 / 个人页卡片 → 面板，切换时清路由与列表）+ 多设备适配（620/760 两档居中、safe-area、横屏矮屏、放开缩放）。单测 564 → 584。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。

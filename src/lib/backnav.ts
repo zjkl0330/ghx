@@ -24,6 +24,8 @@ export type SheetName =
   | 'compose'
   /** 运行日志（从运行详情点进来） */
   | 'logs'
+  /** 账号切换（多账号） */
+  | 'accounts'
 
 /** 首页页签：底栏第一项就是「首页」，返回时回到它 */
 export const HOME_TAB = 'repos'
