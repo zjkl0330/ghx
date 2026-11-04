@@ -184,7 +184,20 @@ def main():
         route.fulfill(status=200, content_type='application/json', body=json.dumps(out))
 
     with sync_playwright() as p:
-        b = p.chromium.launch(args=['--no-sandbox', '--force-color-profile=srgb'])
+        # 必须跑有头浏览器：Playwright 默认的 headless shell 不做 backdrop-filter，
+        # 底栏会拍成一块没有模糊的半透明色块，跟真机完全不是一回事。
+        # 无显示器的机器上用 `xvfb-run -a python3 scripts/shots.py` 跑。
+        b = p.chromium.launch(
+            headless=False,
+            args=[
+                '--no-sandbox',
+                '--force-color-profile=srgb',
+                '--use-gl=angle',
+                '--use-angle=swiftshader',
+                '--enable-unsafe-swiftshader',
+                '--hide-scrollbars',
+            ],
+        )
         pg = b.new_page(viewport={'width': 390, 'height': 844}, device_scale_factor=2)
         pg.emulate_media(color_scheme='dark')
         pg.route('**/api.github.com/**', handle)
@@ -244,6 +257,18 @@ def main():
         # 设置页：翻译通道
         pg.set_viewport_size({'width': 390, 'height': 844})
         pg.wait_for_timeout(600)
+        pg.evaluate("document.querySelector('.page').scrollTo(0, 0)")
+        pg.wait_for_timeout(200)
+
+        # 浅色主题下的玻璃特写：底栏压着正文，展示模糊与亮边
+        pg.evaluate("document.documentElement.dataset.theme='light'")
+        pg.evaluate("document.querySelector('.page').scrollTo(0, 300)")
+        pg.wait_for_timeout(700)
+        pg.screenshot(path=f'{OUT}/09-glass-light.png')
+        pg.evaluate("document.documentElement.dataset.theme='dark'")
+        pg.evaluate("document.querySelector('.page').scrollTo(0, 0)")
+        pg.wait_for_timeout(400)
+
         pg.click('.avatar-btn')
         pg.wait_for_timeout(500)
         pg.click('text=设置')

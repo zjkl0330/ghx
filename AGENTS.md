@@ -81,7 +81,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 `src/styles/theme.css` 单文件，**只用 CSS 变量**（`--bg` `--surface` `--text` `--text-dim` `--line` `--blue` `--blue-soft` `--green*` `--red*`，以及底栏专用的 `--glass-*` 与 `--tab-active-*`）。深色/浅色靠 `<html data-theme>` 切换，新组件禁止写死颜色。
 
-> 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ 别指望 `backdrop-filter` —— 在这套结构里 `blur(0px)` 与 `blur(100px)` 渲染完全一致，它不执行。质感靠不透明底色 + 砂面噪点，模糊只是加分项；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准。
+> 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ `backdrop-filter` 是可靠的 —— 之前判断「完全不执行」是被截图环境骗了：Playwright 默认的 headless shell 不做 blur，`blur(0px)` 与 `blur(100px)` 才会一模一样。换成有头 Chromium（`xvfb-run` + `--use-angle=swiftshader`）后 `blur(64px)` 能把正文彻底抹平。所以底栏是 0.62 底色 + 真模糊，老 WebView 由 `@supports not` 兜到 0.96；**`scripts/shots.py` 必须跑有头浏览器**，否则 README 里拍出来是块没有模糊的色板；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准。
 
 ## 五个核心机制（改之前必须懂）
 
@@ -216,5 +216,7 @@ user / notifications / search / profile / settings / tokens / audit
 - 已发布 **v0.5.3**：ROADMAP 里 P0 六项 + P1 六项全部落地 —— 路由栈底座、Issues、PR、代码浏览与编辑、提交历史、分支/Tag、Actions 日志与产物、通知、全局搜索、用户主页、仓库设置、发行版编辑。单测 467 → 564。
 - **v0.5.4**：多账号切换（顶栏账号名 / 个人页卡片 → 面板，切换时清路由与列表）+ 多设备适配（620/760 两档居中、safe-area、横屏矮屏、放开缩放）。单测 564 → 584。
 - **v0.5.5**：磨砂玻璃底栏、热门/星标简介机翻（抽 `desc.ts` 统一取数）、图标与启动图重绘、README 截图入库；顺手把「检查更新」指向 `zjkl0330/ghx`。单测 584 → 597。
-- **v0.5.6**：底栏改成「厚度优先」的真磨砂（`backdrop-filter` 在本页面结构里实测不执行）；锁掉双指缩放（`viewport` + `MainActivity` 两处），系统字号不受影响。单测仍 597。
+- **v0.5.6**：底栏改成「厚度优先」的磨砂（当时误判 `backdrop-filter` 不执行）；锁掉双指缩放（`viewport` + `MainActivity` 两处），系统字号不受影响。单测仍 597。
+- **v0.5.7**：底栏砂面颗粒加粗到肉眼可见，底色略降。
+- **v0.5.8**：底栏换成真模糊的液态玻璃（0.62 底色 + `blur(64px) saturate(180%)`，误判的根源是 headless 截图不渲染 blur）；图标改 22px 实心剪影；横屏取消 620px 限宽改铺满，底栏收窄到 460px 居中，消掉两侧白边；`shots.py` 固定有头浏览器并补浅色底栏特写。单测仍 597。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。

@@ -1916,7 +1916,7 @@ export default function App() {
                   else go(key)
                 }}
               >
-                <Icon name={on ? def.iconOn : def.icon} size={20} />
+                <Icon name={def.icon} size={22} />
                 <span className="tab-label">{def.label}</span>
               </button>
             )

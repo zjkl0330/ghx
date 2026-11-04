@@ -187,6 +187,14 @@ const P: Record<string, ReactNode> = {
       <path fill="currentColor" stroke="none" d="M4 6a2 2 0 012-2h3.2v16H6a2 2 0 01-2-2z" />
     </>
   ),
+  /** 底栏未选中态也用实心：玻璃底栏上细描边太轻，远看只剩一团雾。
+      书脊那条缝用 evenodd 挖出来，深浅主题都不用换色 */
+  repoFill: (
+    <>
+      <path fill="currentColor" stroke="none" d="M8.3 3.2h9.4a3.5 3.5 0 013.5 3.5v10.6a3.5 3.5 0 01-3.5 3.5H8.3z" />
+      <path fill="currentColor" stroke="none" d="M3.1 6.7a3.5 3.5 0 013.5-3.5h.7v17.6h-.7a3.5 3.5 0 01-3.5-3.5z" />
+    </>
+  ),
   trend: (
     <>
       <path d="M3 17l6-6 4 4 7-7" />

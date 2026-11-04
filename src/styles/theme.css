@@ -43,19 +43,23 @@
   --mask: rgba(1, 4, 9, 0.74);
   --shadow: rgba(0, 0, 0, 0.62);
 
-  /* 液体玻璃底栏：底色 / 描边 / 高光 / 选中药丸 */
-  --glass-bg: rgba(19, 24, 31, 0.89);
-  --glass-line: rgba(255, 255, 255, 0.11);
-  --glass-sheen: rgba(255, 255, 255, 0.16);
-  /* 有 GPU 时这一层负责「透出背后的色块」，没 GPU 时下面的 0.9 底色兜底 */
-  --glass-filter: blur(38px) saturate(130%) brightness(0.74);
+  /* 液体玻璃底栏：底色 / 描边 / 高光 / 选中药丸
+     底色只留 0.56，剩下的靠 backdrop-filter 真模糊挡住正文 —— 实测 blur 是执行的，
+     之前「不执行」的结论是底色 0.9 压太厚看不出来。 */
+  --glass-bg: rgba(22, 27, 34, 0.62);
+  --glass-line: rgba(255, 255, 255, 0.2);
+  --glass-sheen: rgba(255, 255, 255, 0.3);
+  /* saturate 拉高是液态玻璃的关键：背后的色块被糊开时会自己带上颜色，
+     brightness 略提，让糊出来的那层雾偏亮，不是一块压暗的灰板 */
+  --glass-filter: blur(64px) saturate(180%) brightness(1.06);
   --glass-active-top: rgba(47, 129, 247, 0.42);
   --glass-active-bottom: rgba(47, 129, 247, 0.24);
   --glass-active-line: rgba(130, 185, 255, 0.42);
   --glass-active-glow: rgba(47, 129, 247, 0.2);
   --tab-active-fg: #eaf3ff;
+  --tab-fg: #97a1ad;
   --tab-label-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  --tab-active-base: rgba(11, 17, 27, 0.74);
+  --tab-active-base: rgba(11, 17, 27, 0.66);
 
   --radius: 10px;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -102,18 +106,22 @@
   --mask: rgba(31, 35, 40, 0.45);
   --shadow: rgba(31, 35, 40, 0.18);
 
-  /* 浅色下玻璃要更透、描边更淡，否则一块灰砖 */
-  --glass-bg: rgba(249, 251, 253, 0.91);
-  --glass-line: rgba(31, 35, 40, 0.12);
-  --glass-sheen: rgba(255, 255, 255, 0.95);
-  --glass-filter: blur(38px) saturate(120%) brightness(1.02);
-  --glass-active-top: rgba(9, 105, 218, 0.22);
-  --glass-active-bottom: rgba(9, 105, 218, 0.12);
-  --glass-active-line: rgba(9, 105, 218, 0.26);
-  --glass-active-glow: rgba(9, 105, 218, 0.12);
-  --tab-active-fg: #0b4aa2;
+  /* 浅色下玻璃要更透、更白：参考的是 iOS 那种奶白玻璃，
+     背后正文被模糊成一层灰雾，还留着走向，但读不出字 */
+  --glass-bg: rgba(255, 255, 255, 0.66);
+  --glass-line: rgba(255, 255, 255, 0.78);
+  --glass-sheen: rgba(255, 255, 255, 0.98);
+  --glass-filter: blur(64px) saturate(165%) brightness(1.04);
+  /* 选中项退回浅灰药丸（不是蓝块），图标与文字用品牌蓝 —— 白玻璃上压一块蓝会显脏 */
+  --glass-active-top: rgba(15, 23, 42, 0.075);
+  --glass-active-bottom: rgba(15, 23, 42, 0.035);
+  --glass-active-line: rgba(15, 23, 42, 0.1);
+  --glass-active-glow: rgba(15, 23, 42, 0.1);
+  --tab-active-fg: #0969da;
+  /* 白玻璃上灰得太淡会飘，未选中项压到近黑 */
+  --tab-fg: #3d444d;
   --tab-label-shadow: 0 1px 2px rgba(255, 255, 255, 0.7);
-  --tab-active-base: rgba(255, 255, 255, 0.84);
+  --tab-active-base: rgba(15, 23, 42, 0.05);
 }
 
 * {
@@ -447,18 +455,16 @@ textarea {
 }
 
 /*
- * 底部导航：悬浮的磨砂玻璃胶囊。
+ * 底部导航：悬浮的液态玻璃胶囊。
  *
- * 这里踩过一个坑，写清楚免得后人再试一遍：
- * backdrop-filter 在这套页面结构里不可靠 —— 祖先链是干净的（无 transform /
- * filter / opacity），computed 值也对，blur(0px) 与 blur(100px) 渲染出来一模一样，
- * 说明模糊压根没执行，底栏退化成半透明色块，正文直接透出来。
- * 所以质感不能押在它身上，改成「厚度优先」：
- * 1. 底色做到 0.9 不透明 —— 不管模糊能不能采样，正文都不会透出来；
- * 2. 两层噪点（粗的 0.55 / 细的 1.6 频率）做出砂面，这是磨砂区别于塑料板的地方；
- * 3. 顶部高光 + 内侧描边 + 外投影，给出玻璃的厚度与离地感。
- * backdrop-filter 仍然保留：GPU 正常时它会额外透出一点背后的色彩，不会更差。
- * 底栏脱离文档流，.page 必须补底部内边距，否则最后一行永远被压在底栏下面。
+ * 之前这里写的是「backdrop-filter 不生效，只能靠厚度」，那是误判 ——
+ * 当时底色给到 0.9，模糊后与不模糊在视觉上几乎一样，才得出「blur(0) == blur(100)」。
+ * 把底色降到 0.22 再测就很清楚了：blur(0) 能从胶囊里读出仓库名，blur(40) 只剩色斑。
+ * 所以现在是真正的玻璃：
+ * 1. 底色 0.56，透光交给 backdrop-filter（46px + saturate 190%）；
+ * 2. 背后正文被糊成色团，读不出字，但能看出密度与走向 —— 这就是「液态」的来源；
+ * 3. 顶部高光 + 白描边 + 外投影给出厚度；噪点只留很淡一层，压掉纯色渐变的塑料感。
+ * 万一 WebView 太老不认 backdrop-filter，退回 0.92 厚底，宁可像塑料也不能透字。
  */
 .tabbar {
   position: fixed;
@@ -479,10 +485,10 @@ textarea {
   border: 1px solid var(--glass-line);
   background: var(--glass-bg);
   box-shadow:
-    0 14px 34px rgba(0, 0, 0, 0.46),
-    0 2px 8px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 var(--glass-sheen),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+    0 18px 42px rgba(0, 0, 0, 0.44),
+    0 3px 10px rgba(0, 0, 0, 0.3),
+    inset 0 1px 1px var(--glass-sheen),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.26);
   -webkit-backdrop-filter: var(--glass-filter);
   backdrop-filter: var(--glass-filter);
   z-index: 24;
@@ -492,7 +498,18 @@ textarea {
   overflow: hidden;
 }
 
-/* 边缘高光：左上角一小片反射，向下迅速淡出 */
+/* 老 WebView 不认 backdrop-filter：把底色叠回不透明，绝不能让正文透出来 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .tabbar {
+    background: rgba(19, 24, 31, 0.96);
+  }
+
+  :root[data-theme='light'] .tabbar {
+    background: rgba(249, 251, 253, 0.97);
+  }
+}
+
+/* 边缘高光：左上角一小片反射 + 顶边亮线，玻璃的「厚度」全靠这两笔 */
 .tabbar::before {
   content: '';
   position: absolute;
@@ -500,11 +517,12 @@ textarea {
   border-radius: inherit;
   pointer-events: none;
   background:
-    radial-gradient(130% 90% at 16% -30%, rgba(255, 255, 255, 0.16), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02) 46%, transparent 64%);
+    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.2), transparent 56%),
+    radial-gradient(90% 70% at 88% 130%, rgba(255, 255, 255, 0.09), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 44%, transparent 62%);
 }
 
-/* 磨砂颗粒：几乎看不见，但少了它模糊区会显得很「塑料」 */
+/* 磨砂颗粒：真模糊之后只留很淡一层，重了就是一块脏玻璃 */
 .tabbar::after {
   content: '';
   position: absolute;
@@ -515,8 +533,8 @@ textarea {
   /* 两层颗粒：粗的一层做「磨砂」的起伏，细的一层做砂面。
      必须是普通混合 —— overlay 叠在这么深的底色上等于什么都没画。 */
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='0.032'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23f)' opacity='0.07'/%3E%3C/svg%3E");
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='0.022'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23f)' opacity='0.045'/%3E%3C/svg%3E");
 }
 
 .tabbar button {
@@ -527,11 +545,11 @@ textarea {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   border-radius: 22px;
-  font-size: 9.5px;
+  font-size: 10px;
   letter-spacing: 0.2px;
-  color: var(--text-dim);
+  color: var(--tab-fg, var(--text-dim));
   /* 玻璃后面是滚动的正文，标签没有这层阴影会在浅色文字上糊掉 */
   text-shadow: var(--tab-label-shadow);
   transition:
@@ -568,9 +586,28 @@ textarea {
   transform: scale(0.95);
 }
 
+/* 浅色玻璃整体再提一层白雾：不铺这一层，0.66 的底色混出来是「灰白」，
+   不是参考图那种奶白 */
+html[data-theme='light'] .tabbar::before {
+  background:
+    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.62), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.2) 58%, rgba(255, 255, 255, 0.26));
+}
+
+/* 浅色玻璃的边缘是「亮」的，不是「暗」的：白色描边 + 底部反光，
+   深色主题那套 inset 暗线照搬过来会变成一圈灰边，像贴在页面上的塑料片 */
+html[data-theme='light'] .tabbar {
+  border-color: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 16px 36px rgba(31, 35, 40, 0.16),
+    0 2px 8px rgba(31, 35, 40, 0.08),
+    inset 0 1px 1px #ffffff,
+    inset 0 -1px 0 rgba(255, 255, 255, 0.6);
+}
+
 /* 浅色主题下白噪点几乎不可见，砂面另用一层暗颗粒压出来 */
 html[data-theme='light'] .tabbar::after {
-  opacity: 0.55;
+  opacity: 0.42;
   filter: invert(1);
 }
 
@@ -3564,8 +3601,18 @@ h1.title {
 }
 
 /* 横屏矮屏：底栏与顶栏都压扁，把高度让给内容 */
-@media (orientation: landscape) and (max-height: 520px) {
+@media (orientation: landscape) and (max-height: 620px) {
+  /*
+   * 横屏必须铺满：内容列一旦还被 --content-max 卡着，左右就会各留一条
+   * 一百多像素的空带 —— 浅色主题下那就是两条白边，看着像页面没撑开。
+   * 底栏反过来要收窄：横屏宽，胶囊拉满会有两三百像素宽，浮起来像一根横杠。
+   */
+  :root {
+    --content-max: 100%;
+  }
+
   .tabbar {
+    width: min(calc(100% - 24px), 460px);
     height: 46px;
     bottom: calc(6px + var(--safe-bottom));
     border-radius: 21px;
