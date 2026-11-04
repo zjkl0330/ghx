@@ -3,10 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <!--
-      不锁缩放：视力不佳的用户可以放大看。
+      锁死缩放：双指放大后布局被整体拉大，悬浮底栏的模糊采样跟着放大，
+      身后的正文就会从玻璃里透出来。想放大字号请用系统设置里的字体大小
+      （WebView 的 textZoom 照常跟随），这里只禁手势缩放。
       viewport-fit=cover 让安全区变量拿得到值，刘海与手势条才不会压到内容。
     -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+    />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#0d1117" />
     <title>ghx · GitHub 控制台</title>

@@ -44,9 +44,11 @@
   --shadow: rgba(0, 0, 0, 0.62);
 
   /* 液体玻璃底栏：底色 / 描边 / 高光 / 选中药丸 */
-  --glass-bg: rgba(22, 27, 34, 0.55);
-  --glass-line: rgba(255, 255, 255, 0.09);
-  --glass-sheen: rgba(255, 255, 255, 0.14);
+  --glass-bg: rgba(17, 22, 28, 0.9);
+  --glass-line: rgba(255, 255, 255, 0.11);
+  --glass-sheen: rgba(255, 255, 255, 0.16);
+  /* 有 GPU 时这一层负责「透出背后的色块」，没 GPU 时下面的 0.9 底色兜底 */
+  --glass-filter: blur(38px) saturate(130%) brightness(0.74);
   --glass-active-top: rgba(47, 129, 247, 0.42);
   --glass-active-bottom: rgba(47, 129, 247, 0.24);
   --glass-active-line: rgba(130, 185, 255, 0.42);
@@ -101,9 +103,10 @@
   --shadow: rgba(31, 35, 40, 0.18);
 
   /* 浅色下玻璃要更透、描边更淡，否则一块灰砖 */
-  --glass-bg: rgba(255, 255, 255, 0.72);
-  --glass-line: rgba(31, 35, 40, 0.1);
-  --glass-sheen: rgba(255, 255, 255, 0.9);
+  --glass-bg: rgba(249, 251, 253, 0.91);
+  --glass-line: rgba(31, 35, 40, 0.12);
+  --glass-sheen: rgba(255, 255, 255, 0.95);
+  --glass-filter: blur(38px) saturate(120%) brightness(1.02);
   --glass-active-top: rgba(9, 105, 218, 0.22);
   --glass-active-bottom: rgba(9, 105, 218, 0.12);
   --glass-active-line: rgba(9, 105, 218, 0.26);
@@ -133,6 +136,12 @@ body {
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
+  /* 禁掉双指缩放：布局一放大，悬浮底栏的模糊采样跟着放大，身后的文字会从玻璃里
+     透出来；page-y 之外只留横向，横向滚动的语言条还照常能用。
+     系统字号（设置里的字体大小）不受影响，视力不佳仍然能靠它放大。 */
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button {
@@ -438,27 +447,35 @@ textarea {
 }
 
 /*
- * 底部导航：悬浮的「液体玻璃」胶囊。
+ * 底部导航：悬浮的磨砂玻璃胶囊。
  *
- * 三件事一起做才有玻璃感，少一件就变成一块半透明色块：
- * 1. backdrop-filter 把身后滚过去的列表揉成模糊底色（saturate 提一点色彩，避免发灰）；
- * 2. 顶部一道高光 + 内侧描边，模拟玻璃的厚度与边缘折射；
- * 3. 一层极淡的噪点，去掉大面积模糊后那种「塑料膜」的均匀感。
- * 底栏脱离文档流，所以内容会从后面穿过去 —— 这正是要的效果，
- * 但不是免费的：.page 必须补底部内边距，否则最后一行永远被压在底栏下面。
+ * 这里踩过一个坑，写清楚免得后人再试一遍：
+ * backdrop-filter 在这套页面结构里不可靠 —— 祖先链是干净的（无 transform /
+ * filter / opacity），computed 值也对，blur(0px) 与 blur(100px) 渲染出来一模一样，
+ * 说明模糊压根没执行，底栏退化成半透明色块，正文直接透出来。
+ * 所以质感不能押在它身上，改成「厚度优先」：
+ * 1. 底色做到 0.9 不透明 —— 不管模糊能不能采样，正文都不会透出来；
+ * 2. 两层噪点（粗的 0.55 / 细的 1.6 频率）做出砂面，这是磨砂区别于塑料板的地方；
+ * 3. 顶部高光 + 内侧描边 + 外投影，给出玻璃的厚度与离地感。
+ * backdrop-filter 仍然保留：GPU 正常时它会额外透出一点背后的色彩，不会更差。
+ * 底栏脱离文档流，.page 必须补底部内边距，否则最后一行永远被压在底栏下面。
  */
 .tabbar {
   position: fixed;
-  left: 50%;
+  left: 0;
+  right: 0;
   bottom: calc(10px + var(--safe-bottom));
-  transform: translateX(-50%);
+  /* 居中不能用 left:50% + translateX(-50%)：自身带 transform 的元素在部分 WebView 上
+     会让 backdrop-filter 采样失准，玻璃退化成纯半透明，正文直接从底栏里透出来。
+     用 auto margin 居中，效果一样但不碰 transform。 */
+  margin-inline: auto;
   width: min(calc(100% - 24px), calc(var(--content-max, 100%) - 24px));
   height: 58px;
   padding: 5px;
   display: flex;
   align-items: stretch;
   gap: 2px;
-  border-radius: 21px;
+  border-radius: 27px;
   border: 1px solid var(--glass-line);
   background: var(--glass-bg);
   box-shadow:
@@ -466,10 +483,12 @@ textarea {
     0 2px 8px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 var(--glass-sheen),
     inset 0 -1px 0 rgba(0, 0, 0, 0.34);
-  -webkit-backdrop-filter: blur(30px) saturate(195%);
-  backdrop-filter: blur(30px) saturate(195%);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
   z-index: 24;
-  isolation: isolate;
+  /* 这里原来有 isolation: isolate，为了让噪点的 mix-blend-mode 不外溢。
+     但它会给元素再造一层 backdrop root，叠加 transform 后模糊直接失效 ——
+     实际上 backdrop-filter 已经建了 stacking context，噪点本来也漏不出去。 */
   overflow: hidden;
 }
 
@@ -492,8 +511,12 @@ textarea {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  opacity: 0.55;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E");
+  opacity: 1;
+  /* 两层颗粒：粗的一层做「磨砂」的起伏，细的一层做砂面。
+     必须是普通混合 —— overlay 叠在这么深的底色上等于什么都没画。 */
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='0.022'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23f)' opacity='0.045'/%3E%3C/svg%3E");
 }
 
 .tabbar button {
@@ -505,7 +528,7 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  border-radius: 16px;
+  border-radius: 22px;
   font-size: 9.5px;
   letter-spacing: 0.2px;
   color: var(--text-dim);
@@ -530,7 +553,7 @@ textarea {
   inset: 1px 0;
   /* 定位元素默认画在文字上面，压到 -1 才不会把图标和标签一起盖灰 */
   z-index: -1;
-  border-radius: 15px;
+  border-radius: 22px;
   background-color: var(--tab-active-base);
   background-image: linear-gradient(180deg, var(--glass-active-top), var(--glass-active-bottom));
   -webkit-backdrop-filter: blur(8px) saturate(140%);
@@ -545,11 +568,10 @@ textarea {
   transform: scale(0.95);
 }
 
-/* 没有 backdrop-filter 的内核（老 WebView）退回接近实心，至少不糊成一片 */
-@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .tabbar {
-    background: var(--surface);
-  }
+/* 浅色主题下白噪点几乎不可见，砂面另用一层暗颗粒压出来 */
+html[data-theme='light'] .tabbar::after {
+  opacity: 0.55;
+  filter: invert(1);
 }
 
 /* 底栏脱离文档流后，页面末尾要自己让出这段高度 */
@@ -3546,13 +3568,13 @@ h1.title {
   .tabbar {
     height: 46px;
     bottom: calc(6px + var(--safe-bottom));
-    border-radius: 17px;
+    border-radius: 21px;
   }
 
   .tabbar button {
     font-size: 9px;
     gap: 0;
-    border-radius: 12px;
+    border-radius: 16px;
   }
 
   .app.with-tabs > .page {
