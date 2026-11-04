@@ -152,7 +152,8 @@ jobs:
           PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
 
           if [ "$(git cat-file -t "$TAG" 2>/dev/null)" = "tag" ]; then
-            NOTES="$(git for-each-ref --format='%(contents)' "refs/tags/$TAG")"
+            # 用 subject + body 拼：%(contents) 只给 body，第一行标题会被吞掉
+            NOTES="$(git for-each-ref --format='%(contents:subject)%0a%0a%(contents:body)' "refs/tags/$TAG")"
           else
             # 兜底：annotated 消息取不到时，用区间内的提交说明拼一份
             RANGE="${PREV:+${PREV}..}${TAG}"
