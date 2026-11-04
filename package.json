@@ -1,7 +1,7 @@
 {
   "name": "ghx",
   "private": true,
-  "version": "0.5.2",
+  "version": "0.5.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,6 +19,7 @@
     "@capacitor/core": "^7.0.0",
     "@capacitor/preferences": "^7.0.0",
     "@capacitor/status-bar": "^7.0.6",
+    "fflate": "^0.8.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

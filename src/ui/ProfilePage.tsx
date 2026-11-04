@@ -14,6 +14,10 @@ interface Props {
   onOpenTokens: () => void
   onOpenSettings: () => void
   onOpenAudit: () => void
+  onOpenNotifications: () => void
+  unreadCount: number
+  onOpenSearch: () => void
+  onOpenMe: () => void
   onCheckUpdate: () => void
   onLock: () => void
 }
@@ -72,7 +76,42 @@ export function ProfilePage(p: Props) {
         </div>
 
         <div className="profile-body">
-          <div className="section-title">账号与数据</div>
+        <div className="section-title">浏览</div>
+        <div className="panel">
+          <button className="linkrow" onClick={p.onOpenNotifications}>
+            <span className="act-ic">
+              <Icon name="bell" size={15} />
+            </span>
+            <span className="linkrow-main">
+              <b>通知</b>
+              <i>{p.unreadCount > 0 ? `${p.unreadCount} 条未读` : '收件箱'}</i>
+            </span>
+            {p.unreadCount > 0 && <span className="badge">{p.unreadCount}</span>}
+            <Icon name="chevron" size={13} className="linkrow-arrow" />
+          </button>
+          <button className="linkrow" onClick={p.onOpenSearch}>
+            <span className="act-ic">
+              <Icon name="search" size={15} />
+            </span>
+            <span className="linkrow-main">
+              <b>全局搜索</b>
+              <i>仓库、代码、Issue、PR、用户、提交</i>
+            </span>
+            <Icon name="chevron" size={13} className="linkrow-arrow" />
+          </button>
+          <button className="linkrow" onClick={p.onOpenMe}>
+            <span className="act-ic">
+              <Icon name="name" size={15} />
+            </span>
+            <span className="linkrow-main">
+              <b>我的主页</b>
+              <i>资料、公开仓库、关注关系</i>
+            </span>
+            <Icon name="chevron" size={13} className="linkrow-arrow" />
+          </button>
+        </div>
+
+        <div className="section-title">账号与数据</div>
         <div className="panel">
           <button className="linkrow" onClick={p.onOpenTokens}>
             <span className="act-ic">

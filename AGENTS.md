@@ -52,10 +52,24 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block、图片路径与镜像 |
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键 |
 | `search.ts` `trending.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、底栏配置、主题、返回键决策、审计、领域类型 |
+| `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
+| `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
+| `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked` |
+| `pulls.ts` | PR 领域：mergeable 提示、合并/评审失败码翻译、`parsePatch`/`slicePatch`（400 行上限）、`mergePull`（带 head sha）、`submitReview`、`checkRuns` |
+| `code.ts` | 代码浏览：UTF-8 base64 编解码（分块防爆栈）、语言判定、目录排序与摘要、`getFile`/`getMeta`（**目录返回数组、文件返回对象**）、`putFile`/`deleteFile`、提交历史与 diff、`writeErrorHint` |
+| `refs.ts` | 分支与标签：命名校验、默认分支置顶、含 `/` 的编码处理、新建/删除/改名 |
+| `actions-ext.ts` | Actions 补全：日志 zip 解压排序（`fflate`）、`fetchRunLogs`（真机走 `CapacitorHttp`）、产物列表与删除、重跑失败/单作业、`parseDispatchInputs`/`buildDispatchInputs`/`validateInputs` |
+| `search-ext.ts` | 六类搜索的查询拼装（code 加引号、issue 强制 `is:issue`）、配额文案 |
+| `notifications.ts` | 通知：原因文案、按仓库分组、未读数、`canUseNotifications`（classic-only 判断）、条件请求 |
+| `repo-admin.ts` | 仓库设置开关表、改名影响清单、协作员、Watch 订阅、用户资料与关注 |
+| `release-ext.ts` | 发行版编辑/发布草稿/删附件（**上传不在这里，见下方 CORS 坑**） |
+| `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
 
 ### ui（组件）
 
-`RepoList` 主列表 · `RepoDetailSheet` 仓库详情动作 · `ReadmeSheet` 自述阅读+机翻 · `StarsPage` 星标 · `HotPage` 热门/搜索 · `PipelinesPage` 流水线二级页 · `WorkflowSheet`/`RunSheet` 工作流与运行 · `ReleasesSheet` · `ForksSheet` · `VisibilitySheet` 批量可见度 · `CreateRepoSheet` · `SortSheet` · `MirrorSheet` **加速站管理** · `ProfilePage` 个人页 · `SettingsPage` 设置 · `TokenVault` 令牌库 · `AuditLog` · `GuardSheet`/`UnlockScreen`/`LockedScreen` 口令三件套 · `UpdateSheet` · `RepoPickerSheet` · `useDescTranslation` 简介批量机翻 hook · `icons.tsx`
+`RepoList` 主列表 · `RepoDetailSheet` 仓库详情动作 · `ReadmeSheet` 自述阅读+机翻 · `StarsPage` 星标 · `HotPage` 热门/搜索 · `PipelinesPage` 流水线二级页 · `WorkflowSheet`/`RunSheet` 工作流与运行 · `LogSheet` **日志与产物** · `ReleasesSheet` · `ForksSheet` · `VisibilitySheet` 批量可见度 · `CreateRepoSheet` · `SortSheet` · `MirrorSheet` **加速站管理** · `ProfilePage` 个人页 · `SettingsPage` 设置 · `TokenVault` 令牌库 · `AuditLog` · `GuardSheet`/`UnlockScreen`/`LockedScreen` 口令三件套 · `UpdateSheet` · `RepoPickerSheet` · `useDescTranslation` 简介批量机翻 hook · `icons.tsx`
+
+第二批（v0.5.3）：`RepoPage` 仓库主页（自述/发行版/分支/流水线/复刻/设置 chips + 代码/Issues/PR/动作页签）· `IssuesPage`/`IssuePage` · `PullsPage`（含 `PullPage`）/`DiffView` · `CodePage`（含 `FileEditor`）· `CommitsPage`（含 `CommitPage`）· `RefsPage` · `NotificationsPage` · `SearchPage` · `UserPage` · `RepoAdminPage` · `ComposeSheet` 新建 Issue/PR · `MarkdownView` 通用渲染（表格/任务列表）· `PageHeader`+`PageState` 统一顶栏与状态 · `useLoad` 统一加载 hook
 
 ### 样式
 
@@ -65,9 +79,14 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 ### 1. 返回键（`backnav.ts`）
 
-优先级：键盘 → 口令面板 → 二级页面栈 `screenStack` → 弹层 → 多选 → 非首页 Tab → 首页两次确认退出。
-`solveBack` 返回动作字符串（`pop-screen` / `close-sheet` / `exit-confirm`…），`App.applyBack` 执行。
+优先级：键盘 → 口令面板 → 二级页面栈 `routeStack` → 弹层 → 多选 → 非首页 Tab → 首页两次确认退出。
+`resolveBack` 返回动作对象（`pop-route` / `sheet` / `exit-confirm`…），`App.applyBack` 执行。
 **新增页面必须同步改 `backnav.ts` + 补测试**，不能只在 UI 里加 `onBack`。
+
+两个容易漏的参数：
+
+- `hasWorkflow`：运行详情是从工作流详情点进来的，返回要回工作流而不是整屏收起。
+- `subReturn`：自述/发行版/复刻面板既可从仓库详情弹层进、也可从仓库主页进，返回目标不同，由调用点分别传 `'detail'` / `'none'`。
 
 ### 2. 缓存（`cache.ts`）
 
@@ -97,9 +116,28 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 
 ### 5. 导航与页面
 
-`Screen` = `main | profile | settings | tokens | audit | pipelines`，`screenStack` 是数组。
-`SheetName` 是封闭 union（`add` `visibility` `update` `detail` `create` `releases` `forks` `workflow` `run` `repoPick` `sort` `readme` `mirrors`）。
-**弹层只放「单层、无下钻」的界面**；需要继续下钻的（未来的 Issue 详情、文件浏览）应该升级成 `Screen`，否则返回栈会乱。
+二级页面一律走**路由栈**（`routes.ts`）：`Route` 是判别联合，空栈 = 主界面。
+
+```
+repo / code / edit / commits / commit / issue / pull / issues / pulls / refs / actions / admin
+user / notifications / search / profile / settings / tokens / audit
+```
+
+- `pushRoute` 会按 `routeKey` 去重（连点两下不会压两层）。
+- 页签切换、文件内换 ref 用 `replaceTop`：换的是当前页，不该多一层返回。
+- 仓库改名后要 `replaceTop` 成新名字，否则返回上一层会撞 404。
+- `repoOf` 从路由反查仓库，`routeRepo` 用它 + `repos` 列表兜底造一个最小 `Repo`（从搜索/通知进来时列表里没有这条）。
+
+`SheetName` 是给**真弹层**用的封闭 union（`add` `visibility` `update` `detail` `create` `releases` `forks` `workflow` `run` `repoPick` `sort` `readme` `mirrors` `compose` `logs`）。
+**弹层只放「单层、无下钻」的界面**；需要继续下钻的一律升级成 `Route`（Issue 详情、文件浏览当初就是弹层，v0.5.3 全改成路由了）。
+
+### 6. 传输层三个细节（`api.ts`）
+
+| 能力 | 用法 | 坑 |
+|---|---|---|
+| 分页 | `request()` 返回 `link`，配 `paging.nextPage(link, 本页条数)` | WebView 可能读不到 `Link`，所以无 Link 时按「本页是否满页」推断 |
+| 条件请求 | `{ conditional: true }` 发 `If-None-Match`，304 时 `notModified: true` 并复用缓存 | **条件请求必须绕过缓存读取**（否则直接命中缓存、根本不发请求），但成功响应仍要写回并更新 etag |
+| 纯文本 | `rawText()`（diff、raw 文件），不进 JSON 缓存 | 体积可能很大，默认 2MB 上限并返回 `truncated` |
 
 ## 硬约束（违反就是返工）
 
@@ -125,6 +163,22 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 | Edge 翻译带 `from=en` | 中文段落会被改写，必须省略 `from` |
 | 加速站只在代码里写死 | 域名会换，必须支持 `overrides` 改地址 |
 | 浏览器预览与真机行为不同（CORS / 302 / zip） | 涉及下载、日志、原生请求的功能必须真机验证 |
+| `GET /repos/{o}/{r}/contents/{path}` 目录返回**数组**、文件返回**对象** | 先 `getMeta` 判 `Array.isArray`，别直接当对象读 `.content` |
+| `GET /issues` 会混进 PR | 用条目的 `pull_request` 字段过滤 |
+| `PUT /issues/{n}/labels` 是**整体替换** | 提交时必须带上没动过的标签 |
+| `POST /issues/{n}/assignees` 只加不减 | 想表达「最终名单」用 `PATCH /issues/{n}` 带 `assignees` |
+| 锁定/解锁后立刻重拉详情会拿到旧值 | 按请求结果本地置位、失败回滚，别重拉 |
+| `mergeable` 初始是 `null`（后台在算） | 2 秒后重取一次 |
+| `PUT/DELETE /contents/{path}` 不带 `sha` | 带 sha 当乐观锁，冲突是 409 |
+| UTF-8 内容用裸 `btoa` | 用 `encodeBase64Utf8`（分块，防 `fromCharCode` 爆栈） |
+| 写 `.github/workflows/*` 缺 `workflow` scope 返回的是 **404** | `writeErrorHint` 单独解释 |
+| 分支名带 `/` 时整段 `encodeURIComponent` | 改名接口是单参数，必须整段编码；`git/refs` 路径按段保留 |
+| `POST /git/refs` 建的是**轻量标签** | 附注标签要先 `POST /git/tags` |
+| 删除发行版不会删 tag | 界面给「同时删除标签」勾选，默认勾上 |
+| `uploads.github.com` 没有 CORS 头 | **App 里不做上传**，只给网页入口（curl 直传 201 说明端点本身没问题） |
+| 日志接口 302 到预签名 zip，浏览器必挂 | 真机走 `CapacitorHttp`（`responseType: 'arraybuffer'`）+ `fflate`，浏览器给降级说明 |
+| 通知/Watch 用 fine-grained 令牌必 403 | `canUseNotifications(scopes, kind)` 提前判断并解释 |
+| 给 `workflow_dispatch` 引 `js-yaml` | 只为 `inputs` 那一小块手写解析就够，解析失败降级成「只填 ref」 |
 
 ## 版本与发布
 
@@ -133,8 +187,19 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 - Release 附件是 APK，正文写清这版改了什么、已知问题。
 - 推送镜像偶尔 `cannot lock ref`：推临时分支上传对象，再 `PATCH /git/refs/heads/main`（`force:false`）。
 
+## Copilot 调研结论（2026-11，别再试一遍）
+
+| 路径 | 结果 |
+|---|---|
+| `GET /copilot_internal/v2/token` | 对 PAT **404** |
+| `https://api.githubcopilot.com` 直连 | 400 `Personal Access Tokens are not supported` |
+| `GET /copilot_internal/user` | 能读套餐，但拿不到可用于推理的 token |
+| GitHub Models | 2026-07-30 停服 |
+
+→ App 里做不了「登录 Copilot」。替代方案是自带 OpenAI 兼容大模型（DeepSeek / 通义 / Kimi / 硅基流动，跨域实测可用，密钥复用现有保险库），属下一批。
+
 ## 现在到哪一步了
 
-- 已发布 **v0.5.2**：Edge 免密钥翻译通道（默认首选，整篇一次翻完）、加速站可改地址/可自定义/可测速、仓库列表全量分页。
-- 功能缺口与下一批计划见 **`ROADMAP.md`**（Issues / PR / 代码浏览 / 分支 / Actions 补全 / 通知 / 全局搜索）。
-- 已知边界：无密钥时 MyMemory 额度仍有限；私有仓库图片待修；「添加多语言」被理解为译文语言，若指界面 i18n 需另做。
+- 已发布 **v0.5.2**：Edge 免密钥翻译通道、加速站可改地址/自定义/测速、仓库列表全量分页。
+- **v0.5.3（未提交，等用户发话）**：ROADMAP 里 P0 六项 + P1 六项全部落地 —— 路由栈底座、Issues、PR、代码浏览与编辑、提交历史、分支/Tag、Actions 日志与产物、通知、全局搜索、用户主页、仓库设置、发行版编辑。单测 467 → 564。
+- 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。

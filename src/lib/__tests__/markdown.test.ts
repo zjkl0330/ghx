@@ -72,11 +72,24 @@ describe('Markdown 块解析', () => {
     expect(parseMarkdown('---')).toEqual([{ kind: 'hr' }])
   })
 
-  it('表格降级成一行文字', () => {
-    const blocks = parseMarkdown('| 名称 | 说明 |\n|---|---|\n| a | b |')
+  it('表格解析成 table 块，带表头、对齐与行', () => {
+    const blocks = parseMarkdown('| 名称 | 说明 |\n|:---|---:|\n| a | b |\n| c | d |')
     expect(blocks).toEqual([
-      { kind: 'p', text: '名称 · 说明' },
-      { kind: 'p', text: 'a · b' },
+      { kind: 'table', head: ['名称', '说明'], rows: [['a', 'b'], ['c', 'd']], align: ['l', 'r'] },
+    ])
+  })
+
+  it('没有分隔行的竖线行降级成文字', () => {
+    const blocks = parseMarkdown('| a | b |')
+    expect(blocks).toEqual([{ kind: 'p', text: 'a · b' }])
+  })
+
+  it('任务列表保留勾选状态', () => {
+    const blocks = parseMarkdown('- [ ] 待办\n- [x] 已完成\n- 普通项')
+    expect(blocks).toEqual([
+      { kind: 'li', text: '待办', depth: 0, ordered: false, checked: false },
+      { kind: 'li', text: '已完成', depth: 0, ordered: false, checked: true },
+      { kind: 'li', text: '普通项', depth: 0, ordered: false },
     ])
   })
 

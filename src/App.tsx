@@ -26,6 +26,11 @@ import {
   type ProbeResult,
 } from './lib/mirrors'
 import { buildPlan, countBy, filterRepos, runBatch } from './lib/repos'
+import { popRoute, pushRoute, replaceTop, repoOf, type Route } from './lib/routes'
+import { listBranches } from './lib/refs'
+import { createIssue } from './lib/issues'
+import { createPull } from './lib/pulls'
+import { canUseNotifications, listNotifications, unreadCount } from './lib/notifications'
 import { loadSnapshot, saveSnapshot, type Snapshot } from './lib/snapshot'
 import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
 import { createKV, type KV } from './lib/storage'
@@ -69,15 +74,27 @@ import type {
 import { Vault } from './lib/vault'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
+import { CodePage, FileEditor } from './ui/CodePage'
+import { CommitPage, CommitsPage } from './ui/CommitsPage'
+import { ComposeSheet, type ComposeMode } from './ui/ComposeSheet'
 import { CreateRepoSheet } from './ui/CreateRepoSheet'
 import { ForksSheet } from './ui/ForksSheet'
 import { GuardSheet, type GuardMode } from './ui/GuardSheet'
 import { HotPage } from './ui/HotPage'
+import { IssuePage } from './ui/IssuePage'
 import { LockedScreen } from './ui/LockedScreen'
+import { LogSheet } from './ui/LogSheet'
 import { MirrorSheet, type MirrorProbeState } from './ui/MirrorSheet'
 import { PipelinesPage } from './ui/PipelinesPage'
+import { NotificationsPage, targetRoute } from './ui/NotificationsPage'
 import { ProfilePage } from './ui/ProfilePage'
+import { PullPage } from './ui/PullsPage'
+import { RefsPage } from './ui/RefsPage'
 import { ReleasesSheet } from './ui/ReleasesSheet'
+import { RepoAdminPage } from './ui/RepoAdminPage'
+import { RepoPage } from './ui/RepoPage'
+import { SearchPage } from './ui/SearchPage'
+import { UserPage } from './ui/UserPage'
 import { ReadmeSheet } from './ui/ReadmeSheet'
 import { RepoDetailSheet } from './ui/RepoDetailSheet'
 import { RepoList } from './ui/RepoList'
@@ -97,8 +114,6 @@ import './styles/theme.css'
 
 /** 底栏页签：只有仓库 / 星标 / 热门，用户可在设置里勾掉其中几个 */
 type Tab = TabKey
-/** 二级页面。settings / tokens / audit 都从个人页进，流水线从仓库详情或底栏进 */
-type Screen = 'main' | 'profile' | 'settings' | 'tokens' | 'audit' | 'pipelines'
 /** 弹层类型与返回栈共用一套定义，避免两边漏改 */
 type Sheet = SheetName
 
@@ -114,6 +129,26 @@ const TRANSLATE_TARGET_KEY = 'ghx.tr.target'
 const TRANSLATE_SCOPE_KEY = 'ghx.tr.scope'
 const AZURE_KEY = 'ghx.tr.azure'
 const TABS_KEY = 'ghx.tabs'
+
+/** 深链进来的仓库可能不在当前列表里（比如从搜索点进来），给它造一个最小对象 */
+function makeRepo(owner: string, name: string): Repo {
+  return {
+    id: 0,
+    name,
+    full_name: `${owner}/${name}`,
+    owner,
+    private: false,
+    visibility: 'public',
+    archived: false,
+    disabled: false,
+    description: null,
+    language: null,
+    stargazers_count: 0,
+    forks_count: 0,
+    pushed_at: '',
+    default_branch: 'main',
+  }
+}
 
 export default function App() {
   const kvRef = useRef<KV | null>(null)
@@ -157,9 +192,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('repos')
   /** 底栏要显示哪些入口，用户可在设置里勾 */
   const [tabs, setTabs] = useState<TabKey[]>(DEFAULT_TABS)
-  /** 二级页面栈。第一层是主界面，后面的全部叠在上面 */
-  const [screenStack, setScreenStack] = useState<Screen[]>(['main'])
-  const screen = screenStack[screenStack.length - 1] ?? 'main'
+  /** 路由栈。空数组代表主界面，其余每一层都是一个可返回的页面 */
+  const [routeStack, setRouteStack] = useState<Route[]>([])
+  const route = routeStack[routeStack.length - 1] ?? null
   const [query, setQuery] = useState('')
   const [visibility, setVisibility] = useState<'all' | 'public' | 'private'>('all')
   const [selectMode, setSelectMode] = useState(false)
@@ -174,6 +209,22 @@ export default function App() {
   const [createError, setCreateError] = useState<string | null>(null)
   const [pipelineRepo, setPipelineRepo] = useState<Repo | null>(null)
   const [pipelineReload, setPipelineReload] = useState(0)
+  /** 未读通知数，给底栏/个人页角标用 */
+  const [unread, setUnread] = useState(0)
+  /** 新建 Issue / PR 的表单状态；null 表示没在填 */
+  const [compose, setCompose] = useState<{
+    mode: ComposeMode
+    owner: string
+    repo: string
+    branches: string[]
+    base: string
+  } | null>(null)
+  const [composeBusy, setComposeBusy] = useState(false)
+  const [composeError, setComposeError] = useState<string | null>(null)
+  /** 正在看日志的运行 */
+  const [logsRun, setLogsRun] = useState<{ owner: string; repo: string; id: number; title: string } | null>(null)
+  /** 写完数据后加一，强制列表重新拉（新建 issue 后回列表要能看到） */
+  const [pageTick, setPageTick] = useState(0)
   const [activeWorkflow, setActiveWorkflow] = useState<{ repo: Repo; workflow: Workflow } | null>(null)
   const [activeRun, setActiveRun] = useState<{ repo: Repo; run: WorkflowRun } | null>(null)
   const [mirror, setMirror] = useState(DEFAULT_MIRROR)
@@ -192,6 +243,8 @@ export default function App() {
   })
   /** 从加速站面板返回时要回到哪一层（从更新弹层进来就回更新弹层） */
   const [mirrorReturn, setMirrorReturn] = useState<SheetName>('none')
+  /** 自述/发行版/复刻面板的返回目标：仓库详情弹层 or 直接回仓库主页 */
+  const [subReturn, setSubReturn] = useState<SheetName>('detail')
   // 测速相关的回调里要读到最新值，用 ref 兜住闭包，避免测速跑到一半还在用旧状态
   const probeRef = useRef<MirrorProbeState>(probe)
   probeRef.current = probe
@@ -230,7 +283,7 @@ export default function App() {
   const backStateRef = useRef<BackState>({
     screen: 'app',
     guardSheetOpen: false,
-    screenDepth: 0,
+    routeDepth: 0,
     sheet: 'none',
     hasWorkflow: false,
     selectMode: false,
@@ -243,24 +296,30 @@ export default function App() {
   backStateRef.current = {
     screen: unlocked ? 'app' : needPass ? 'unlock' : 'locked',
     guardSheetOpen: guardSheet !== null,
-    screenDepth: Math.max(0, screenStack.length - 1),
+    routeDepth: routeStack.length,
     sheet,
     hasWorkflow: activeWorkflow !== null,
     selectMode,
     tab,
     homeTab: tabs[0] ?? 'repos',
     mirrorReturn,
+    subReturn,
     sheetLocked: sheet === 'visibility' && phase === 'running',
   }
 
-  /** 打开二级页面（个人页 / 设置 / 令牌 / 审计 / 流水线） */
-  const pushScreen = useCallback((next: Screen) => {
-    setScreenStack((prev) => [...prev, next])
+  /** 压一层页面；同一个页面连点两次只留一条 */
+  const pushTo = useCallback((next: Route) => {
+    setRouteStack((prev) => pushRoute(prev, next))
   }, [])
 
-  /** 二级页面退一层；已经在主界面就什么都不做 */
-  const popScreen = useCallback(() => {
-    setScreenStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev))
+  /** 退一层；已经在主界面就什么都不做 */
+  const popTo = useCallback(() => {
+    setRouteStack((prev) => popRoute(prev))
+  }, [])
+
+  /** 只换栈顶：仓库页签切换、切分支用，不增加返回层级 */
+  const replaceTopTo = useCallback((next: Route) => {
+    setRouteStack((prev) => replaceTop(prev, next))
   }, [])
 
   const requestExit = useCallback(async () => {
@@ -309,7 +368,7 @@ export default function App() {
         setGuardError(null)
         return
       case 'pop-screen':
-        popScreen()
+        popTo()
         return
       case 'exit-select':
         setSelectMode(false)
@@ -327,7 +386,7 @@ export default function App() {
       default:
         void requestExit()
     }
-  }, [closeSheetTo, popScreen, requestExit, tabs])
+  }, [closeSheetTo, popTo, requestExit, tabs])
 
   // 物理返回键：接管后系统不再直接 finish 掉 Activity
   useEffect(() => {
@@ -895,6 +954,27 @@ export default function App() {
     [mirror],
   )
 
+  // 未读通知：解锁后拉一次，之后每 5 分钟刷一次。fine-grained 令牌直接跳过
+  useEffect(() => {
+    if (!unlocked || !client) return
+    if (!canUseNotifications(client.scopes)) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const r = await listNotifications(client, { conditional: true })
+        if (!cancelled && !r.notModified) setUnread(unreadCount(r.items))
+      } catch {
+        /* 网络不通或权限不足都不该打断主流程 */
+      }
+    }
+    void tick()
+    const timer = window.setInterval(() => void tick(), 5 * 60_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [unlocked, client])
+
   // 解锁后静默查一次：有新版本只在列表顶部提示，不打断使用
   useEffect(() => {
     if (!unlocked || silentChecked.current) return
@@ -922,6 +1002,95 @@ export default function App() {
     setMirrorReturn(from)
     setSheet('mirrors')
   }, [])
+
+  /** 进入流水线。底栏、仓库详情、仓库主页三处都走这里，保证行为一致 */
+  const openPipelines = useCallback(
+    (repo: Repo | null) => {
+      if (!repo) {
+        showToast('还没有可用的仓库')
+        return
+      }
+      setPipelineRepo(repo)
+      pushTo({ kind: 'actions', owner: repo.owner, repo: repo.name })
+    },
+    [pushTo, showToast],
+  )
+
+  /**
+   * 新建 Issue / PR。分支列表现取，失败就只留默认分支 ——
+   * 读不到分支不该让整个表单打不开。
+   */
+  const openCompose = useCallback(
+    async (mode: ComposeMode, owner: string, repo: string, base: string) => {
+      setComposeError(null)
+      setCompose({ mode, owner, repo, branches: [base], base })
+      setSheet('compose')
+      if (!client) return
+      try {
+        const list = await listBranches(client, owner, repo)
+        if (list.length === 0) return
+        setCompose((cur) =>
+          cur && cur.owner === owner && cur.repo === repo
+            ? { ...cur, branches: list.map((b) => b.name), base: cur.base === '' ? base : cur.base }
+            : cur,
+        )
+      } catch {
+        /* 令牌读不到分支时保留默认分支 */
+      }
+    },
+    [client],
+  )
+
+  async function submitCompose(input: { title: string; body: string; head?: string; base?: string }) {
+    if (!compose || !client) return
+    setComposeBusy(true)
+    setComposeError(null)
+    try {
+      if (compose.mode === 'issue') {
+        const issue = await createIssue(client, compose.owner, compose.repo, {
+          title: input.title,
+          body: input.body,
+        })
+        setSheet('none')
+        setCompose(null)
+        setPageTick((n) => n + 1)
+        showToast(`已创建 #${issue.number}`)
+        void logAudit('issue', `${compose.owner}/${compose.repo}#${issue.number}`, input.title)
+        pushTo({ kind: 'issue', owner: compose.owner, repo: compose.repo, number: issue.number })
+      } else {
+        const pr = await createPull(client, compose.owner, compose.repo, {
+          title: input.title,
+          body: input.body,
+          head: input.head ?? '',
+          base: input.base ?? compose.base,
+        })
+        setSheet('none')
+        setCompose(null)
+        setPageTick((n) => n + 1)
+        showToast(`已创建 PR #${pr.number}`)
+        void logAudit('pull', `${compose.owner}/${compose.repo}#${pr.number}`, input.title)
+        pushTo({ kind: 'pull', owner: compose.owner, repo: compose.repo, number: pr.number })
+      }
+    } catch (err) {
+      setComposeError((err as Error).message)
+    } finally {
+      setComposeBusy(false)
+    }
+  }
+
+  /** 打开日志面板。日志是 zip，单独一层看 */
+  const openLogs = useCallback(
+    (repo: Repo, run: WorkflowRun) => {
+      setLogsRun({
+        owner: repo.owner,
+        repo: repo.name,
+        id: run.id,
+        title: `${repo.full_name} · #${run.run_number} · ${run.display_title || run.name || ''}`,
+      })
+      setSheet('logs')
+    },
+    [],
+  )
 
   /**
    * 只切当前站点，不改「自动/手动」偏好，也不关面板。
@@ -1079,7 +1248,7 @@ export default function App() {
     // 锁屏前把弹层一并收起，否则解锁后会直接弹回上次那个面板
     setSheet('none')
     setGuardSheet(null)
-    setScreenStack(['main'])
+    setRouteStack([])
     setTab('repos')
     showToast(needsPassword ? '已锁定，需要口令解锁' : '已锁定，数据已从内存清除')
   }
@@ -1096,16 +1265,24 @@ export default function App() {
 
   const activeRecord = records.find((r) => r.id === activeId) ?? null
 
+  /** 当前路由指向的仓库对象。列表里有就用真的，没有就造一个最小的 */
+  const routeRepo = useMemo<Repo | null>(() => {
+    const ref = route ? repoOf(route) : null
+    if (!ref) return null
+    return repos.find((r) => r.full_name === `${ref.owner}/${ref.repo}`) ?? makeRepo(ref.owner, ref.repo)
+  }, [route, repos])
+
   // 进入流水线页默认选最近推送的仓库，省得每次都要先挑一遍
+  const onPipelines = route?.kind === 'actions' || tab === 'pipelines'
   useEffect(() => {
-    if (screen !== 'pipelines') return
+    if (!onPipelines) return
     if (pipelineRepo && repos.some((r) => r.full_name === pipelineRepo.full_name)) return
     if (repos.length > 0) setPipelineRepo(repos[0])
-  }, [screen, pipelineRepo, repos])
+  }, [onPipelines, pipelineRepo, repos])
 
   function go(next: Tab) {
     setTab(next)
-    setScreenStack(['main'])
+    setRouteStack([])
   }
 
   // 简介机翻：只翻当前列表前 30 条 + 正在看的详情，结果按 full_name 索引。
@@ -1175,7 +1352,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {screen === 'main' && tab === 'repos' && (
+      {!route && tab === 'repos' && (
         <RepoList
           repos={filtered}
           loading={loadingRepos}
@@ -1197,7 +1374,9 @@ export default function App() {
           hasToken={records.length > 0}
           account={activeRecord?.login ?? null}
           avatarUrl={activeRecord?.avatarUrl ?? null}
-          onOpenProfile={() => pushScreen('profile')}
+          onOpenProfile={() => pushTo({ kind: 'profile' })}
+          unread={unread}
+          onOpenNotifications={() => pushTo({ kind: 'notifications' })}
           descZh={descZh}
           onOpenRepo={(r) => {
             setDetailRepo(r)
@@ -1216,7 +1395,7 @@ export default function App() {
         />
       )}
 
-      {screen === 'main' && tab === 'stars' && (
+      {!route && tab === 'stars' && (
         <StarsPage
           client={client}
           login={activeRecord?.login ?? null}
@@ -1242,7 +1421,7 @@ export default function App() {
         />
       )}
 
-      {screen === 'main' && tab === 'hot' && (
+      {!route && tab === 'hot' && (
         <HotPage
           client={client}
           onOpenRepo={(r) => {
@@ -1253,7 +1432,7 @@ export default function App() {
         />
       )}
 
-      {screen === 'profile' && (
+      {route?.kind === 'profile' && (
         <ProfilePage
           login={activeRecord?.login ?? null}
           avatarUrl={activeRecord?.avatarUrl ?? null}
@@ -1263,16 +1442,23 @@ export default function App() {
           version={APP_VERSION}
           latestVersion={updateResult?.latest ?? null}
           hasUpdate={!!updateResult?.hasUpdate}
-          onBack={popScreen}
-          onOpenTokens={() => pushScreen('tokens')}
-          onOpenSettings={() => pushScreen('settings')}
-          onOpenAudit={() => pushScreen('audit')}
+          onBack={popTo}
+          onOpenTokens={() => pushTo({ kind: 'tokens' })}
+          onOpenSettings={() => pushTo({ kind: 'settings' })}
+          onOpenAudit={() => pushTo({ kind: 'audit' })}
+          onOpenNotifications={() => pushTo({ kind: 'notifications' })}
+          unreadCount={unread}
+          onOpenSearch={() => pushTo({ kind: 'search' })}
+          onOpenMe={() => {
+            if (activeRecord?.login) pushTo({ kind: 'user', login: activeRecord.login })
+            else showToast('还没有读到登录名')
+          }}
           onCheckUpdate={() => void runCheck(true)}
           onLock={lockVault}
         />
       )}
 
-      {screen === 'settings' && (
+      {route?.kind === 'settings' && (
         <SettingsPage
           baseUrl={baseUrl}
           login={activeRecord?.login ?? null}
@@ -1350,12 +1536,12 @@ export default function App() {
           mirrorCustom={mirrorStore.custom.length}
           mirrorChanged={Object.keys(mirrorStore.overrides).length}
           onOpenMirrors={() => openMirrors('none')}
-          onOpenTokens={() => pushScreen('tokens')}
-          onBack={popScreen}
+          onOpenTokens={() => pushTo({ kind: 'tokens' })}
+          onBack={popTo}
           onCheckUpdate={() => void runCheck(true)}
           onSaveBaseUrl={(url) => void saveBaseUrl(url)}
           onLock={lockVault}
-          onOpenAudit={() => pushScreen('audit')}
+          onOpenAudit={() => pushTo({ kind: 'audit' })}
           onClearAudit={() => {
             if (!kvRef.current) return
             void clearAudit(kvRef.current).then(() => {
@@ -1366,7 +1552,7 @@ export default function App() {
         />
       )}
 
-      {screen === 'tokens' && (
+      {route?.kind === 'tokens' && (
         <TokenVault
           records={records}
           activeId={activeId}
@@ -1379,14 +1565,14 @@ export default function App() {
           onRemove={(id) => void removeToken(id)}
           onCheck={(id) => void checkToken(id)}
           quota={quota}
-          onBack={popScreen}
+          onBack={popTo}
         />
       )}
 
-      {screen === 'audit' && (
+      {route?.kind === 'audit' && (
         <AuditLog
           entries={audit}
-          onBack={popScreen}
+          onBack={popTo}
           onClear={() => {
             if (!kvRef.current) return
             void clearAudit(kvRef.current).then(() => {
@@ -1397,12 +1583,218 @@ export default function App() {
         />
       )}
 
-      {screen === 'pipelines' && (
+      {route?.kind === 'repo' && (
+        <RepoPage
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          tab={route.tab ?? 'code'}
+          reloadKey={pageTick}
+          onBack={popTo}
+          onTab={(t) => {
+            if (t === 'actions') {
+              openPipelines(routeRepo)
+              return
+            }
+            replaceTopTo({ kind: 'repo', owner: route.owner, repo: route.repo, tab: t })
+          }}
+          onOpenIssue={(n) => pushTo({ kind: 'issue', owner: route.owner, repo: route.repo, number: n })}
+          onOpenPull={(n) => pushTo({ kind: 'pull', owner: route.owner, repo: route.repo, number: n })}
+          onOpenDir={(path) => pushTo({ kind: 'code', owner: route.owner, repo: route.repo, path })}
+          onOpenFile={(path) => pushTo({ kind: 'code', owner: route.owner, repo: route.repo, path })}
+          onOpenRefs={() => pushTo({ kind: 'refs', owner: route.owner, repo: route.repo })}
+          onOpenHome={() => pushTo({ kind: 'code', owner: route.owner, repo: route.repo, path: '' })}
+          onNewFile={() => pushTo({ kind: 'edit', owner: route.owner, repo: route.repo, path: '' })}
+          onOpenReadme={() => {
+            if (routeRepo) setDetailRepo(routeRepo)
+            setSubReturn('none')
+            setSheet('readme')
+          }}
+          onOpenReleases={() => {
+            if (routeRepo) setDetailRepo(routeRepo)
+            setSubReturn('none')
+            setSheet('releases')
+          }}
+          onOpenForks={() => {
+            if (routeRepo) setDetailRepo(routeRepo)
+            setSubReturn('none')
+            setSheet('forks')
+          }}
+          onOpenWorkflows={() => openPipelines(routeRepo)}
+          onOpenSettings={() => pushTo({ kind: 'admin', owner: route.owner, repo: route.repo })}
+          onCompose={() =>
+            void openCompose(
+              route.tab === 'pulls' ? 'pull' : 'issue',
+              route.owner,
+              route.repo,
+              routeRepo?.default_branch ?? 'main',
+            )
+          }
+        />
+      )}
+
+      {route?.kind === 'admin' && routeRepo && (
+        <RepoAdminPage
+          client={client}
+          repo={routeRepo}
+          onBack={popTo}
+          onToast={showToast}
+          onChanged={(next) => {
+            patchRepo(next)
+            if (next.name !== routeRepo.name) {
+              // 改名后地址变了，把栈顶换成新名字，否则返回上一层会回到 404
+              replaceTopTo({ kind: 'repo', owner: next.owner, repo: next.name, tab: 'code' })
+            }
+          }}
+        />
+      )}
+
+      {route?.kind === 'issue' && (
+        <IssuePage
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          number={route.number}
+          onBack={popTo}
+          onToast={showToast}
+        />
+      )}
+
+      {route?.kind === 'pull' && (
+        <PullPage
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          number={route.number}
+          login={activeRecord?.login ?? null}
+          onBack={popTo}
+          onToast={showToast}
+        />
+      )}
+
+      {route?.kind === 'code' && (
+        <CodePage
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          path={route.path}
+          ref={route.ref}
+          mirror={mirror}
+          onBack={popTo}
+          onToast={showToast}
+          onOpenDir={(path) => pushTo({ kind: 'code', owner: route.owner, repo: route.repo, path, ref: route.ref })}
+          onOpenFile={(path) => pushTo({ kind: 'code', owner: route.owner, repo: route.repo, path, ref: route.ref })}
+          onEdit={(path, sha) =>
+            pushTo({ kind: 'edit', owner: route.owner, repo: route.repo, path, sha, ref: route.ref })
+          }
+          onPickRef={() => pushTo({ kind: 'refs', owner: route.owner, repo: route.repo })}
+          onHistory={(path) => pushTo({ kind: 'commits', owner: route.owner, repo: route.repo, path, ref: route.ref })}
+        />
+      )}
+
+      {route?.kind === 'commits' && (
+        <CommitsPage
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          path={route.path}
+          ref={route.ref}
+          onBack={popTo}
+          onOpenCommit={(sha) => pushTo({ kind: 'commit', owner: route.owner, repo: route.repo, sha })}
+        />
+      )}
+
+      {route?.kind === 'commit' && (
+        <CommitPage
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          sha={route.sha}
+          onBack={popTo}
+        />
+      )}
+
+      {route?.kind === 'edit' && (
+        <FileEditor
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          path={route.path}
+          ref={route.ref}
+          sha={route.sha}
+          onBack={popTo}
+          onToast={showToast}
+          onSaved={(msg) => {
+            setPageTick((n) => n + 1)
+            showToast(msg)
+            popTo()
+          }}
+        />
+      )}
+
+      {route?.kind === 'refs' && (
+        <RefsPage
+          client={client}
+          owner={route.owner}
+          repo={route.repo}
+          defaultBranch={routeRepo?.default_branch ?? 'main'}
+          onBack={popTo}
+          onToast={showToast}
+          onOpenRef={(ref) =>
+            replaceTopTo({ kind: 'code', owner: route.owner, repo: route.repo, path: '', ref })
+          }
+        />
+      )}
+
+      {route?.kind === 'notifications' && (
+        <NotificationsPage
+          client={client}
+          scopes={client?.scopes ?? []}
+          tokenKind={activeRecord?.kind ?? 'classic'}
+          onBack={popTo}
+          onToast={showToast}
+          onUnread={setUnread}
+          onOpen={(t) => {
+            const next = targetRoute(t)
+            if (next) pushTo(next)
+          }}
+        />
+      )}
+
+      {route?.kind === 'search' && (
+        <SearchPage
+          client={client}
+          onBack={popTo}
+          onToast={showToast}
+          onOpenRepo={(full) => {
+            const [owner, repo] = full.split('/')
+            if (owner && repo) pushTo({ kind: 'repo', owner, repo, tab: 'code' })
+          }}
+          onOpenUser={(login) => pushTo({ kind: 'user', login })}
+          onOpenIssue={(owner, repo, n) => pushTo({ kind: 'issue', owner, repo, number: n })}
+        />
+      )}
+
+      {route?.kind === 'user' && (
+        <UserPage
+          client={client}
+          login={route.login}
+          selfLogin={activeRecord?.login ?? null}
+          onBack={popTo}
+          onToast={showToast}
+          onOpenRepo={(full) => {
+            const [owner, repo] = full.split('/')
+            if (owner && repo) pushTo({ kind: 'repo', owner, repo, tab: 'code' })
+          }}
+        />
+      )}
+
+      {route?.kind === 'actions' && (
         <PipelinesPage
           client={client}
-          repo={pipelineRepo}
+          repo={pipelineRepo ?? routeRepo}
           reloadKey={pipelineReload}
-          onBack={popScreen}
+          onBack={popTo}
           onPickRepo={() => setSheet('repoPick')}
           onOpenWorkflow={(w) => {
             if (!pipelineRepo) return
@@ -1417,7 +1809,7 @@ export default function App() {
         />
       )}
 
-      {screen === 'main' && selectMode && selected.size > 0 && (
+      {!route && selectMode && selected.size > 0 && (
         <div className="actionbar">
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>已选 {selected.size}</span>
           <div className="spacer" />
@@ -1430,7 +1822,7 @@ export default function App() {
         </div>
       )}
 
-      {screen === 'main' && (
+      {!route && (
         <nav className="tabbar">
           {tabs.map((key) => {
             const def = TAB_DEFS.find((t) => t.key === key)
@@ -1441,7 +1833,7 @@ export default function App() {
                 key={key}
                 className={on ? 'on' : ''}
                 onClick={() => {
-                  if (key === 'pipelines') pushScreen('pipelines')
+                  if (key === 'pipelines') openPipelines(pipelineRepo ?? repos[0] ?? null)
                   else go(key)
                 }}
               >
@@ -1500,11 +1892,24 @@ export default function App() {
           onOpenWorkflows={() => {
             setPipelineRepo(detailRepo)
             setSheet('none')
-            pushScreen('pipelines')
+            pushTo({ kind: 'actions', owner: detailRepo.owner, repo: detailRepo.name })
           }}
-          onOpenReleases={() => setSheet('releases')}
-          onOpenForks={() => setSheet('forks')}
-          onOpenReadme={() => setSheet('readme')}
+          onOpenHome={() => {
+            setSheet('none')
+            pushTo({ kind: 'repo', owner: detailRepo.owner, repo: detailRepo.name, tab: 'code' })
+          }}
+          onOpenReleases={() => {
+            setSubReturn('detail')
+            setSheet('releases')
+          }}
+          onOpenForks={() => {
+            setSubReturn('detail')
+            setSheet('forks')
+          }}
+          onOpenReadme={() => {
+            setSubReturn('detail')
+            setSheet('readme')
+          }}
         />
       )}
 
@@ -1513,7 +1918,7 @@ export default function App() {
           repo={detailRepo}
           client={client}
           mirror={mirror}
-          onClose={() => setSheet('detail')}
+          onClose={() => setSheet(subReturn)}
           onToast={showToast}
           onAudit={(detail) => void logAudit('release', detailRepo.full_name, detail)}
         />
@@ -1524,7 +1929,7 @@ export default function App() {
           repo={detailRepo}
           client={client}
           login={activeRecord?.login ?? null}
-          onClose={() => setSheet('detail')}
+          onClose={() => setSheet(subReturn)}
           onToast={showToast}
           onAudit={(detail) => void logAudit('fork', detailRepo.full_name, detail)}
           onOpenRepo={(r) => {
@@ -1544,7 +1949,7 @@ export default function App() {
           target={translateTarget}
           azureKey={azureKey}
           store={translateStore}
-          onClose={() => setSheet('detail')}
+          onClose={() => setSheet(subReturn)}
           onToast={showToast}
         />
       )}
@@ -1583,6 +1988,7 @@ export default function App() {
           onClose={() => setSheet(activeWorkflow ? 'workflow' : 'none')}
           onToast={showToast}
           onChanged={() => setPipelineReload((n) => n + 1)}
+          onOpenLogs={() => openLogs(activeRun.repo, activeRun.run)}
         />
       )}
 
@@ -1649,6 +2055,34 @@ export default function App() {
           onStore={saveMirrorStore}
           onSwitch={applyMirror}
           onClose={() => setSheet(mirrorReturn)}
+        />
+      )}
+
+      {sheet === 'compose' && compose && (
+        <ComposeSheet
+          mode={compose.mode}
+          owner={compose.owner}
+          repo={compose.repo}
+          branches={compose.branches}
+          defaultBranch={compose.base}
+          busy={composeBusy}
+          error={composeError}
+          onSubmit={(input) => void submitCompose(input)}
+          onCancel={() => {
+            setSheet('none')
+            setCompose(null)
+          }}
+        />
+      )}
+
+      {sheet === 'logs' && logsRun && (
+        <LogSheet
+          client={client}
+          owner={logsRun.owner}
+          repo={logsRun.repo}
+          runId={logsRun.id}
+          runTitle={logsRun.title}
+          onClose={() => setSheet('run')}
         />
       )}
 

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
+import { buildDispatchInputs, parseDispatchInputs, validateInputs, type DispatchInput } from '../lib/actions-ext'
+import { getFile } from '../lib/code'
 import type { Repo, Workflow, WorkflowRun, WorkflowState } from '../lib/types'
 import { openExternal } from '../lib/update'
 import {
@@ -44,6 +46,12 @@ export function WorkflowSheet(p: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  /** workflow_dispatch 的参数定义，从 YAML 里现读现解析 */
+  const [defs, setDefs] = useState<DispatchInput[]>([])
+  const [values, setValues] = useState<Record<string, string>>({})
+  /** 解析参数用的是哪个 ref 的文件，改分支后要重读 */
+  const [inputRef, setInputRef] = useState(p.repo.default_branch)
+
   const loadRuns = useCallback(async () => {
     if (!p.client) return
     setLoadingRuns(true)
@@ -63,6 +71,40 @@ export function WorkflowSheet(p: Props) {
   useEffect(() => {
     void loadRuns()
   }, [loadRuns])
+
+  /**
+   * 读工作流文件解析手动触发的参数。
+   *
+   * 解析失败一律降级成「只填分支」，不让一个 YAML 写法问题挡住整个触发流程。
+   */
+  useEffect(() => {
+    const client = p.client
+    if (!client || !p.workflow.path) {
+      setDefs([])
+      return
+    }
+    let alive = true
+    void (async () => {
+      try {
+        const { text } = await getFile(client, p.repo.owner, p.repo.name, p.workflow.path, inputRef)
+        if (!alive) return
+        const next = parseDispatchInputs(text)
+        setDefs(next)
+        setValues((prev) => {
+          const merged = { ...prev }
+          for (const d of next) {
+            if (merged[d.name] === undefined && d.default) merged[d.name] = d.default
+          }
+          return merged
+        })
+      } catch {
+        if (alive) setDefs([])
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [p.client, p.repo.owner, p.repo.name, p.workflow.path, inputRef])
 
   async function run(key: string, fn: () => Promise<void>) {
     if (busy) return
@@ -136,6 +178,10 @@ export function WorkflowSheet(p: Props) {
             id="wf-ref"
             value={ref}
             onChange={(e) => setRef(e.target.value)}
+            onBlur={() => {
+              const v = ref.trim()
+              if (v && v !== inputRef) setInputRef(v)
+            }}
             placeholder={p.repo.default_branch}
             autoCapitalize="off"
             spellCheck={false}
@@ -146,6 +192,25 @@ export function WorkflowSheet(p: Props) {
           </div>
         </div>
 
+        {defs.length > 0 && (
+          <>
+            <div className="section-title">
+              参数 · {defs.length}
+              <span className="section-sub">来自 {inputRef} 上的定义</span>
+            </div>
+            <div className="di-form">
+              {defs.map((d) => (
+                <DispatchField
+                  key={d.name}
+                  def={d}
+                  value={values[d.name] ?? ''}
+                  onChange={(v) => setValues((prev) => ({ ...prev, [d.name]: v }))}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
         <button
           className="btn blue block"
           style={{ marginTop: 10 }}
@@ -153,7 +218,15 @@ export function WorkflowSheet(p: Props) {
           onClick={() =>
             void run('dispatch', async () => {
               if (!p.client) throw new Error('未连接令牌')
-              await p.client.dispatchWorkflow(p.repo.owner, p.repo.name, p.workflow.id, ref.trim())
+              const bad = validateInputs(defs, values)
+              if (bad) throw new Error(bad)
+              await p.client.dispatchWorkflow(
+                p.repo.owner,
+                p.repo.name,
+                p.workflow.id,
+                ref.trim(),
+                buildDispatchInputs(defs, values),
+              )
               p.onAudit(`手动触发 · ${ref.trim()}`)
               p.onToast('已提交触发，运行稍后出现在列表')
               // GitHub 是异步排队，等两秒再取一次比较容易看到新记录
@@ -209,6 +282,61 @@ export function WorkflowSheet(p: Props) {
           在网页查看完整日志
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * 一个 workflow_dispatch 参数。
+ *
+ * boolean 与 choice 都渲染成 chips —— 手机上点选比下拉菜单少一次操作，
+ * 也和 App 里其它地方的选择器保持一致。
+ */
+function DispatchField(p: { def: DispatchInput; value: string; onChange: (v: string) => void }) {
+  const { def } = p
+  const label = def.description || def.name
+  const options =
+    def.type === 'boolean' ? ['true', 'false'] : def.type === 'choice' ? (def.options ?? []) : []
+
+  if (options.length > 0) {
+    return (
+      <div className="di-field">
+        <div className="di-label">
+          {label}
+          {def.required && <span className="req"> *</span>}
+          <span className="di-name mono">{def.name}</span>
+        </div>
+        <div className="chips">
+          {options.map((o) => (
+            <button
+              key={o}
+              type="button"
+              className={`chip${p.value === o ? ' on' : ''}`}
+              onClick={() => p.onChange(o)}
+            >
+              {o}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="di-field">
+      <div className="di-label">
+        {label}
+        {def.required && <span className="req"> *</span>}
+        <span className="di-name mono">{def.name}</span>
+      </div>
+      <input
+        value={p.value}
+        onChange={(e) => p.onChange(e.target.value)}
+        placeholder={def.default || (def.type === 'number' ? '数字' : '留空则用默认值')}
+        inputMode={def.type === 'number' ? 'numeric' : 'text'}
+        autoCapitalize="off"
+        spellCheck={false}
+      />
     </div>
   )
 }

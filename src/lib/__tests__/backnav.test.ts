@@ -12,7 +12,7 @@ function state(patch: Partial<BackState> = {}): BackState {
   return {
     screen: 'app',
     guardSheetOpen: false,
-    screenDepth: 0,
+    routeDepth: 0,
     sheet: 'none',
     hasWorkflow: false,
     selectMode: false,
@@ -86,17 +86,17 @@ describe('resolveBack 层级顺序', () => {
   })
 
   it('二级页面先退一层，而不是回首页', () => {
-    expect(resolveBack(state({ screenDepth: 1, tab: 'stars' }))).toEqual({ kind: 'pop-screen' })
-    expect(resolveBack(state({ screenDepth: 2, sheet: 'none' }))).toEqual({ kind: 'pop-screen' })
+    expect(resolveBack(state({ routeDepth: 1, tab: 'stars' }))).toEqual({ kind: 'pop-screen' })
+    expect(resolveBack(state({ routeDepth: 2, sheet: 'none' }))).toEqual({ kind: 'pop-screen' })
   })
 
   it('页面栈优先于多选与页签', () => {
-    const action = resolveBack(state({ screenDepth: 1, selectMode: true, tab: 'stars' }))
+    const action = resolveBack(state({ routeDepth: 1, selectMode: true, tab: 'stars' }))
     expect(action).toEqual({ kind: 'pop-screen' })
   })
 
   it('页面栈里的弹层仍然先关弹层', () => {
-    expect(resolveBack(state({ screenDepth: 1, sheet: 'add' }))).toEqual({ kind: 'sheet', to: 'none' })
+    expect(resolveBack(state({ routeDepth: 1, sheet: 'add' }))).toEqual({ kind: 'sheet', to: 'none' })
   })
 
   it('隐藏了仓库页签时，首页是底栏第一个可见项', () => {

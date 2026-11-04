@@ -183,3 +183,27 @@ describe('applyInvalidation', () => {
     expect(c.size).toBe(0)
   })
 })
+
+describe('协作接口的缓存失效', () => {
+  it('建 Issue 会清列表、仓库本身与通知', () => {
+    const p = invalidationPrefixes('POST', '/repos/a/b/issues')
+    expect(p).toContain('/repos/a/b/issues')
+    expect(p).toContain('/search/issues')
+    expect(p).toContain('/notifications')
+  })
+  it('合并 PR 会清 PR 列表与提交历史', () => {
+    const p = invalidationPrefixes('PUT', '/repos/a/b/pulls/3/merge')
+    expect(p).toContain('/repos/a/b/pulls')
+    expect(p).toContain('/repos/a/b/commits')
+  })
+  it('改文件会清目录与提交', () => {
+    const p = invalidationPrefixes('PUT', '/repos/a/b/contents/src/x.ts')
+    expect(p).toContain('/repos/a/b/contents')
+    expect(p).toContain('/repos/a/b/commits')
+  })
+  it('建分支会清分支与标签', () => {
+    const p = invalidationPrefixes('POST', '/repos/a/b/git/refs')
+    expect(p).toContain('/repos/a/b/branches')
+    expect(p).toContain('/repos/a/b/tags')
+  })
+})

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
+import { deleteRun, rerunFailedJobs, rerunJob } from '../lib/actions-ext'
 import type { Repo, WorkflowJob, WorkflowRun } from '../lib/types'
 import { openExternal } from '../lib/update'
 import {
@@ -23,6 +24,8 @@ interface Props {
   onClose: () => void
   onToast: (msg: string) => void
   onChanged?: () => void
+  /** 打开日志面板。日志是 zip，单独一层看更清楚 */
+  onOpenLogs?: () => void
 }
 
 function fmtTime(iso: string | null): string {
@@ -40,6 +43,8 @@ export function RunSheet(p: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   /** 默认只展开失败的作业，其余折叠，避免 20+ 个步骤把弹层撑得很长 */
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  /** 删除是不可撤销的，走两步确认 */
+  const [confirmDel, setConfirmDel] = useState(false)
 
   const load = useCallback(async (fresh = false) => {
     if (!p.client) return
@@ -86,6 +91,11 @@ export function RunSheet(p: Props) {
               {p.repo.full_name} · #{p.run.run_number} · {shortSha(p.run.head_sha)}
             </div>
           </div>
+          {p.onOpenLogs && (
+            <button className="icon-btn" onClick={p.onOpenLogs} aria-label="查看日志" style={{ marginTop: -4 }}>
+              <Icon name="terminal" size={16} />
+            </button>
+          )}
           <button className="icon-btn" onClick={p.onClose} aria-label="关闭" style={{ marginTop: -4 }}>
             <Icon name="close" size={16} />
           </button>
@@ -179,6 +189,23 @@ export function RunSheet(p: Props) {
                     )}
                   </div>
                 )}
+                {js.tone === 'bad' && (
+                  <button
+                    className="step-more"
+                    disabled={!!busy}
+                    onClick={() =>
+                      void action(`job-${j.id}`, async () => {
+                        if (!p.client) throw new Error('未连接令牌')
+                        await rerunJob(p.client, p.repo.owner, p.repo.name, j.id)
+                        p.onToast(`已重跑作业「${j.name}」`)
+                        p.onChanged?.()
+                        window.setTimeout(() => void load(true), 1500)
+                      })
+                    }
+                  >
+                    {busy === `job-${j.id}` ? '提交中…' : '只重跑这个作业'}
+                  </button>
+                )}
               </div>
             )
           })}
@@ -219,7 +246,7 @@ export function RunSheet(p: Props) {
               }
             >
               <Icon name="refresh" size={14} />
-              {busy === 'rerun' ? '提交中…' : '重新运行'}
+              {busy === 'rerun' ? '提交中…' : '全部重跑'}
             </button>
           )}
           <button
@@ -232,6 +259,68 @@ export function RunSheet(p: Props) {
             <Icon name="terminal" size={14} />
             看日志
           </button>
+        </div>
+
+        {/* 失败的运行才值得给出「只重跑失败」：成功的不需要，进行中的不允许 */}
+        {canRerun(p.run) && p.run.conclusion === 'failure' && (
+          <button
+            className="btn ghost block"
+            style={{ marginTop: 8 }}
+            disabled={!!busy}
+            onClick={() =>
+              void action('rerunFailed', async () => {
+                if (!p.client) throw new Error('未连接令牌')
+                await rerunFailedJobs(p.client, p.repo.owner, p.repo.name, p.run.id)
+                p.onToast('已重新排队，成功过的作业会跳过')
+                p.onChanged?.()
+              })
+            }
+          >
+            <Icon name="refresh" size={14} />
+            {busy === 'rerunFailed' ? '提交中…' : '只重跑失败的作业'}
+          </button>
+        )}
+
+        <div className="section-title" style={{ marginTop: 16 }}>
+          危险操作
+        </div>
+        {confirmDel ? (
+          <div className="warnbox" style={{ marginTop: 8 }}>
+            <Icon name="warn" size={14} />
+            <span>
+              删除后这次运行的记录与日志会一并消失，不能恢复。分支与代码不受影响。
+            </span>
+          </div>
+        ) : null}
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          {confirmDel ? (
+            <>
+              <button className="btn ghost" style={{ flex: 1 }} onClick={() => setConfirmDel(false)}>
+                取消
+              </button>
+              <button
+                className="btn danger"
+                style={{ flex: 1 }}
+                disabled={!!busy}
+                onClick={() =>
+                  void action('delete', async () => {
+                    if (!p.client) throw new Error('未连接令牌')
+                    await deleteRun(p.client, p.repo.owner, p.repo.name, p.run.id)
+                    p.onToast('运行记录已删除')
+                    p.onChanged?.()
+                    p.onClose()
+                  })
+                }
+              >
+                {busy === 'delete' ? '删除中…' : '确认删除记录'}
+              </button>
+            </>
+          ) : (
+            <button className="btn ghost block" onClick={() => setConfirmDel(true)}>
+              <Icon name="trash" size={14} />
+              删除这次运行记录
+            </button>
+          )}
         </div>
       </div>
     </div>

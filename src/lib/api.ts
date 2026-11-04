@@ -9,6 +9,7 @@ import {
   type ReadmeFile,
 } from './readme'
 import { normalizeRepo, type RawRepo } from './repos'
+import { parseLink } from './paging'
 import type {
   Fork,
   Page,
@@ -84,6 +85,12 @@ export interface ClientOptions {
 }
 
 /**
+ * 各领域模块只需要「发请求 + 缓存」这一件事，不必依赖整个客户端。
+ * 这样单测里塞一个假对象就能测业务逻辑，不用起 fetch。
+ */
+export type ApiClient = Pick<GitHubClient, 'request'>
+
+/**
  * GitHub REST 客户端。只做传输与归一化，不含业务判断。
  * baseUrl 可指向镜像，用于直连 github.com 不通时的降级。
  */
@@ -107,6 +114,11 @@ export class GitHubClient {
     this.cache.invalidate(prefix)
   }
 
+  /** 给需要裸 fetch 的接口（日志 zip、附件上传）取令牌，不要拿去打日志 */
+  get authToken(): string {
+    return this.token
+  }
+
   get cacheSize(): number {
     return this.cache.size
   }
@@ -115,20 +127,28 @@ export class GitHubClient {
    * 统一的请求入口。
    * GET 默认走缓存（TTL 按路径分档）；传 fresh 可强制回源，轮询与刷新按钮用它。
    * 写操作成功后按前缀清掉受影响的缓存，保证改完立刻能看见新数据。
+   *
+   * conditional=true 时会带上 If-None-Match，304 直接复用本地那份，
+   * 用于通知这类「高频轮询但大部分时候没变化」的接口。
    */
   async request<T>(
     path: string,
     init: RequestInit = {},
-    opts: { fresh?: boolean } = {},
+    opts: { fresh?: boolean; conditional?: boolean } = {},
   ): Promise<Page<T>> {
     const method = (init.method ?? 'GET').toUpperCase()
-    const cacheable = method === 'GET' && !opts.fresh
+    // 条件请求必须真的打网络（304 很便宜），所以不读缓存；但拿到新数据仍要写回去
+    const readCache = method === 'GET' && !opts.fresh && !opts.conditional
+    const writeCache = method === 'GET' && !opts.fresh
 
-    if (cacheable) {
+    if (readCache) {
       const hit = this.cache.getEntry<T>(path, ttlFor(path))
       // 命中时带上当前配额信息，避免把很久以前的剩余次数显示给用户
-      if (hit) return { data: hit.value, rate: this.rate, scopes: this.scopes }
+      if (hit) return { data: hit.value, rate: this.rate, scopes: this.scopes, link: parseLink(null) }
     }
+
+    // 条件请求要能拿到「过期了但还留着」的那份，所以用 peek 而不是 get
+    const stale = method === 'GET' && opts.conditional ? this.cache.peek<T>(path) : null
 
     const url = path.startsWith('http') ? path : `${this.baseUrl}${path}`
     const res = await this.fetchImpl(url, {
@@ -138,23 +158,32 @@ export class GitHubClient {
         Authorization: `Bearer ${this.token}`,
         'X-GitHub-Api-Version': '2022-11-28',
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(stale?.etag ? { 'If-None-Match': stale.etag } : {}),
         ...(init.headers as Record<string, string> | undefined),
       },
     })
 
     const rate = this.readRate(res.headers)
     this.rate = rate
-    const scopes = res.headers.get('x-oauth-scopes')
-    if (scopes !== null) {
-      this.scopes = scopes
+    const scopes0 = res.headers.get('x-oauth-scopes')
+    if (scopes0 !== null) {
+      this.scopes = scopes0
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
     }
+    const link = parseLink(res.headers.get('link'))
+    const etag = res.headers.get('etag') ?? undefined
+
+    // 304：没变化，把本地那份的时间戳刷新一下，界面照常渲染，只是知道「无新数据」
+    if (res.status === 304) {
+      if (stale) this.cache.set(path, stale.value, Date.now(), stale.etag)
+      return { data: (stale?.value ?? null) as T, rate, scopes: this.scopes, link, notModified: true }
+    }
 
     if (res.status === 204) {
       if (method !== 'GET') this.cache.applyInvalidation(method, path)
-      return { data: null as T, rate, scopes: this.scopes }
+      return { data: null as T, rate, scopes: this.scopes, link }
     }
 
     const text = await res.text()
@@ -167,11 +196,52 @@ export class GitHubClient {
       throw new GitHubError(describeError(res.status, body), res.status, body)
     }
 
-    if (cacheable) this.cache.set(path, body as T)
+    if (writeCache) this.cache.set(path, body as T, Date.now(), etag)
     if (method !== 'GET') this.cache.applyInvalidation(method, path)
 
-    return { data: body as T, rate, scopes: this.scopes }
+    return { data: body as T, rate, scopes: this.scopes, link }
   }
+
+  /**
+   * 取纯文本（diff、raw 文件）。这类响应体积可能很大，而且「看一次就够了」，
+   * 不进 JSON 缓存，也不做 ETag 协商。
+   */
+  async rawText(
+    path: string,
+    opts: { accept?: string; maxBytes?: number } = {},
+  ): Promise<{ text: string; status: number; rate: RateLimit | null; truncated: boolean }> {
+    const url = path.startsWith('http') ? path : `${this.baseUrl}${path}`
+    const res = await this.fetchImpl(url, {
+      headers: {
+        Accept: opts.accept ?? 'application/vnd.github.raw',
+        Authorization: `Bearer ${this.token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    })
+    const rate = this.readRate(res.headers)
+    this.rate = rate
+    if (!res.ok) {
+      const text = await res.text()
+      throw new GitHubError(describeError(res.status, safeJson(text)), res.status, safeJson(text))
+    }
+    const text = await res.text()
+    const limit = opts.maxBytes ?? 2_000_000
+    if (text.length > limit) {
+      return { text: text.slice(0, limit), status: res.status, rate, truncated: true }
+    }
+    return { text, status: res.status, rate, truncated: false }
+  }
+
+  /**
+   * 上传发行版附件这条路走不通，留个记录免得以后又试一遍。
+   *
+   * 端点本身没问题：`POST https://uploads.github.com/repos/{o}/{r}/releases/{id}/assets?name=x`
+   * 用 curl 带令牌直传能拿到 201。问题在跨域 —— 这个域名（以及它前面的 Azure Blob）
+   * 响应里**没有** `Access-Control-Allow-Origin`，预检也过不去，
+   * 所以 WebView 里的 fetch 无论怎么发都读不到结果，原生 CapacitorHttp 也不支持
+   * 二进制请求体（JS 字符串过桥后按 UTF-8 编码，会把 APK 传坏）。
+   * 因此界面上不提供上传，只给「网页上传」入口。
+   */
 
   private readRate(headers: Headers): RateLimit | null {
     const limit = headers.get('x-ratelimit-limit')
@@ -500,7 +570,7 @@ export class GitHubClient {
   async createRelease(
     owner: string,
     name: string,
-    input: { tag: string; title?: string; body?: string; prerelease?: boolean; target?: string },
+    input: { tag: string; title?: string; body?: string; prerelease?: boolean; draft?: boolean; target?: string },
   ) {
     const { data, rate, scopes } = await this.request<Release>(`/repos/${owner}/${name}/releases`, {
       method: 'POST',
@@ -508,7 +578,7 @@ export class GitHubClient {
         tag_name: input.tag,
         name: input.title || input.tag,
         body: input.body ?? '',
-        draft: false,
+        draft: input.draft ?? false,
         prerelease: input.prerelease ?? false,
         ...(input.target ? { target_commitish: input.target } : {}),
       }),

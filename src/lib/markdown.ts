@@ -14,10 +14,11 @@ import { resolveImageSrc } from './images'
 export type Block =
   | { kind: 'h'; level: number; text: string }
   | { kind: 'p'; text: string }
-  | { kind: 'li'; text: string; depth: number; ordered: boolean }
+  | { kind: 'li'; text: string; depth: number; ordered: boolean; checked?: boolean }
   | { kind: 'code'; text: string; lang: string }
   | { kind: 'quote'; text: string }
   | { kind: 'hr' }
+  | { kind: 'table'; head: string[]; rows: string[][]; align: ('l' | 'c' | 'r')[] }
   | {
       kind: 'img'
       src: string
@@ -143,6 +144,25 @@ const UL = /^(\s*)[-*+]\s+(.*)$/
 const OL = /^(\s*)\d{1,3}[.)]\s+(.*)$/
 const QUOTE = /^ {0,3}>\s?(.*)$/
 const FENCE = /^ {0,3}(```|~~~)\s*([\w+#.-]*)\s*$/
+/** 表格分隔行：| --- | :--: | ---: | */
+const TABLE_SEP = /^\s*\|?(\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?\s*$/
+/** 任务列表：[ ] / [x] ，Issue 与 PR 正文里到处都是 */
+const TASK = /^\[([ xX])\]\s*(.*)$/
+
+/** 拆单元格。先去首尾竖线，再按未转义的 | 切 */
+function splitCells(line: string): string[] {
+  let s = line.trim().replace(/\\\|/g, '\u0000')
+  if (s.startsWith('|')) s = s.slice(1)
+  if (s.endsWith('|')) s = s.slice(0, -1)
+  return s.split('|').map((c) => c.replace(/\u0000/g, '|').trim())
+}
+
+function alignOf(cell: string): 'l' | 'c' | 'r' {
+  const s = cell.trim()
+  if (s.startsWith(':') && s.endsWith(':')) return 'c'
+  if (s.endsWith(':')) return 'r'
+  return 'l'
+}
 
 export interface ParseOptions {
   /** 最多解析多少个块，防止超长 README 把界面拖死 */
@@ -263,7 +283,10 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
       flushPara()
       const m = (ul ?? ol) as RegExpExecArray
       const indent = m[1].replace(/\t/g, '  ').length
-      const text = inline(m[2])
+      const body = m[2]
+      // 任务列表：保留勾选状态，Issue 里的清单要能一眼看出哪些做完了
+      const task = TASK.exec(body.trim())
+      const text = inline(task ? task[2] : body)
       // 纯徽章列表项不留
       if (text && !isDecorationOnly(line)) {
         blocks.push({
@@ -271,24 +294,39 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
           text,
           depth: Math.min(Math.floor(indent / 2), 3),
           ordered: !!ol,
+          ...(task ? { checked: task[1].toLowerCase() === 'x' } : {}),
         })
+      } else if (task && !text) {
+        // 只有勾选框没有文字（`- [x]`）也算一条，否则清单会缺行
+        blocks.push({ kind: 'li', text: '', depth: 0, ordered: false, checked: task[1].toLowerCase() === 'x' })
       }
       i += 1
       continue
     }
 
-    // 表格行降级成普通文字，分隔行（|---|）丢弃
-    if (/^\s*\|?[\s:|-]{3,}\|?\s*$/.test(line) && line.includes('-')) {
+    // 表格：本行像表头，下一行是分隔行。Issue/PR 正文与 README 都大量使用
+    if (line.includes('|') && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1])) {
+      flushPara()
+      const head = splitCells(line).map(inline).slice(0, 6)
+      const align = splitCells(lines[i + 1]).map(alignOf).slice(0, 6)
+      i += 2
+      const rows: string[][] = []
+      // 行数封顶，避免有人贴一张几千行的表把界面拖死
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim() && rows.length < 60) {
+        rows.push(splitCells(lines[i]).map(inline).slice(0, 6))
+        i += 1
+      }
+      blocks.push({ kind: 'table', head, rows, align })
+      continue
+    }
+
+    // 分隔行（|---|）单独出现就丢弃
+    if (TABLE_SEP.test(line)) {
       i += 1
       continue
     }
     if (line.trim().startsWith('|')) {
-      const cells = line
-        .trim()
-        .replace(/^\||\|$/g, '')
-        .split('|')
-        .map((c) => inline(c))
-        .filter(Boolean)
+      const cells = splitCells(line).map(inline).filter(Boolean)
       if (cells.length) blocks.push({ kind: 'p', text: cells.join(' · ') })
       i += 1
       continue
@@ -312,14 +350,18 @@ export function blocksToText(blocks: Block[]): string {
   return blocks
     .map((b) => {
       switch (b.kind) {
-        case 'li':
-          return `${'  '.repeat(b.depth)}- ${b.text}`
+        case 'li': {
+          const box = b.checked === undefined ? '' : b.checked ? '[x] ' : '[ ] '
+          return `${'  '.repeat(b.depth)}- ${box}${b.text}`
+        }
         case 'code':
           return b.text
         case 'hr':
           return ''
         case 'img':
           return b.alt ? `[图片：${b.alt}]` : ''
+        case 'table':
+          return [b.head.join(' | '), ...b.rows.map((r) => r.join(' | '))].join('\n')
         default:
           return b.text
       }
@@ -334,7 +376,7 @@ export function summarize(blocks: Block[], maxChars = 120): string {
   let total = 0
   for (const b of blocks) {
     if (b.kind === 'code' || b.kind === 'hr' || b.kind === 'img') continue
-    const t = b.text.trim()
+    const t = b.kind === 'table' ? b.head.join(' ') : b.text.trim()
     if (!t) continue
     parts.push(t)
     total += t.length

@@ -12,6 +12,8 @@ export interface CacheEntry<T> {
   value: T
   /** 写入时间（毫秒时间戳） */
   at: number
+  /** 服务端 ETag，用于条件请求（通知这类高频轮询省配额） */
+  etag?: string
 }
 
 /** 默认 30 秒：既能让反复切换不重复请求，也不至于看到太久以前的数据 */
@@ -37,6 +39,18 @@ export function ttlFor(path: string): number {
   if (p.endsWith('/jobs')) return 20_000
   if (p.endsWith('/actions/runs')) return 15_000
   if (p.endsWith('/actions/workflows')) return 30_000
+  // 通知未读数分钟就变，但不能太短，否则每次切页签都打一次网络
+  if (p.startsWith('/notifications')) return 45_000
+  // 目录列表跟着提交走，但短时间内反复进出很常见
+  if (p.includes('/contents')) return 45_000
+  // 分支与标签变动更慢
+  if (p.endsWith('/branches') || p.endsWith('/tags')) return 2 * 60_000
+  // PR 的 diff 一旦打开很少变，翻来覆去看同一份别重复拉
+  if (p.includes('/pulls/') && (p.endsWith('/files') || p.endsWith('/commits'))) return 3 * 60_000
+  if (p.endsWith('/issues') || p.endsWith('/pulls') || p.includes('/issues/') || p.includes('/pulls/')) {
+    return 45_000
+  }
+  if (p.includes('/commits')) return 60_000
   if (p.endsWith('/releases')) return 2 * 60_000
   if (p.endsWith('/forks')) return 2 * 60_000
   if (p === '/user') return 10 * 60_000
@@ -73,6 +87,34 @@ export function invalidationPrefixes(method: string, path: string): string[] | '
     const repoPrefix = p.slice(0, p.indexOf('/actions/'))
     return [`${repoPrefix}/actions/`]
   }
+
+  // 改文件：目录列表、提交历史、分支都要重新拉；仓库本身的 pushed_at 也变了
+  if (p.includes('/contents')) {
+    const repoPrefix = p.slice(0, p.indexOf('/contents'))
+    return [`${repoPrefix}/contents`, `${repoPrefix}/commits`, `${repoPrefix}/branches`, repoPrefix]
+  }
+
+  // Issue / PR 的写操作：列表、详情、搜索一起清
+  if (p.includes('/issues')) {
+    const repoPrefix = p.slice(0, p.indexOf('/issues'))
+    return [`${repoPrefix}/issues`, `${repoPrefix}/pulls`, repoPrefix, '/search/issues', '/notifications']
+  }
+
+  // PR 合并/关闭会改变提交历史
+  if (p.includes('/pulls')) {
+    const repoPrefix = p.slice(0, p.indexOf('/pulls'))
+    return [`${repoPrefix}/pulls`, `${repoPrefix}/issues`, `${repoPrefix}/commits`, repoPrefix, '/search/issues']
+  }
+
+  // 分支与标签：建/删/改名都走 git refs
+  if (p.includes('/git/refs') || p.includes('/branches') || p.includes('/tags')) {
+    const repoPrefix = p.slice(0, p.search(/\/(git\/refs|branches|tags)/))
+    return [`${repoPrefix}/branches`, `${repoPrefix}/tags`, `${repoPrefix}/commits`, repoPrefix]
+  }
+
+  if (p.startsWith('/notifications')) return ['/notifications', '/repos/']
+  if (p.startsWith('/user/following')) return ['/user/following', '/users/']
+  if (p.startsWith('/user/subscriptions')) return ['/user/subscriptions', '/repos/']
 
   // 发行版
   if (p.includes('/releases')) {
@@ -119,10 +161,10 @@ export class ResponseCache {
     return this.getEntry<T>(key, ttl, now)?.value ?? null
   }
 
-  set<T>(key: string, value: T, now: number = Date.now()): void {
+  set<T>(key: string, value: T, now: number = Date.now(), etag?: string): void {
     // 重新插入以刷新 LRU 顺序
     this.map.delete(key)
-    this.map.set(key, { value, at: now })
+    this.map.set(key, { value, at: now, ...(etag ? { etag } : {}) })
     while (this.map.size > this.max) {
       const oldest = this.map.keys().next()
       if (oldest.done) break

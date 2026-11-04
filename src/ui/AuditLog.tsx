@@ -15,6 +15,9 @@ const ACTION_LABEL: Record<AuditEntry['action'], string> = {
   workflow: '工作流',
   release: '发行版',
   fork: '复刻',
+  issue: 'Issue',
+  pull: 'Pull request',
+  file: '编辑文件',
   security: '安全设置',
 }
 

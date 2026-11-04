@@ -19,6 +19,7 @@ interface Props {
   onDeleted: (fullName: string) => void
   onAudit: (action: AuditEntry['action'], detail: { target: string; text: string }) => void
   onToast: (msg: string) => void
+  onOpenHome: () => void
   onOpenReadme: () => void
   onOpenWorkflows: () => void
   onOpenReleases: () => void
@@ -337,6 +338,8 @@ export function RepoDetailSheet(p: Props) {
                 p.onToast(next === 'private' ? '已转为私有' : '已转为公开')
               },
             )}
+
+          {action('home', 'repo', '仓库主页', '代码浏览、Issues、PR、设置都在里面', async () => p.onOpenHome())}
 
           {action('readme', 'book', '项目自述', 'README 原文，可一键翻成中文', async () => p.onOpenReadme())}
           {action('workflows', 'play', '工作流', '查看 Actions、启停与手动运行', async () => p.onOpenWorkflows())}

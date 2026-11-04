@@ -144,6 +144,10 @@ export interface Page<T> {
   data: T
   rate: RateLimit | null
   scopes: string[]
+  /** 分页信号。搜索类接口不带 Link，这里就是空 */
+  link?: import('./paging').LinkPages
+  /** 304：服务端说没变化，data 来自本地缓存（可能是 null） */
+  notModified?: boolean
 }
 
 export type BatchStatus = 'ok' | 'failed'
@@ -172,6 +176,9 @@ export interface AuditEntry {
     | 'workflow'
     | 'release'
     | 'fork'
+    | 'issue'
+    | 'pull'
+    | 'file'
     | 'security'
   target: string
   result: 'ok' | 'failed'

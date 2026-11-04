@@ -65,6 +65,9 @@ interface Props {
   avatarUrl?: string | null
   /** 打开个人页（点头像进） */
   onOpenProfile: () => void
+  /** 未读通知数，大于 0 时铃铛上带红点 */
+  unread?: number
+  onOpenNotifications?: () => void
   /** 已翻好的仓库简介，按 full_name 索引 */
   descZh?: Record<string, string>
   onOpenRepo: (repo: Repo) => void
@@ -103,6 +106,12 @@ export function RepoList(p: Props) {
           <span> · {p.counts.total} 个仓库</span>
         </button>
         <div className="spacer" />
+        {p.onOpenNotifications && (
+          <button className="icon-btn bell-btn" onClick={p.onOpenNotifications} aria-label="通知">
+            <Icon name="bell" size={17} />
+            {(p.unread ?? 0) > 0 && <span className="bell-dot" />}
+          </button>
+        )}
         <button className="icon-btn" onClick={p.onRefresh} aria-label="刷新">
           <Icon name="refresh" size={17} />
         </button>

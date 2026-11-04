@@ -313,3 +313,45 @@ describe('README', () => {
     await expect(client.readme('o', 'a')).rejects.toBeInstanceOf(GitHubError)
   })
 })
+
+describe('Link 头与条件请求', () => {
+  it('把 Link 头解析进 Page，next 能被调用方读到', async () => {
+    const f = vi.fn(async () =>
+      new Response(JSON.stringify([{ id: 1 }]), {
+        status: 200,
+        headers: { 'content-type': 'application/json', link: '<https://api.github.com/x?page=2>; rel="next"' },
+      }),
+    ) as unknown as typeof fetch
+    const client = new GitHubClient({ token: 't', fetchImpl: f })
+    const page = await client.request<{ id: number }[]>('/repos/a/b/issues')
+    expect(page.link?.next).toContain('page=2')
+  })
+
+  it('304 复用本地缓存并标记 notModified', async () => {
+    let call = 0
+    const f = vi.fn(async () => {
+      call += 1
+      if (call === 1) {
+        return new Response(JSON.stringify([{ id: 1 }]), {
+          status: 200,
+          headers: { 'content-type': 'application/json', etag: 'W/"abc"' },
+        })
+      }
+      return new Response(null, { status: 304 })
+    }) as unknown as typeof fetch
+    const client = new GitHubClient({ token: 't', fetchImpl: f })
+    const first = await client.request<{ id: number }[]>('/notifications')
+    expect(first.data).toEqual([{ id: 1 }])
+
+    const second = await client.request<{ id: number }[]>('/notifications', {}, { conditional: true })
+    expect(second.notModified).toBe(true)
+    expect(second.data).toEqual([{ id: 1 }])
+  })
+
+  it('304 之前没缓存过时 data 为 null，不抛错', async () => {
+    const client = new GitHubClient({ token: 't', fetchImpl: mockFetch(304, null) })
+    const page = await client.request<null>('/notifications', {}, { conditional: true })
+    expect(page.notModified).toBe(true)
+    expect(page.data).toBe(null)
+  })
+})

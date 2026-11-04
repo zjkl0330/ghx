@@ -185,6 +185,53 @@ const P: Record<string, ReactNode> = {
       <path d="M7 9.5l2.8 2.4L7 14.3M12.5 14.5H17" />
     </>
   ),
+  issue: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+    </>
+  ),
+  chat: (
+    <>
+      <path d="M20 11.5a7.5 7.5 0 01-10.9 6.7L4 20l1.8-4.6A7.5 7.5 0 1120 11.5z" />
+    </>
+  ),
+  file: (
+    <>
+      <path d="M13.5 3.5H7a2 2 0 00-2 2v13a2 2 0 002 2h10a2 2 0 002-2V9z" />
+      <path d="M13.5 3.5V9H19" />
+    </>
+  ),
+  folder: <path d="M3.5 7.5a2 2 0 012-2h3.7l2 2.2H18.5a2 2 0 012 2v7.8a2 2 0 01-2 2h-13a2 2 0 01-2-2z" />,
+  user: (
+    <>
+      <circle cx="12" cy="8.5" r="3.6" />
+      <path d="M5 20.5c0-3.6 3.1-6.5 7-6.5s7 2.9 7 6.5" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M4 20h4l10-10-4-4L4 16z" />
+      <path d="M13.5 6.5l4 4" />
+    </>
+  ),
+  merge: (
+    <>
+      <circle cx="7" cy="6" r="2.2" />
+      <circle cx="7" cy="18" r="2.2" />
+      <circle cx="17" cy="12" r="2.2" />
+      <path d="M7 8.2v7.6M9.2 6.6c0 4 2.4 4.2 5.6 5" />
+    </>
+  ),
+  pull: (
+    <>
+      <circle cx="6.5" cy="6" r="2.2" />
+      <circle cx="6.5" cy="18" r="2.2" />
+      <circle cx="17.5" cy="18" r="2.2" />
+      <path d="M6.5 8.2v7.6M17.5 15.8V9a3 3 0 00-3-3h-4" />
+      <path d="M12.5 4l-2 2 2 2" />
+    </>
+  ),
 }
 
 export type IconName = keyof typeof P
