@@ -99,6 +99,13 @@ Android 上的 GitHub 本地控制台。不给网页版当壳，直接调 REST A
 - **复刻** → 列出全部复刻，可复刻到自己账号
 - **项目自述** → 读 README，Markdown 排版，英文可一键机翻
 
+<p align="center">
+  <img src="docs/screenshots/05-detail.png" width="246" alt="仓库详情：简介已机翻，可看原文" />
+  <img src="docs/screenshots/06-settings.png" width="246" alt="设置：外观 / 翻译 / 通道" />
+</p>
+
+<p align="center"><sub>左：仓库详情（简介译文 + 「看原文」）· 右：设置里的翻译通道</sub></p>
+
 ### 多账号
 
 一个 PAT 对应一个 GitHub 账号，保险库可以同时放多个。
