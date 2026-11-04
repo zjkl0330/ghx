@@ -43,6 +43,18 @@
   --mask: rgba(1, 4, 9, 0.74);
   --shadow: rgba(0, 0, 0, 0.62);
 
+  /* 液体玻璃底栏：底色 / 描边 / 高光 / 选中药丸 */
+  --glass-bg: rgba(22, 27, 34, 0.55);
+  --glass-line: rgba(255, 255, 255, 0.09);
+  --glass-sheen: rgba(255, 255, 255, 0.14);
+  --glass-active-top: rgba(47, 129, 247, 0.42);
+  --glass-active-bottom: rgba(47, 129, 247, 0.24);
+  --glass-active-line: rgba(130, 185, 255, 0.42);
+  --glass-active-glow: rgba(47, 129, 247, 0.2);
+  --tab-active-fg: #eaf3ff;
+  --tab-label-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --tab-active-base: rgba(11, 17, 27, 0.74);
+
   --radius: 10px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -87,6 +99,18 @@
 
   --mask: rgba(31, 35, 40, 0.45);
   --shadow: rgba(31, 35, 40, 0.18);
+
+  /* 浅色下玻璃要更透、描边更淡，否则一块灰砖 */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-line: rgba(31, 35, 40, 0.1);
+  --glass-sheen: rgba(255, 255, 255, 0.9);
+  --glass-active-top: rgba(9, 105, 218, 0.22);
+  --glass-active-bottom: rgba(9, 105, 218, 0.12);
+  --glass-active-line: rgba(9, 105, 218, 0.26);
+  --glass-active-glow: rgba(9, 105, 218, 0.12);
+  --tab-active-fg: #0b4aa2;
+  --tab-label-shadow: 0 1px 2px rgba(255, 255, 255, 0.7);
+  --tab-active-base: rgba(255, 255, 255, 0.84);
 }
 
 * {
@@ -350,13 +374,29 @@ textarea {
   border-color: var(--amber);
 }
 
+/*
+ * 简介一行放下，超出省略；「译」标单独占一格，不能跟着文字一起被裁掉。
+ * 之前把标记塞在文本流里，长句子一省略，标就消失在省略号后面了。
+ */
 .row-desc {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-dim);
   margin-top: 3px;
-  white-space: nowrap;
+}
+
+.row-desc .desc-text {
+  min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.row-desc .tr-mark {
+  flex: none;
+  margin-left: 0;
 }
 
 .row-meta {
@@ -397,45 +437,140 @@ textarea {
   color: #fff;
 }
 
-/* 底部导航 */
+/*
+ * 底部导航：悬浮的「液体玻璃」胶囊。
+ *
+ * 三件事一起做才有玻璃感，少一件就变成一块半透明色块：
+ * 1. backdrop-filter 把身后滚过去的列表揉成模糊底色（saturate 提一点色彩，避免发灰）；
+ * 2. 顶部一道高光 + 内侧描边，模拟玻璃的厚度与边缘折射；
+ * 3. 一层极淡的噪点，去掉大面积模糊后那种「塑料膜」的均匀感。
+ * 底栏脱离文档流，所以内容会从后面穿过去 —— 这正是要的效果，
+ * 但不是免费的：.page 必须补底部内边距，否则最后一行永远被压在底栏下面。
+ */
 .tabbar {
-  flex: none;
-  height: calc(60px + var(--safe-bottom));
-  padding-bottom: var(--safe-bottom);
-  background: var(--surface);
-  border-top: 1px solid var(--line);
+  position: fixed;
+  left: 50%;
+  bottom: calc(10px + var(--safe-bottom));
+  transform: translateX(-50%);
+  width: min(calc(100% - 24px), calc(var(--content-max, 100%) - 24px));
+  height: 58px;
+  padding: 5px;
   display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: 21px;
+  border: 1px solid var(--glass-line);
+  background: var(--glass-bg);
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.46),
+    0 2px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+  -webkit-backdrop-filter: blur(30px) saturate(195%);
+  backdrop-filter: blur(30px) saturate(195%);
+  z-index: 24;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+/* 边缘高光：左上角一小片反射，向下迅速淡出 */
+.tabbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(130% 90% at 16% -30%, rgba(255, 255, 255, 0.16), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.02) 46%, transparent 64%);
+}
+
+/* 磨砂颗粒：几乎看不见，但少了它模糊区会显得很「塑料」 */
+.tabbar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E");
 }
 
 .tabbar button {
+  position: relative;
+  z-index: 1;
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
+  border-radius: 16px;
   font-size: 9.5px;
+  letter-spacing: 0.2px;
   color: var(--text-dim);
+  /* 玻璃后面是滚动的正文，标签没有这层阴影会在浅色文字上糊掉 */
+  text-shadow: var(--tab-label-shadow);
+  transition:
+    color 0.18s ease,
+    transform 0.16s ease;
 }
 
+/* 选中的字不能用 --blue：药丸本身就是蓝的，叠上去就糊成一片，
+   所以单独给一个高对比前景色（深色主题近白、浅色主题深蓝） */
 .tabbar button.on {
-  color: var(--blue);
+  color: var(--tab-active-fg);
   font-weight: 600;
 }
 
-/* 批量操作条 */
+/* 选中态：一枚内嵌的玻璃药丸，比纯文字变色更像「按下去的那一格」 */
+.tabbar button.on::before {
+  content: '';
+  position: absolute;
+  inset: 1px 0;
+  /* 定位元素默认画在文字上面，压到 -1 才不会把图标和标签一起盖灰 */
+  z-index: -1;
+  border-radius: 15px;
+  background-color: var(--tab-active-base);
+  background-image: linear-gradient(180deg, var(--glass-active-top), var(--glass-active-bottom));
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 0 0 1px var(--glass-active-line),
+    0 4px 16px var(--glass-active-glow);
+}
+
+.tabbar button:active {
+  transform: scale(0.95);
+}
+
+/* 没有 backdrop-filter 的内核（老 WebView）退回接近实心，至少不糊成一片 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .tabbar {
+    background: var(--surface);
+  }
+}
+
+/* 底栏脱离文档流后，页面末尾要自己让出这段高度 */
+.app.with-tabs > .page {
+  padding-bottom: calc(58px + 22px + var(--safe-bottom));
+}
+
+
+/* 批量操作条：浮在玻璃底栏之上 */
 .actionbar {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(60px + var(--safe-bottom));
+  bottom: calc(80px + var(--safe-bottom));
   background: var(--surface);
   border-top: 1px solid var(--line);
   padding: 10px 16px;
   display: flex;
   gap: 8px;
   align-items: center;
-  z-index: 20;
+  z-index: 26;
 }
 
 /* 通用按钮 */
@@ -3375,8 +3510,7 @@ h1.title {
   margin: 0 auto;
 }
 
-/* 横屏刘海：左右各留一条安全区 */
-.tabbar,
+/* 横屏刘海：左右各留一条安全区（底栏是悬浮胶囊，宽度自己收，不跟这条） */
 .topbar {
   padding-left: calc(16px + env(safe-area-inset-left, 0px));
   padding-right: calc(16px + env(safe-area-inset-right, 0px));
@@ -3410,12 +3544,19 @@ h1.title {
 /* 横屏矮屏：底栏与顶栏都压扁，把高度让给内容 */
 @media (orientation: landscape) and (max-height: 520px) {
   .tabbar {
-    height: calc(48px + var(--safe-bottom));
+    height: 46px;
+    bottom: calc(6px + var(--safe-bottom));
+    border-radius: 17px;
   }
 
   .tabbar button {
     font-size: 9px;
-    gap: 1px;
+    gap: 0;
+    border-radius: 12px;
+  }
+
+  .app.with-tabs > .page {
+    padding-bottom: calc(46px + 16px + var(--safe-bottom));
   }
 
   .topbar {

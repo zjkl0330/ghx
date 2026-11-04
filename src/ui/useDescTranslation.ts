@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { DescItem } from '../lib/desc'
 import {
   cacheKeyFor,
   hashText,
@@ -11,10 +12,7 @@ import {
   type TranslationStore,
 } from '../lib/translate'
 
-export interface DescItem {
-  key: string
-  text: string | null | undefined
-}
+export type { DescItem }
 
 export interface DescOptions {
   enabled: boolean

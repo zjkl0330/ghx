@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- ghx 底板：深色玻璃牌。中间的钥匙由 ghx-mark.svg 单独渲染后合入 -->
+  <defs>
+    <linearGradient id="bg" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#1c2736" />
+      <stop offset="0.52" stop-color="#111823" />
+      <stop offset="1" stop-color="#080b10" />
+    </linearGradient>
+    <radialGradient id="aura" cx="0.26" cy="0.14" r="0.72">
+      <stop offset="0" stop-color="#5ee08a" stop-opacity="0.20" />
+      <stop offset="0.5" stop-color="#5ee08a" stop-opacity="0.05" />
+      <stop offset="1" stop-color="#5ee08a" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0" />
+      <stop offset="1" stop-color="#000000" stop-opacity="0.34" />
+    </linearGradient>
+    <filter id="spec" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="56" />
+    </filter>
+    <clipPath id="tile">
+      <rect width="1024" height="1024" rx="232" />
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="url(#bg)" />
+    <rect width="1024" height="1024" fill="url(#aura)" />
+    <ellipse cx="300" cy="60" rx="420" ry="130" fill="#ffffff" opacity="0.09" filter="url(#spec)" />
+    <rect width="1024" height="1024" fill="url(#shade)" />
+  </g>
+  <rect x="3" y="3" width="1018" height="1018" rx="229" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="6" />
+</svg>

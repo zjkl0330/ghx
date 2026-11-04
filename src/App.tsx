@@ -3,6 +3,7 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { GitHubClient } from './lib/api'
 import { appendAudit, clearAudit, readAudit } from './lib/audit'
+import { pickDescItems } from './lib/desc'
 import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
 import {
   DEFAULT_MIRROR,
@@ -110,7 +111,7 @@ import { UnlockScreen } from './ui/UnlockScreen'
 import { UpdateSheet, type UpdatePhase } from './ui/UpdateSheet'
 import { VisibilitySheet } from './ui/VisibilitySheet'
 import { WorkflowSheet } from './ui/WorkflowSheet'
-import { useDescTranslation } from './ui/useDescTranslation'
+import { useDescTranslation, type DescOptions } from './ui/useDescTranslation'
 import { Icon } from './ui/icons'
 import './styles/theme.css'
 
@@ -1355,21 +1356,21 @@ export default function App() {
 
   // 简介机翻：只翻当前列表前 30 条 + 正在看的详情，结果按 full_name 索引。
   // 钩子必须放在口令屏 / 锁定屏的提前 return 之前，否则钩子数量会不固定。
-  const descItems = useMemo(() => {
-    const list = filtered.slice(0, 30).map((r) => ({ key: r.full_name, text: r.description }))
-    if (detailRepo && !list.some((x) => x.key === detailRepo.full_name)) {
-      list.push({ key: detailRepo.full_name, text: detailRepo.description })
-    }
-    return list
-  }, [filtered, detailRepo])
+  const descItems = useMemo(() => pickDescItems(filtered, 30, detailRepo), [filtered, detailRepo])
 
-  const descZh = useDescTranslation(descItems, {
-    enabled: scope.desc,
-    channel: translateChannel,
-    target: translateTarget,
-    azureKey,
-    store: translateStore,
-  })
+  // 热门 / 星标各自持有列表，所以把这套参数整包传下去，由页面自己翻可见的那几十行
+  const descOpts = useMemo<DescOptions>(
+    () => ({
+      enabled: scope.desc,
+      channel: translateChannel,
+      target: translateTarget,
+      azureKey,
+      store: translateStore,
+    }),
+    [scope.desc, translateChannel, translateTarget, azureKey, translateStore],
+  )
+
+  const descZh = useDescTranslation(descItems, descOpts)
 
   if (!ready) {
     return (
@@ -1419,7 +1420,7 @@ export default function App() {
   })()
 
   return (
-    <div className="app">
+    <div className={route ? 'app' : 'app with-tabs'}>
       {!route && tab === 'repos' && (
         <RepoList
           repos={filtered}
@@ -1471,6 +1472,7 @@ export default function App() {
         <StarsPage
           client={client}
           login={activeRecord?.login ?? null}
+          descOpts={descOpts}
           onOpenRepo={(r) => {
             setDetailRepo(r)
             setSheet('detail')
@@ -1496,6 +1498,7 @@ export default function App() {
       {!route && tab === 'hot' && (
         <HotPage
           client={client}
+          descOpts={descOpts}
           onOpenRepo={(r) => {
             setDetailRepo(r)
             setSheet('detail')
@@ -1907,13 +1910,14 @@ export default function App() {
               <button
                 key={key}
                 className={on ? 'on' : ''}
+                aria-current={on ? 'page' : undefined}
                 onClick={() => {
                   if (key === 'pipelines') openPipelines(pipelineRepo ?? repos[0] ?? null)
                   else go(key)
                 }}
               >
-                <Icon name={def.icon} size={19} />
-                {def.label}
+                <Icon name={on ? def.iconOn : def.icon} size={20} />
+                <span className="tab-label">{def.label}</span>
               </button>
             )
           })}

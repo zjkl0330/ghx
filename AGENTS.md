@@ -64,6 +64,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `repo-admin.ts` | 仓库设置开关表、改名影响清单、协作员、Watch 订阅、用户资料与关注 |
 | `release-ext.ts` | 发行版编辑/发布草稿/删附件（**上传不在这里，见下方 CORS 坑**） |
 | `accounts.ts` | 多账号视图：`buildAccounts`（当前置顶）、`nextAccount`（轮换）、`accountLabel`、`switchMessage`、`needsAccountReset` |
+| `desc.ts` | 列表简介取数：`pickDescItems`（跳过空简介、按 full_name 去重、只取前 N 条 + 详情保底）、`descText`（译文取值，空串当没翻） |
 | `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
 
 ### ui（组件）
@@ -74,9 +75,13 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 第三批（v0.5.4）：`AccountSheet` 账号切换面板 + 多设备响应式（内容居中、safe-area、横屏矮屏）
 
+第四批（v0.5.5）：液态玻璃底栏（悬浮胶囊 + `backdrop-filter` + 噪点 + 实心选中态图标）· 热门/星标接入简介机翻 · 应用图标与启动图重绘（`assets/icon/*.svg` + `scripts/make-icons.py`）· `scripts/shots.py` 用 mock API 出 README 截图
+
 ### 样式
 
-`src/styles/theme.css` 单文件，**只用 CSS 变量**（`--bg` `--surface` `--text` `--text-dim` `--line` `--blue` `--blue-soft` `--green*` `--red*`）。深色/浅色靠 `<html data-theme>` 切换，新组件禁止写死颜色。
+`src/styles/theme.css` 单文件，**只用 CSS 变量**（`--bg` `--surface` `--text` `--text-dim` `--line` `--blue` `--blue-soft` `--green*` `--red*`，以及底栏专用的 `--glass-*` 与 `--tab-active-*`）。深色/浅色靠 `<html data-theme>` 切换，新组件禁止写死颜色。
+
+> 玻璃底栏的两个坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西。
 
 ## 五个核心机制（改之前必须懂）
 
@@ -210,4 +215,5 @@ user / notifications / search / profile / settings / tokens / audit
 
 - 已发布 **v0.5.3**：ROADMAP 里 P0 六项 + P1 六项全部落地 —— 路由栈底座、Issues、PR、代码浏览与编辑、提交历史、分支/Tag、Actions 日志与产物、通知、全局搜索、用户主页、仓库设置、发行版编辑。单测 467 → 564。
 - **v0.5.4**：多账号切换（顶栏账号名 / 个人页卡片 → 面板，切换时清路由与列表）+ 多设备适配（620/760 两档居中、safe-area、横屏矮屏、放开缩放）。单测 564 → 584。
+- **v0.5.5**：液态玻璃底栏、热门/星标简介机翻（抽 `desc.ts` 统一取数）、图标与启动图重绘、README 截图入库；顺手把「检查更新」指向 `zjkl0330/ghx`。单测 584 → 597。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。

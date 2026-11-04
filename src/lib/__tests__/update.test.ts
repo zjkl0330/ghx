@@ -101,19 +101,19 @@ describe('parseRelease', () => {
     const info = parseRelease(base, 'https://gh.zjkl0330.dpdns.org')
     expect(info?.version).toBe('0.2.0')
     expect(info?.downloadUrl).toBe(
-      'https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/download/v0.2.0/ghx-0.2.0.apk',
+      'https://gh.zjkl0330.dpdns.org/zjkl0330/ghx/releases/download/v0.2.0/ghx-0.2.0.apk',
     )
     expect(info?.fallbackUrl).toBe('https://github.com/x/y.apk')
   })
 
   it('带出可直接打开的 Release 页面', () => {
     const info = parseRelease(base, 'https://gh.zjkl0330.dpdns.org')
-    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/tag/v0.2.0')
+    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/zjkl0330/ghx/releases/tag/v0.2.0')
   })
 
   it('纯下载型镜像的 Release 页面退回自建站点，按钮不会 403', () => {
     const info = parseRelease(base, 'https://gh-proxy.com')
-    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/tag/v0.2.0')
+    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/zjkl0330/ghx/releases/tag/v0.2.0')
   })
 
   it('draft 版本对外不可见，直接丢弃', () => {

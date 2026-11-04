@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1400" width="1400" height="1400">
+  <!-- ghx 标记：钥匙 + 冷光。只画标记，底板与高光在 ghx-tile.svg 里 -->
+  <defs>
+    <linearGradient id="keygrad" x1="60" y1="300" x2="820" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#eaffef" />
+      <stop offset="0.30" stop-color="#8df3ab" />
+      <stop offset="0.68" stop-color="#3fd070" />
+      <stop offset="1" stop-color="#1b9a4e" />
+    </linearGradient>
+    <filter id="blur" x="-45%" y="-45%" width="190%" height="190%">
+      <feGaussianBlur stdDeviation="32" />
+    </filter>
+  </defs>
+
+  <g transform="rotate(-45 700 700)">
+    <g transform="translate(222.5 188)">
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <!-- 冷光 -->
+        <g stroke="#35d873" stroke-width="56" opacity="0.32" filter="url(#blur)">
+          <circle cx="300" cy="512" r="86" />
+          <path d="M386 512H800" />
+          <path d="M690 512v100" stroke-linecap="butt" />
+          <path d="M764 512v64" stroke-linecap="butt" />
+        </g>
+        <!-- 投影：让钥匙与底板分层 -->
+        <g stroke="#02120a" stroke-width="60" opacity="0.45" transform="translate(5 9)">
+          <circle cx="300" cy="512" r="86" />
+          <path d="M386 512H800" />
+          <path d="M690 512v100" stroke-linecap="butt" />
+          <path d="M764 512v64" stroke-linecap="butt" />
+        </g>
+        <!-- 钥匙本体 -->
+        <g stroke="url(#keygrad)" stroke-width="56">
+          <circle cx="300" cy="512" r="86" />
+          <path d="M386 512H800" />
+          <path d="M690 512v100" stroke-width="50" stroke-linecap="butt" />
+          <path d="M764 512v64" stroke-width="50" stroke-linecap="butt" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

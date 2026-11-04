@@ -24,3 +24,7 @@ android/app/src/main/assets/capacitor.plugins.json
 # 签名配置（本地）
 android/keystore.properties
 keystore/
+
+# Python 工具脚本的缓存（图标生成、截图）
+__pycache__/
+*.pyc

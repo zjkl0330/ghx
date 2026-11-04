@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
+import { descText, pickDescItems } from '../lib/desc'
 import {
   COMMON_LANGUAGES,
   RANGE_LABEL,
@@ -18,9 +19,11 @@ import {
 } from '../lib/search'
 import type { Repo } from '../lib/types'
 import { Icon } from './icons'
+import { useDescTranslation, type DescOptions } from './useDescTranslation'
 
 interface Props {
   client: GitHubClient | null
+  descOpts: DescOptions
   onOpenRepo: (repo: Repo) => void
   onToast: (msg: string) => void
 }
@@ -59,6 +62,10 @@ export function HotPage(p: Props) {
   const seq = useRef(0)
 
   const searchMode = hasKeyword(query)
+
+  // 热门列表基本都是英文简介，逐行机翻后读起来快很多；只翻当前这一页可见的几十行
+  const descItems = useMemo(() => pickDescItems(repos, 30), [repos])
+  const descZh = useDescTranslation(descItems, p.descOpts)
 
   const load = useCallback(
     async (fresh = false) => {
@@ -225,6 +232,7 @@ export function HotPage(p: Props) {
             {repos.map((r, i) => {
               const on = starred.has(r.full_name)
               const perDay = Math.round(dailyStars(r))
+              const zh = descText(descZh, r.full_name)
               return (
                 <div className="row hot-row" key={r.id}>
                   {searchMode ? (
@@ -239,7 +247,12 @@ export function HotPage(p: Props) {
                       <span className="row-owner">{r.owner}/</span>
                       <span className="row-name">{r.name}</span>
                     </span>
-                    {r.description && <span className="row-desc">{r.description}</span>}
+                    {(zh ?? r.description) && (
+                      <span className="row-desc">
+                        <span className="desc-text">{zh ?? r.description}</span>
+                        {zh && <span className="tr-mark">译</span>}
+                      </span>
+                    )}
                     <span className="row-meta">
                       {r.language && <span>{r.language}</span>}
                       <span>★ {r.stargazers_count}</span>

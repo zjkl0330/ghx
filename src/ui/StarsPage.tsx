@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
+import { descText, pickDescItems } from '../lib/desc'
 import { groupByLanguage, topLanguages } from '../lib/stars'
 import type { Repo } from '../lib/types'
 import { Icon } from './icons'
+import { useDescTranslation, type DescOptions } from './useDescTranslation'
 
 interface Props {
   client: GitHubClient | null
   login: string | null
+  descOpts: DescOptions
   onOpenRepo: (repo: Repo) => void
   onToast: (msg: string) => void
   onUnstarred: (fullName: string) => void
@@ -81,6 +84,10 @@ export function StarsPage(p: Props) {
   const activeLang = lang && langs.includes(lang) ? lang : null
   const shownGroups = activeLang ? groups.filter((g) => g.language === activeLang) : groups
 
+  // 星标仓库多数是英文项目，简介按当前可见的前 30 条机翻
+  const descItems = useMemo(() => pickDescItems(filtered, 30), [filtered])
+  const descZh = useDescTranslation(descItems, p.descOpts)
+
   async function unstar(repo: Repo) {
     if (!p.client || busy) return
     setBusy(repo.full_name)
@@ -97,6 +104,7 @@ export function StarsPage(p: Props) {
   }
 
   function repoRow(r: Repo) {
+    const zh = descText(descZh, r.full_name)
     return (
       <div className="row star-row" key={r.id}>
         <button className="row-hit" onClick={() => p.onOpenRepo(r)}>
@@ -105,7 +113,12 @@ export function StarsPage(p: Props) {
             <span className="row-name">{r.name}</span>
             {r.archived && <span className="badge archived">Archived</span>}
           </span>
-          {r.description && <span className="row-desc">{r.description}</span>}
+          {(zh ?? r.description) && (
+            <span className="row-desc">
+              <span className="desc-text">{zh ?? r.description}</span>
+              {zh && <span className="tr-mark">译</span>}
+            </span>
+          )}
           <span className="row-meta">
             {r.language && <span>{r.language}</span>}
             <span>★ {r.stargazers_count}</span>

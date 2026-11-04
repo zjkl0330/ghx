@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#0D1117</color>
+    <!-- 自适应图标底层：和 assets/icon/ghx-tile.svg 的深色渐变的底色对齐 -->
+    <color name="ic_launcher_background">#111823</color>
+    <!-- 启动窗口背景 -->
+    <color name="splash_background">#0D1117</color>
 </resources>

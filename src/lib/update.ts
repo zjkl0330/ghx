@@ -17,7 +17,7 @@ import { DEFAULT_MIRROR, releaseDownloadUrl, releasePageUrl } from './mirrors'
  */
 export const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '0.0.0-dev'
 
-export const UPDATE_OWNER = '827802685'
+export const UPDATE_OWNER = 'zjkl0330'
 export const UPDATE_REPO = 'ghx'
 
 /** 加速前缀保持向后兼容导出；真正的站点表在 mirrors.ts */

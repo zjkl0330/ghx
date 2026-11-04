@@ -8,11 +8,15 @@
 
 export type TabKey = 'repos' | 'stars' | 'hot' | 'pipelines'
 
-export const TAB_DEFS: { key: TabKey; label: string; icon: 'repo' | 'star' | 'trend' | 'play' }[] = [
-  { key: 'repos', label: '仓库', icon: 'repo' },
-  { key: 'stars', label: '星标', icon: 'star' },
-  { key: 'hot', label: '热门', icon: 'trend' },
-  { key: 'pipelines', label: '流水线', icon: 'play' },
+/** 底栏页签图标：每格都有描边态与选中实心态，图标的线条粗细得跟着玻璃底栏走 */
+type TabIcon = 'repo' | 'star' | 'flame' | 'pipelines'
+type TabIconOn = 'repoOn' | 'starOn' | 'flameOn' | 'pipelinesOn'
+
+export const TAB_DEFS: { key: TabKey; label: string; icon: TabIcon; iconOn: TabIconOn }[] = [
+  { key: 'repos', label: '仓库', icon: 'repo', iconOn: 'repoOn' },
+  { key: 'stars', label: '星标', icon: 'star', iconOn: 'starOn' },
+  { key: 'hot', label: '热门', icon: 'flame', iconOn: 'flameOn' },
+  { key: 'pipelines', label: '流水线', icon: 'pipelines', iconOn: 'pipelinesOn' },
 ]
 
 export const DEFAULT_TABS: TabKey[] = ['repos', 'stars', 'hot']
