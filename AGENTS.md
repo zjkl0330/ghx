@@ -81,7 +81,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 `src/styles/theme.css` 单文件，**只用 CSS 变量**（`--bg` `--surface` `--text` `--text-dim` `--line` `--blue` `--blue-soft` `--green*` `--red*`，以及底栏专用的 `--glass-*` 与 `--tab-active-*`）。深色/浅色靠 `<html data-theme>` 切换，新组件禁止写死颜色。
 
-> 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ `backdrop-filter` 是可靠的 —— 之前判断「完全不执行」是被截图环境骗了：Playwright 默认的 headless shell 不做 blur，`blur(0px)` 与 `blur(100px)` 才会一模一样。换成有头 Chromium（`xvfb-run` + `--use-angle=swiftshader`）后 `blur(64px)` 能把正文彻底抹平。所以底栏是 0.62 底色 + 真模糊，老 WebView 由 `@supports not` 兜到 0.96；**`scripts/shots.py` 必须跑有头浏览器**，否则 README 里拍出来是块没有模糊的色板；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准。
+> 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ `backdrop-filter` 是可靠的 —— 之前判断「完全不执行」是被截图环境骗了：Playwright 默认的 headless shell 不做 blur，`blur(0px)` 与 `blur(100px)` 才会一模一样。换成有头 Chromium（`xvfb-run` + `--use-angle=swiftshader`）后 `blur(64px)` 能把正文彻底抹平。所以底栏是 0.42 底色 + `blur(34px)` 真模糊（半径再大就把内容抹成均匀灰雾，反而看不出「透」），老 WebView 由 `@supports not` 兜到 0.96；**`scripts/shots.py` 必须跑有头浏览器**，否则 README 里拍出来是块没有模糊的色板；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准；⑤ 横屏白边有两个来源，一个是内容列被 `--content-max` 卡住（现在只要 `orientation: landscape` 就铺满，别再加高度条件），另一个是 `AppTheme.NoActionBar` 在 DayNight 浅色模式下 `windowBackground` 是白的，横屏时系统导航栏那一条会露白 —— 必须在主题里显式给深色 windowBackground + navigationBarColor。
 
 ## 五个核心机制（改之前必须懂）
 
