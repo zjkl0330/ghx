@@ -5,6 +5,9 @@ import { formatBytes, compactNumber } from '../lib/format'
 import type { Repo } from '../lib/types'
 import type { RepoTab } from '../lib/routes'
 import { REPO_TABS } from '../lib/routes'
+import { archiveCandidates } from '../lib/archive'
+import { repoPageUrl } from '../lib/mirrors'
+import { openArchive, openExternal } from '../lib/update'
 import { PageHeader, PageState } from './PageHeader'
 import { IssuesPage } from './IssuesPage'
 import { PullsPage } from './PullsPage'
@@ -23,6 +26,9 @@ export function RepoPage(p: {
   tab: RepoTab
   /** 外部写完数据后加一，强制列表重新拉 */
   reloadKey: number
+  /** 当前加速站：下载 zip 与「打开仓库」都跟着它走 */
+  mirror: string
+  onToast: (msg: string) => void
   onBack: () => void
   onTab: (tab: RepoTab) => void
   onOpenIssue: (n: number) => void
@@ -43,6 +49,8 @@ export function RepoPage(p: {
   const [error, setError] = useState<string | null>(null)
   const [root, setRoot] = useState<ContentItem[]>([])
   const [rootLoading, setRootLoading] = useState(true)
+  /** 探活要挨个发 HEAD，慢的时候有两三秒，期间别让人连点 */
+  const [zipBusy, setZipBusy] = useState(false)
 
   const load = useCallback(
     async (silent = false) => {
@@ -66,6 +74,19 @@ export function RepoPage(p: {
   useEffect(() => {
     void load()
   }, [load])
+
+  async function downloadZip() {
+    if (!meta || zipBusy) return
+    setZipBusy(true)
+    try {
+      await openArchive(archiveCandidates(p.mirror, p.owner, p.repo, meta.default_branch))
+      p.onToast('已交给浏览器下载，可在通知栏看进度')
+    } catch (err) {
+      p.onToast((err as Error).message)
+    } finally {
+      setZipBusy(false)
+    }
+  }
 
   return (
     <>
@@ -124,6 +145,15 @@ export function RepoPage(p: {
               </button>
               <button className="chip" onClick={p.onOpenSettings}>
                 <Icon name="gear" size={12} /> 设置
+              </button>
+              <button className="chip" onClick={() => void downloadZip()} disabled={zipBusy}>
+                <Icon name="download" size={12} /> {zipBusy ? '准备中…' : '压缩包'}
+              </button>
+              <button
+                className="chip"
+                onClick={() => void openExternal(repoPageUrl(p.mirror, `${p.owner}/${p.repo}`))}
+              >
+                <Icon name="external" size={12} /> 打开仓库
               </button>
             </div>
           </div>

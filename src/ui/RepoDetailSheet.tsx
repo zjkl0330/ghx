@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { githubUrlAt } from '../lib/mirrors'
+import { repoPageUrl } from '../lib/mirrors'
+import { archiveCandidates, archiveFileName } from '../lib/archive'
 import type { GitHubClient } from '../lib/api'
 import type { AuditEntry, Repo, Visibility } from '../lib/types'
 import { parseTopics, topicsToInput } from '../lib/topics'
-import { openExternal } from '../lib/update'
+import { openArchive, openExternal } from '../lib/update'
 import { Icon, type IconName } from './icons'
 
 interface Props {
@@ -355,12 +356,23 @@ export function RepoDetailSheet(p: Props) {
           })}
 
           {action(
-            'open',
-            'arrowRight',
-            '在浏览器打开',
-            `经 ${p.mirror.replace(/^https?:\/\//, '')} 访问`,
+            'zip',
+            'download',
+            '下载源码 ZIP',
+            `${archiveFileName(name, p.repo.default_branch)} · 默认分支 ${p.repo.default_branch}`,
             async () => {
-              await openExternal(githubUrlAt(p.mirror, p.repo.full_name))
+              await openArchive(archiveCandidates(p.mirror, owner, name, p.repo.default_branch))
+              p.onToast('已交给浏览器下载，可在通知栏看进度')
+            },
+          )}
+
+          {action(
+            'open',
+            'external',
+            '打开仓库',
+            `在浏览器打开 ${p.repo.full_name}，经 ${p.mirror.replace(/^https?:\/\//, '')}`,
+            async () => {
+              await openExternal(repoPageUrl(p.mirror, p.repo.full_name))
             },
           )}
 

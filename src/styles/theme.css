@@ -2973,10 +2973,11 @@ h1.title {
 
 .chipwrap {
   display: flex;
+  /* 仓库页现在有八个入口，一排塞不下。原来靠横向滚动，结果最后两个
+     （压缩包 / 打开仓库）直接躺在屏幕外，看着像没做。改成换行，全摆出来 */
+  flex-wrap: wrap;
   gap: 6px;
-  overflow-x: auto;
   padding: 10px 0 2px;
-  scrollbar-width: none;
 }
 
 .chipwrap .chip {

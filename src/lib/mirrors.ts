@@ -309,6 +309,13 @@ export function releaseDownloadUrl(
   return githubUrlAt(base, `${seg(owner)}/${seg(repo)}/releases/download/${seg(tag)}/${seg(asset)}`)
 }
 
+/** 仓库主页（HTML）。和 Release 页同理：下载型镜像不翻页，得退回能翻页的站点 */
+export function repoPageUrl(base: string, fullName: string): string {
+  const def = mirrorDefFor(base)
+  const useBase = def.page ? def.base : fallbackPageBase()
+  return githubUrlAt(useBase, fullName.split('/').map(seg).join('/'))
+}
+
 /** Release 页面（HTML）。当前镜像不翻页时退回能翻页的站点，保证按钮点得开 */
 export function releasePageUrl(base: string, owner: string, repo: string, tag?: string): string {
   const def = mirrorDefFor(base)

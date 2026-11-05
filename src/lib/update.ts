@@ -10,6 +10,7 @@
  */
 
 import { DEFAULT_MIRROR, releaseDownloadUrl, releasePageUrl } from './mirrors'
+import { pickArchive } from './archive'
 
 /**
  * 当前版本。构建时由 vite 注入；在 vitest / 裸 node 下没有该全局，降级为 dev 标记，
@@ -225,3 +226,36 @@ export async function openExternal(url: string): Promise<void> {
 }
 
 export const openDownload = openExternal
+
+/**
+ * 探活用 HEAD：只要不是 4xx/5xx 就算通。
+ *
+ * 为什么要先探：zip 的候选地址有好几条（url 型反代 / 自建站 302 / 官方），
+ * 国内往往只有其中一条真的能下。把不能下的那条交给浏览器，用户看到的是
+ * 「点了没反应」或者一个 0 字节的文件，比多等两秒糟得多。
+ *
+ * Web 端不做探活：HEAD 基本都被 CORS 挡住，探了反而误判成「全不通」。
+ */
+export async function headReachable(url: string, timeoutMs = 2500): Promise<boolean> {
+  const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
+  if (!(typeof cap?.isNativePlatform === 'function' && cap.isNativePlatform())) return true
+  try {
+    const { CapacitorHttp } = await import('@capacitor/core')
+    const res = await CapacitorHttp.request({
+      url,
+      method: 'HEAD',
+      connectTimeout: timeoutMs,
+      readTimeout: timeoutMs,
+    })
+    return res.status >= 200 && res.status < 400
+  } catch {
+    return false
+  }
+}
+
+/** 挑一条能通的 zip 地址，再交给系统浏览器下载 */
+export async function openArchive(candidates: string[]): Promise<string> {
+  const url = candidates.length > 1 ? await pickArchive(candidates, (u) => headReachable(u)) : candidates[0]
+  await openExternal(url)
+  return url
+}

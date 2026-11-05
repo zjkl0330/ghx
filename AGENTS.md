@@ -65,6 +65,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `release-ext.ts` | 发行版编辑/发布草稿/删附件（**上传不在这里，见下方 CORS 坑**） |
 | `accounts.ts` | 多账号视图：`buildAccounts`（当前置顶）、`nextAccount`（轮换）、`accountLabel`、`switchMessage`、`needsAccountReset` |
 | `desc.ts` | 列表简介取数：`pickDescItems`（跳过空简介、按 full_name 去重、只取前 N 条 + 详情保底）、`descText`（译文取值，空串当没翻） |
+| `archive.ts` | 源码 zip：`archiveFileName` / `archivePath` / `codeloadViaProxy`、`archiveCandidates`（四条候选按可通性排序）、`pickArchive`（HEAD 探活取第一条通的） |
 | `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
 
 ### ui（组件）
@@ -82,6 +83,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 `src/styles/theme.css` 单文件，**只用 CSS 变量**（`--bg` `--surface` `--text` `--text-dim` `--line` `--blue` `--blue-soft` `--green*` `--red*`，以及底栏专用的 `--glass-*` 与 `--tab-active-*`）。深色/浅色靠 `<html data-theme>` 切换，新组件禁止写死颜色。
 
 > 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ `backdrop-filter` 是可靠的 —— 之前判断「完全不执行」是被截图环境骗了：Playwright 默认的 headless shell 不做 blur，`blur(0px)` 与 `blur(100px)` 才会一模一样。换成有头 Chromium（`xvfb-run` + `--use-angle=swiftshader`）后 `blur(64px)` 能把正文彻底抹平。所以底栏是 0.42 底色 + `blur(34px)` 真模糊（半径再大就把内容抹成均匀灰雾，反而看不出「透」），老 WebView 由 `@supports not` 兜到 0.96；**`scripts/shots.py` 必须跑有头浏览器**，否则 README 里拍出来是块没有模糊的色板；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准；⑤ 横屏白边有两个来源，一个是内容列被 `--content-max` 卡住（现在只要 `orientation: landscape` 就铺满，别再加高度条件），另一个是 `AppTheme.NoActionBar` 在 DayNight 浅色模式下 `windowBackground` 是白的，横屏时系统导航栏那一条会露白 —— 必须在主题里显式给深色 windowBackground + navigationBarColor。
+
+> 下 zip 的坑：`/archive/refs/heads/<branch>.zip` 只是个 302，真字节在 `codeload.github.com`；自建站是透明路径代理，把 302 交出去就断了，只有 url 型反代能整段代理。实测只有 `gh-proxy.com` 能吃 codeload（`ghfast.top` / `ghproxy.net` 403、`ghproxy.imciel.com` 404），所以候选顺序是「当前镜像 codeload → gh-proxy → 当前镜像 archive → 官方」，并且必须 HEAD 探活（Capacitor 原生 HTTP 支持 HEAD，`HttpRequestHandler` 只在非 GET/HEAD 时才挂 body）。Web 端别探活，CORS 会把 HEAD 全判死。
 
 ## 五个核心机制（改之前必须懂）
 
@@ -218,5 +221,7 @@ user / notifications / search / profile / settings / tokens / audit
 - **v0.5.5**：磨砂玻璃底栏、热门/星标简介机翻（抽 `desc.ts` 统一取数）、图标与启动图重绘、README 截图入库；顺手把「检查更新」指向 `zjkl0330/ghx`。单测 584 → 597。
 - **v0.5.6**：底栏改成「厚度优先」的磨砂（当时误判 `backdrop-filter` 不执行）；锁掉双指缩放（`viewport` + `MainActivity` 两处），系统字号不受影响。单测仍 597。
 - **v0.5.7**：底栏砂面颗粒加粗到肉眼可见，底色略降。
-- **v0.5.8**：底栏换成真模糊的液态玻璃（0.62 底色 + `blur(64px) saturate(180%)`，误判的根源是 headless 截图不渲染 blur）；图标改 22px 实心剪影；横屏取消 620px 限宽改铺满，底栏收窄到 460px 居中，消掉两侧白边；`shots.py` 固定有头浏览器并补浅色底栏特写。单测仍 597。
+- **v0.5.8**：底栏换成真模糊的液态玻璃（0.62 底色 + `blur(64px) saturate(180%)`，误判的根源是 headless 截图不渲染 blur）；图标改 22px 实心剪影；横屏取消 620px 限宽改铺满，底栏收窄到 460px 居中，消掉两侧白边；`shots.py` 固定有头浏览器并补浅色底栏特写。单测 597。
+- **v0.5.9**：底栏底色 0.42 + `blur(34px) saturate(200%)`（半径再大就只剩均匀灰雾），选中药丸同步降到 0.5；横屏媒体查询去掉高度条件，任意高度都铺满；主题里补深色 `windowBackground` / `navigationBarColor`，堵系统栏白边。单测仍 597。
+- **v0.6.0**：新增「下载源码 ZIP」（`src/lib/archive.ts` 生成四条候选 + HEAD 探活）与「打开仓库」（`repoPageUrl` 统一走能翻页的镜像）；仓库页 chip 从横向滚动改成换行；仓库页补 `mirror` / `onToast` 两个属性。新增 24 项单测，总数 621。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。

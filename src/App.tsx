@@ -1668,6 +1668,8 @@ export default function App() {
           repo={route.repo}
           tab={route.tab ?? 'code'}
           reloadKey={pageTick}
+          mirror={mirror}
+          onToast={showToast}
           onBack={popTo}
           onTab={(t) => {
             if (t === 'actions') {
