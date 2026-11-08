@@ -156,6 +156,9 @@ export interface UserProfile extends IssueUser {
   created_at: string
   html_url?: string
   type?: string
+  /** 裸用户名，不带 @；REST 里的字段名就叫 twitter_username，虽然早就改叫 X 了 */
+  twitter_username?: string | null
+  hireable?: boolean | null
 }
 
 export async function getUser(client: ApiClient, login: string, fresh = false): Promise<UserProfile> {
@@ -187,16 +190,47 @@ export async function setFollowing(client: ApiClient, login: string, following: 
 export async function userRepos(
   client: ApiClient,
   login: string,
-  opts: { page?: number; perPage?: number; fresh?: boolean } = {},
+  opts: {
+    page?: number
+    perPage?: number
+    fresh?: boolean
+    /** 服务端排序。默认最近推送；界面的「星标最多」是本地排，不用重拉 */
+    sort?: 'pushed' | 'updated' | 'created' | 'full_name'
+    /** owner 只算自己建的，all 含组织仓库与 fork */
+    type?: 'all' | 'owner' | 'member'
+  } = {},
 ): Promise<Repo[]> {
   const query = new URLSearchParams({
     per_page: String(opts.perPage ?? 30),
     page: String(opts.page ?? 1),
-    sort: 'pushed',
+    sort: opts.sort ?? 'pushed',
     direction: 'desc',
+    type: opts.type ?? 'owner',
   })
   const { data } = await client.request<Repo[]>(
     `/users/${enc(login)}/repos?${query.toString()}`,
+    {},
+    { fresh: opts.fresh },
+  )
+  return data ?? []
+}
+
+/**
+ * 关注 / 粉丝列表。这个接口只回 login 与 avatar_url，
+ * 没有昵称也没有粉丝数 —— 界面别假装有，点进去才是完整资料。
+ */
+export async function userFollowers(
+  client: ApiClient,
+  login: string,
+  kind: 'followers' | 'following',
+  opts: { page?: number; perPage?: number; fresh?: boolean } = {},
+): Promise<IssueUser[]> {
+  const query = new URLSearchParams({
+    per_page: String(opts.perPage ?? 30),
+    page: String(opts.page ?? 1),
+  })
+  const { data } = await client.request<IssueUser[]>(
+    `/users/${enc(login)}/${kind}?${query.toString()}`,
     {},
     { fresh: opts.fresh },
   )

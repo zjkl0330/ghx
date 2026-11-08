@@ -18,7 +18,7 @@ BASE = 'http://127.0.0.1:4173/'
 OWNER = 'zjkl0330'
 
 
-def repo(rid, name, desc, zh, lang, stars, pushed, *, private=False, archived=False, forks=0):
+def repo(rid, name, desc, zh, lang, stars, pushed, *, private=False, archived=False, forks=0, fork=False):
     return {
         'id': rid,
         'name': name,
@@ -32,6 +32,7 @@ def repo(rid, name, desc, zh, lang, stars, pushed, *, private=False, archived=Fa
         'language': lang,
         'stargazers_count': stars,
         'forks_count': forks,
+        'fork': fork,
         'open_issues_count': 2,
         'pushed_at': pushed,
         'updated_at': pushed,
@@ -69,6 +70,8 @@ REPOS = [
          '博客的 Markdown 源文件，构建步骤在 Actions 里跑。', None, 2, '2026-10-12T20:14:00Z'),
     repo(13, 'obsidian-vault', 'Notes vault plus a very small sync script.',
          '笔记库，外加一个很小的同步脚本。', None, 0, '2026-10-08T07:41:00Z', private=True, archived=True),
+    repo(14, 'oh-my-zsh', 'Forked to add a Windows path shim; upstream never merged it.',
+         '顺手加了一条 Windows 路径兼容，上游一直没合。', 'Shell', 0, '2026-09-18T05:10:00Z', fork=True),
 ]
 
 STARS = [
@@ -142,13 +145,23 @@ def public(items):
 def main():
     os.makedirs(OUT, exist_ok=True)
     user = {
-        'login': OWNER, 'id': 1, 'name': '指尖可乐',
+        'login': OWNER, 'id': 1, 'name': '指尖可乐', 'type': 'User',
         'avatar_url': 'https://avatars.githubusercontent.com/u/1?v=4',
         'html_url': f'https://github.com/{OWNER}',
         'public_repos': 10, 'public_gists': 0, 'followers': 128, 'following': 12,
         'bio': '白天上学，晚上折腾自托管。',
         'company': None, 'location': '江西 吉安', 'blog': 'zjkl.dpdns.org',
+        'twitter_username': 'zjkl0330', 'created_at': '2025-03-01T08:00:00Z',
     }
+
+    def stub_user(login):
+        return {
+            'login': login, 'id': 2, 'name': None, 'type': 'User',
+            'avatar_url': f'https://avatars.githubusercontent.com/u/{len(login) + 100}?v=4',
+            'public_repos': 3, 'followers': 0, 'following': 0,
+            'bio': None, 'company': None, 'location': None, 'blog': None,
+            'created_at': '2024-06-01T08:00:00Z',
+        }
 
     def handle(route):
         url = route.request.url
@@ -168,6 +181,22 @@ def main():
         elif path == '/search/repositories':
             items = public(HOT) if 'created' in url else public(STARS)
             body = {'total_count': len(items), 'incomplete_results': False, 'items': items}
+        elif path.startswith('/users/'):
+            # /users/{login}、/users/{login}/repos、/users/{login}/{followers,following}
+            segs = path.strip('/').split('/')
+            login = segs[1] if len(segs) > 1 else OWNER
+            tail = segs[2] if len(segs) > 2 else ''
+            if tail == '':
+                body = user if login == OWNER else stub_user(login)
+            elif tail == 'repos':
+                body = public(REPOS) if login == OWNER else public(REPOS[:3])
+            elif tail in ('followers', 'following'):
+                body = [
+                    {'login': n, 'avatar_url': f'https://avatars.githubusercontent.com/u/{len(n) + 40}?v=4'}
+                    for n in ('octocat', 'torvalds', 'ruanyf', 'yyx990803', 'antfu')
+                ]
+            else:
+                body = {}
         elif path.startswith('/repos/'):
             full = path[len('/repos/'):]
             body = next((r for r in public(REPOS + STARS + HOT) if r['full_name'] == full), {})
@@ -274,6 +303,13 @@ def main():
         pg.click('text=设置')
         pg.wait_for_timeout(800)
         pg.screenshot(path=f'{OUT}/06-settings.png')
+
+        # 用户主页：从「我的」里点进去，顺便验证头像与仓库列表不再撑爆布局
+        pg.click('.topbar .icon-btn')
+        pg.wait_for_timeout(600)
+        pg.click('text=我的主页')
+        pg.wait_for_timeout(2500)
+        pg.screenshot(path=f'{OUT}/10-user.png')
 
         b.close()
     print('shots ok')

@@ -117,10 +117,20 @@ export function searchIssues(
   )
 }
 
+/**
+ * 用户搜索的关键词清洗。
+ * 大家习惯直接写 `@zjkl0330`，但 `/search/users` 把 @ 当普通字符，
+ * 带上去经常一个结果都没有。只在这里去前导 @，不影响仓库搜索。
+ */
+export function normalizeUserTerm(term: string): string {
+  return term.trim().replace(/^@+/, '').trim()
+}
+
 export function searchUsers(client: ApiClient, term: string, opts: { page?: number; fresh?: boolean } = {}) {
+  const clean = normalizeUserTerm(term)
   return run<UserHit>(
     client,
-    `/search/users?${q(term, '', opts.page ?? 1, 30)}`,
+    `/search/users?${q(clean, '', opts.page ?? 1, 30)}`,
     opts.fresh ?? false,
   )
 }

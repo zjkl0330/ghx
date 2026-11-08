@@ -123,6 +123,8 @@ export function PullPage(p: {
   login: string | null
   onBack: () => void
   onToast: (s: string) => void
+  /** 点作者 / 审核人看主页 */
+  onOpenUser?: (login: string) => void
 }) {
   const [pr, setPr] = useState<PullRequest | null>(null)
   const [files, setFiles] = useState<PullFile[]>([])
@@ -257,7 +259,14 @@ export function PullPage(p: {
                   {pullStateText(pr)}
                 </span>
                 <span>
-                  {pr.user?.login ?? '未知'} · {relTime(pr.updated_at)}
+                  {pr.user?.login && p.onOpenUser ? (
+                    <button className="user-link" onClick={() => p.onOpenUser?.(pr.user!.login)}>
+                      {pr.user.login}
+                    </button>
+                  ) : (
+                    (pr.user?.login ?? '未知')
+                  )}{' '}
+                  · {relTime(pr.updated_at)}
                 </span>
               </div>
               <div className="branchline mono">
@@ -310,7 +319,13 @@ export function PullPage(p: {
                     {reviews.map((r) => (
                       <div className="comment" key={r.id}>
                         <div className="comment-head">
-                          <b>{r.user?.login ?? '未知'}</b>
+                          {r.user?.login && p.onOpenUser ? (
+                            <button className="user-link" onClick={() => p.onOpenUser?.(r.user!.login)}>
+                              <b>{r.user.login}</b>
+                            </button>
+                          ) : (
+                            <b>{r.user?.login ?? '未知'}</b>
+                          )}
                           <span className={`pill ${r.state === 'APPROVED' ? 'pill-open' : r.state === 'CHANGES_REQUESTED' ? 'pill-closed' : ''}`}>
                             {r.state === 'APPROVED' ? '已批准' : r.state === 'CHANGES_REQUESTED' ? '要求修改' : '已评论'}
                           </span>

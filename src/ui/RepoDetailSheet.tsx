@@ -25,6 +25,8 @@ interface Props {
   onOpenWorkflows: () => void
   onOpenReleases: () => void
   onOpenForks: () => void
+  /** 点头像/账号名进入这个 owner 的主页；组织同样适用 */
+  onOpenOwner?: () => void
 }
 
 function relTime(iso: string): string {
@@ -167,7 +169,14 @@ export function RepoDetailSheet(p: Props) {
           <div style={{ minWidth: 0, flex: 1 }}>
             <h3 style={{ wordBreak: 'break-all' }}>{name}</h3>
             <div className="sheet-sub">
-              {owner} · {p.repo.private ? '私有' : '公开'}
+              {p.onOpenOwner ? (
+                <button className="owner-link" onClick={p.onOpenOwner}>
+                  {owner}
+                </button>
+              ) : (
+                owner
+              )}{' '}
+              · {p.repo.private ? '私有' : '公开'}
               {p.repo.archived ? ' · 已归档' : ''} · 默认分支 {p.repo.default_branch}
             </div>
           </div>

@@ -44,6 +44,8 @@ export function RepoPage(p: {
   onOpenSettings: () => void
   onNewFile: () => void
   onCompose: () => void
+  /** 点 owner 进主页；组织同样适用 */
+  onOpenOwner?: () => void
 }) {
   const [meta, setMeta] = useState<Repo | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -94,7 +96,14 @@ export function RepoPage(p: {
         title={p.repo}
         sub={
           <span>
-            {p.owner} · {meta ? (meta.private ? '私有' : '公开') : '…'}
+            {p.onOpenOwner ? (
+              <button className="owner-link" onClick={p.onOpenOwner}>
+                {p.owner}
+              </button>
+            ) : (
+              p.owner
+            )}{' '}
+            · {meta ? (meta.private ? '私有' : '公开') : '…'}
             {meta ? ` · ${compactNumber(meta.stargazers_count)} 星` : ''}
           </span>
         }

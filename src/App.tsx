@@ -1718,6 +1718,7 @@ export default function App() {
           }}
           onOpenWorkflows={() => openPipelines(routeRepo)}
           onOpenSettings={() => pushTo({ kind: 'admin', owner: route.owner, repo: route.repo })}
+          onOpenOwner={() => pushTo({ kind: 'user', login: route.owner })}
           onCompose={() =>
             void openCompose(
               route.tab === 'pulls' ? 'pull' : 'issue',
@@ -1753,6 +1754,7 @@ export default function App() {
           number={route.number}
           onBack={popTo}
           onToast={showToast}
+          onOpenUser={(login) => pushTo({ kind: 'user', login })}
         />
       )}
 
@@ -1765,6 +1767,7 @@ export default function App() {
           login={activeRecord?.login ?? null}
           onBack={popTo}
           onToast={showToast}
+          onOpenUser={(login) => pushTo({ kind: 'user', login })}
         />
       )}
 
@@ -1876,8 +1879,10 @@ export default function App() {
           client={client}
           login={route.login}
           selfLogin={activeRecord?.login ?? null}
+          mirror={mirror}
           onBack={popTo}
           onToast={showToast}
+          onOpenUser={(login) => pushTo({ kind: 'user', login })}
           onOpenRepo={(full) => {
             const [owner, repo] = full.split('/')
             if (owner && repo) pushTo({ kind: 'repo', owner, repo, tab: 'code' })
@@ -2024,6 +2029,12 @@ export default function App() {
           onOpenReadme={() => {
             setSubReturn('detail')
             setSheet('readme')
+          }}
+          onOpenOwner={() => {
+            // 搜索结果里的仓库对象 owner 未必归一化过，从 full_name 拆更稳
+            const login = detailRepo.owner || detailRepo.full_name.split('/')[0]
+            setSheet('none')
+            pushTo({ kind: 'user', login })
           }}
         />
       )}

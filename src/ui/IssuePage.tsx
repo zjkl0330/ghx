@@ -34,6 +34,8 @@ export function IssuePage(p: {
   number: number
   onBack: () => void
   onToast: (s: string) => void
+  /** 点作者看主页 */
+  onOpenUser?: (login: string) => void
 }) {
   const [issue, setIssue] = useState<Issue | null>(null)
   const [comments, setComments] = useState<IssueComment[]>([])
@@ -201,7 +203,14 @@ export function IssuePage(p: {
               <div className="detail-meta">
                 <span className={`pill ${open ? 'pill-open' : 'pill-closed'}`}>{open ? '开启中' : '已关闭'}</span>
                 <span>
-                  {issue.user?.login ?? '未知'} 创建于 {shortDate(issue.created_at)}
+                  {issue.user?.login && p.onOpenUser ? (
+                    <button className="user-link" onClick={() => p.onOpenUser?.(issue.user!.login)}>
+                      {issue.user.login}
+                    </button>
+                  ) : (
+                    (issue.user?.login ?? '未知')
+                  )}{' '}
+                  创建于 {shortDate(issue.created_at)}
                 </span>
                 {issue.locked && <span className="pill">已锁定</span>}
               </div>
@@ -336,7 +345,13 @@ export function IssuePage(p: {
             {comments.map((c) => (
               <div className="comment" key={c.id}>
                 <div className="comment-head">
-                  <b>{c.user?.login ?? '未知'}</b>
+                  {c.user?.login && p.onOpenUser ? (
+                    <button className="user-link" onClick={() => p.onOpenUser?.(c.user!.login)}>
+                      <b>{c.user.login}</b>
+                    </button>
+                  ) : (
+                    <b>{c.user?.login ?? '未知'}</b>
+                  )}
                   <span>{relTime(c.created_at)}</span>
                 </div>
                 <div className="comment-body">

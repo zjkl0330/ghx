@@ -37,6 +37,8 @@ export interface Repo {
   language: string | null
   stargazers_count: number
   forks_count: number
+  /** 是否是 fork。用户主页要能只看源仓库；普通列表接口也会带上 */
+  fork?: boolean
   pushed_at: string
   updated_at?: string
   /** 搜索接口会返回，普通列表不一定有；热门页用它算日均 star */

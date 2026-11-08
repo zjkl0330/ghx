@@ -100,7 +100,7 @@ export function ProfilePage(p: Props) {
               <b>通知</b>
               <i>{p.unreadCount > 0 ? `${p.unreadCount} 条未读` : '收件箱'}</i>
             </span>
-            {p.unreadCount > 0 && <span className="badge">{p.unreadCount}</span>}
+            {p.unreadCount > 0 && <span className="badge count">{p.unreadCount}</span>}
             <Icon name="chevron" size={13} className="linkrow-arrow" />
           </button>
           <button className="linkrow" onClick={p.onOpenSearch}>
