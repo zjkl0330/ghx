@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 自适应图标底层：135° 深色渐变，和 assets/icon/ghx-tile.svg 一致。
+<!-- 自适应图标底层：135° 白色渐变，和 assets/icon/ghx-tile.svg 一致。
      系统会把这一层裁成圆形/方形/水滴，所以不能带圆角。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
     <gradient
         android:angle="315"
-        android:startColor="#1C2736"
-        android:centerColor="#111823"
-        android:endColor="#080B10"
+        android:startColor="#FFFFFF"
+        android:centerColor="#FBFCFD"
+        android:endColor="#EEF1F5"
         android:type="linear" />
 </shape>

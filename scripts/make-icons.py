@@ -82,7 +82,8 @@ def main() -> None:
     render('ghx-mark.svg', 1400, mark_src)
 
     tile = Image.open(tile_src).convert('RGBA')
-    mark = trim(Image.open(mark_src).convert('RGBA'), 560)  # 钥匙占底板 55%
+    # 标记占底板 58%：白底会「吃」掉一圈视觉重量，比深底时再放大一点才压得住
+    mark = trim(Image.open(mark_src).convert('RGBA'), 600)
 
     full = paste_center(tile, mark)
 
@@ -95,11 +96,11 @@ def main() -> None:
     # 自适应图标前景：108dp 画布，内容收在中间 66dp 安全区内
     for dpi, px in {'mdpi': 108, 'hdpi': 162, 'xhdpi': 216, 'xxhdpi': 324, 'xxxhdpi': 432}.items():
         fg = Image.new('RGBA', (px, px), (0, 0, 0, 0))
-        m = trim(Image.open(mark_src).convert('RGBA'), int(px * 0.56))
+        m = trim(Image.open(mark_src).convert('RGBA'), int(px * 0.58))
         fg.alpha_composite(m, ((px - m.width) // 2, (px - m.height) // 2))
         fg.save(os.path.join(RES, f'mipmap-{dpi}/ic_launcher_foreground.png'))
 
-    # 启动图：深色底 + 居中标记 + 字标
+    # 启动图：白底 + 居中标记 + 字标（图标反色后启动屏必须跟着变白）
     splash_sizes = {
         'drawable/splash.png': (480, 320),
         'drawable-land-mdpi/splash.png': (480, 320),
@@ -114,13 +115,13 @@ def main() -> None:
         'drawable-port-xxxhdpi/splash.png': (1280, 1920),
     }
     for rel, (w, h) in splash_sizes.items():
-        base = Image.new('RGBA', (w, h), (13, 17, 23, 255))
+        base = Image.new('RGBA', (w, h), (255, 255, 255, 255))
         d = ImageDraw.Draw(base)
-        # 顶部一抹绿光，和图标同源
+        # 顶部一抹极淡的冷灰，和图标底板的渐变同源（绿光已随反色一起去掉）
         glow = Image.new('RGBA', (w, h), (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
         r = int(min(w, h) * 0.55)
-        gd.ellipse((w // 2 - r, -r, w // 2 + r, r), fill=(94, 224, 138, 26))
+        gd.ellipse((w // 2 - r, -r, w // 2 + r, r), fill=(13, 17, 23, 10))
         base.alpha_composite(glow.filter(ImageFilter.GaussianBlur(r // 3)))
 
         m = trim(Image.open(mark_src).convert('RGBA'), int(min(w, h) * 0.30))
@@ -138,7 +139,7 @@ def main() -> None:
         x = (w - width) / 2
         ty = cy + m.height // 2 + int(min(w, h) * 0.06)
         for ch in text:
-            d.text((x, ty), ch, font=font, fill=(230, 237, 243, 235))
+            d.text((x, ty), ch, font=font, fill=(13, 17, 23, 235))
             x += d.textlength(ch, font=font) + tracking
         base.convert('RGB').save(os.path.join(RES, rel))
 

@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 自适应图标底层：和 assets/icon/ghx-tile.svg 的深色渐变的底色对齐 -->
-    <color name="ic_launcher_background">#111823</color>
-    <!-- 启动窗口背景 -->
-    <color name="splash_background">#0D1117</color>
+    <!-- 自适应图标底层：和 assets/icon/ghx-tile.svg 的白色渐变对齐 -->
+    <color name="ic_launcher_background">#FBFCFD</color>
+    <!-- 启动窗口背景：图标反色成白底深猫之后，启动屏也得跟着变白，
+         否则深色圆盘压在深色底上等于看不见 -->
+    <color name="splash_background">#FFFFFF</color>
+    <!-- App 窗口底色：必须单独留一个深色。splash_background 变白之后，
+         横屏时 WebView 盖不到的导航栏安全区会重新露出白条 -->
+    <color name="window_background">#0D1117</color>
 </resources>

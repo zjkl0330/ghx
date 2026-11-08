@@ -82,6 +82,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 `src/styles/theme.css` 单文件，**只用 CSS 变量**（`--bg` `--surface` `--text` `--text-dim` `--line` `--blue` `--blue-soft` `--green*` `--red*`，以及底栏专用的 `--glass-*` 与 `--tab-active-*`）。深色/浅色靠 `<html data-theme>` 切换，新组件禁止写死颜色。
 
+> 图标的坑：① GitHub mark 是「实心圆盘 − 猫」的复合路径，直接填色得到的是「深圆盘 + 白猫」；想要「黑猫剪影」必须反相负空间（遮罩里铺黑、画白圆、再用 path 挖掉 F，剩下圆盘 − F = 猫），但反相后猫底会被原图的圆裁成平口，小尺寸下退化成黑块，所以最终选的是标准反色（深圆盘 + 白猫）。② SVG 渐变默认 `objectBoundingBox`，遇到细长/零面积包围盒会退化成纯色（细线直接消失），一律写 `gradientUnits="userSpaceOnUse"`。③ 图标改白底后，`splash_background` 必须一起改白，否则深色圆盘压在深色启动屏上不可见；而它同时被 `windowBackground` / 系统栏色引用，直接改白会让横屏白边复活 —— 拆出独立的 `window_background` 才是正解。
+
 > 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ `backdrop-filter` 是可靠的 —— 之前判断「完全不执行」是被截图环境骗了：Playwright 默认的 headless shell 不做 blur，`blur(0px)` 与 `blur(100px)` 才会一模一样。换成有头 Chromium（`xvfb-run` + `--use-angle=swiftshader`）后 `blur(64px)` 能把正文彻底抹平。所以底栏是 0.42 底色 + `blur(34px)` 真模糊（半径再大就把内容抹成均匀灰雾，反而看不出「透」），老 WebView 由 `@supports not` 兜到 0.96；**`scripts/shots.py` 必须跑有头浏览器**，否则 README 里拍出来是块没有模糊的色板；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准；⑤ 横屏白边有两个来源，一个是内容列被 `--content-max` 卡住（现在只要 `orientation: landscape` 就铺满，别再加高度条件），另一个是 `AppTheme.NoActionBar` 在 DayNight 浅色模式下 `windowBackground` 是白的，横屏时系统导航栏那一条会露白 —— 必须在主题里显式给深色 windowBackground + navigationBarColor。
 
 > 下 zip 的坑：`/archive/refs/heads/<branch>.zip` 只是个 302，真字节在 `codeload.github.com`；自建站是透明路径代理，把 302 交出去就断了，只有 url 型反代能整段代理。实测只有 `gh-proxy.com` 能吃 codeload（`ghfast.top` / `ghproxy.net` 403、`ghproxy.imciel.com` 404），所以候选顺序是「当前镜像 codeload → gh-proxy → 当前镜像 archive → 官方」，并且必须 HEAD 探活（Capacitor 原生 HTTP 支持 HEAD，`HttpRequestHandler` 只在非 GET/HEAD 时才挂 body）。Web 端别探活，CORS 会把 HEAD 全判死。
@@ -224,4 +226,5 @@ user / notifications / search / profile / settings / tokens / audit
 - **v0.5.8**：底栏换成真模糊的液态玻璃（0.62 底色 + `blur(64px) saturate(180%)`，误判的根源是 headless 截图不渲染 blur）；图标改 22px 实心剪影；横屏取消 620px 限宽改铺满，底栏收窄到 460px 居中，消掉两侧白边；`shots.py` 固定有头浏览器并补浅色底栏特写。单测 597。
 - **v0.5.9**：底栏底色 0.42 + `blur(34px) saturate(200%)`（半径再大就只剩均匀灰雾），选中药丸同步降到 0.5；横屏媒体查询去掉高度条件，任意高度都铺满；主题里补深色 `windowBackground` / `navigationBarColor`，堵系统栏白边。单测仍 597。
 - **v0.6.0**：新增「下载源码 ZIP」（`src/lib/archive.ts` 生成四条候选 + HEAD 探活）与「打开仓库」（`repoPageUrl` 统一走能翻页的镜像）；仓库页 chip 从横向滚动改成换行；仓库页补 `mirror` / `onToast` 两个属性。新增 24 项单测，总数 621。
+- **v0.6.1**：应用图标换成 GitHub 官方 mark 反色（白底 + 深色圆盘 + 白猫，标记占底板 58%）；启动图与 `splash_background` 同步改白，Android 12+ 的 `windowSplashScreenBackground` 一起；新增 `window_background`（#0D1117）承接 `windowBackground` / 系统栏色，避免白底启动屏把横屏白边带回来。单测仍 621。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
