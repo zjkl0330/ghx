@@ -66,6 +66,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `accounts.ts` | 多账号视图：`buildAccounts`（当前置顶）、`nextAccount`（轮换）、`accountLabel`、`switchMessage`、`needsAccountReset` |
 | `desc.ts` | 列表简介取数：`pickDescItems`（跳过空简介、按 full_name 去重、只取前 N 条 + 详情保底）、`descText`（译文取值，空串当没翻） |
 | `archive.ts` | 源码 zip：`archiveFileName` / `archivePath` / `codeloadViaProxy`、`archiveCandidates`（四条候选按可通性排序）、`pickArchive`（HEAD 探活取第一条通的） |
+| `immersive.ts` | 沉浸式全屏的 JS 侧：`setImmersive(on)` 调自写的 `Immersive` 原生插件（Web 端静默跳过） |
 | `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
 
 ### ui（组件）
@@ -84,7 +85,11 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 > 图标的坑：① GitHub mark 是「实心圆盘 − 猫」的复合路径，直接填色得到的是「深圆盘 + 白猫」；想要「黑猫剪影」必须反相负空间（遮罩里铺黑、画白圆、再用 path 挖掉 F，剩下圆盘 − F = 猫），但反相后猫底会被原图的圆裁成平口，小尺寸下退化成黑块，所以最终选的是标准反色（深圆盘 + 白猫）。② SVG 渐变默认 `objectBoundingBox`，遇到细长/零面积包围盒会退化成纯色（细线直接消失），一律写 `gradientUnits="userSpaceOnUse"`。③ 图标改白底后，`splash_background` 必须一起改白，否则深色圆盘压在深色启动屏上不可见；而它同时被 `windowBackground` / 系统栏色引用，直接改白会让横屏白边复活 —— 拆出独立的 `window_background` 才是正解。
 
-> 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ `backdrop-filter` 是可靠的 —— 之前判断「完全不执行」是被截图环境骗了：Playwright 默认的 headless shell 不做 blur，`blur(0px)` 与 `blur(100px)` 才会一模一样。换成有头 Chromium（`xvfb-run` + `--use-angle=swiftshader`）后 `blur(64px)` 能把正文彻底抹平。所以底栏是 0.42 底色 + `blur(34px)` 真模糊（半径再大就把内容抹成均匀灰雾，反而看不出「透」），老 WebView 由 `@supports not` 兜到 0.96；**`scripts/shots.py` 必须跑有头浏览器**，否则 README 里拍出来是块没有模糊的色板；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准；⑤ 横屏白边有两个来源，一个是内容列被 `--content-max` 卡住（现在只要 `orientation: landscape` 就铺满，别再加高度条件），另一个是 `AppTheme.NoActionBar` 在 DayNight 浅色模式下 `windowBackground` 是白的，横屏时系统导航栏那一条会露白 —— 必须在主题里显式给深色 windowBackground + navigationBarColor。
+> 玻璃底栏的坑：① 选中态药丸是 `position: absolute` 的伪元素，**必须 `z-index: -1`**，否则它会盖住图标与文字；② 底栏 `position: fixed` 后，`.app.with-tabs > .page` 的 `padding-bottom` 是唯一让最后一行不被压住的东西；③ `backdrop-filter` 是可靠的 —— 之前判断「完全不执行」是被截图环境骗了：Playwright 默认的 headless shell 不做 blur，`blur(0px)` 与 `blur(100px)` 才会一模一样。换成有头 Chromium（`xvfb-run` + `--use-angle=swiftshader`）后 `blur(64px)` 能把正文彻底抹平。所以底栏必须有真模糊，老 WebView 由 `@supports not` 兜到 0.96；**`scripts/shots.py` 必须跑有头浏览器**，否则 README 里拍出来是块没有模糊的色板；④ 居中别用 `left:50% + translateX(-50%)`，`transform` 会让 backdrop 采样进一步失准；⑤ 横屏白边有两个来源，一个是内容列被 `--content-max` 卡住（现在只要 `orientation: landscape` 就铺满，别再加高度条件），另一个是 `AppTheme.NoActionBar` 在 DayNight 浅色模式下 `windowBackground` 是白的，横屏时系统导航栏那一条会露白 —— 必须在主题里显式给深色 windowBackground + navigationBarColor。
+
+> **玻璃为什么看起来像实心板（v0.6.2 量出来的，别再靠调 alpha 试）**：① 旧 tint `rgba(22,27,34,.42)` 叠在 `#0D1117` 上是 `rgb(17,21,28)`，对比度 **1.03:1**；浅色白 tint 叠白底更彻底，**1.00:1** —— 填充色和页面底色其实是一个颜色，看得见它全靠边框 + 顶边高光 + 大投影，而那三样都是「实体卡片」的线索。② `blur(<length>)` 的参数是高斯核**标准差**，`blur(34px)` 的 3σ≈102px，胶囊只有 58px 高，一半以上采样能量来自元素外，背后内容被平均成色斑 —— 透不出形状，眼睛就判定成不透明。③ `brightness(1.02)` 对 `(13,17,23)` 取整后完全不变，是空操作；浅色下还会被 clip。④ 解法不是降 alpha（降到 0.1 只是「没有板」），而是：tint 0.26 + `blur(12px)` + `saturate(185%)`，加 1px `conic-gradient` 镜面环（`border: 1px solid transparent` + 双层 `background`，padding-box 铺色、border-box 露环），可读性交给玻璃**背后**的 `.glass-backdrop` 压暗层 —— 这正是 HIG 对 clear 变体的建议：不透明度加在玻璃背后，不是加在玻璃上。⑤ `isolation: isolate` **不在** backdrop root 的触发条件里（Filter Effects 2 只列 filter / opacity<1 / mask / clip-path / backdrop-filter / mix-blend-mode / 对应 will-change），别再把它写成「会切断模糊」；`.tabbar button.on::before` 里的 `backdrop-filter` 才是真空操作 —— 父级已建 backdrop root，子元素采样到的是父级填充。⑥ 老 WebView 降级分支要同时补回实色 `border-color`，否则 transparent 边框会露出窗口底色。
+
+> **全屏（edge-to-edge）的坑**：① 别把 Capacitor 的 `adjustMarginsForEdgeToEdge` 设成 `auto`/`force` —— 它会直接给 WebView 加四边 margin 并 `CONSUMED`，全屏立刻失效；保持 `disable`，由 `MainActivity` 自己 `setDecorFitsSystemWindows(false)`。② `env(safe-area-inset-*)` 在 Android WebView 多数机型恒为 0，必须把 `WindowInsetsCompat` 量出来的值注入成 `--inset-*`，CSS 里用 `max(env(...), var(--inset-*))` 取大值（不能相加，否则重复让位）。③ `setDecorFitsSystemWindows(false)` 之后 `adjustResize` 不再缩窗口，输入法只报 `ime` insets —— 页面要自己 `padding-bottom: var(--inset-ime)`，底栏与压暗层同时淡出，否则键盘会盖住输入框。④ `StatusBar.setOverlaysWebView()` 只动状态栏、用的全是 API 30 就废弃的 `setSystemUiVisibility`，铺不到导航栏；`StatusBar.hide()` 也不设 `systemBarsBehavior`。要沉浸式全屏就用自写的 `ImmersivePlugin`（`WindowInsetsControllerCompat.hide(systemBars)` + `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`）。⑤ 自定义插件必须在 `super.onCreate()` **之前** `registerPlugin()`，Bridge 在 `super` 里就建好了。
 
 > 下 zip 的坑：`/archive/refs/heads/<branch>.zip` 只是个 302，真字节在 `codeload.github.com`；自建站是透明路径代理，把 302 交出去就断了，只有 url 型反代能整段代理。实测只有 `gh-proxy.com` 能吃 codeload（`ghfast.top` / `ghproxy.net` 403、`ghproxy.imciel.com` 404），所以候选顺序是「当前镜像 codeload → gh-proxy → 当前镜像 archive → 官方」，并且必须 HEAD 探活（Capacitor 原生 HTTP 支持 HEAD，`HttpRequestHandler` 只在非 GET/HEAD 时才挂 body）。Web 端别探活，CORS 会把 HEAD 全判死。
 
@@ -197,6 +202,10 @@ user / notifications / search / profile / settings / tokens / audit
 | 新增令牌后直接 `activate` | 多账号时会把正在用的账号踢掉；只在「当前没有账号」时自动激活 |
 | 大屏直接铺满 | `.app` 用 `--content-max` 居中（620 / 760 两档），弹层同步；否则平板上拉成一条横幅 |
 | 锁 `user-scalable=no` | 阻碍系统字号放大，已放开到 5 倍 |
+| 全屏后键盘盖住输入框 | `decorFitsSystemWindows(false)` 让 `adjustResize` 失效，自己吃 `ime` insets 写 `--inset-ime` |
+| 用 `StatusBar.hide()` 做沉浸式 | 只藏状态栏、不设 behavior；改用 `ImmersivePlugin`（`WindowInsetsControllerCompat`） |
+| 直接用 `env(safe-area-inset-*)` 让位 | Android WebView 多数恒为 0，必须原生注入 `--inset-*` 再 `max()` |
+| 把 `adjustMarginsForEdgeToEdge` 设成 auto | 会给 WebView 加四边 margin，全屏失效；保持 `disable` |
 
 ## 版本与发布
 
@@ -227,4 +236,5 @@ user / notifications / search / profile / settings / tokens / audit
 - **v0.5.9**：底栏底色 0.42 + `blur(34px) saturate(200%)`（半径再大就只剩均匀灰雾），选中药丸同步降到 0.5；横屏媒体查询去掉高度条件，任意高度都铺满；主题里补深色 `windowBackground` / `navigationBarColor`，堵系统栏白边。单测仍 597。
 - **v0.6.0**：新增「下载源码 ZIP」（`src/lib/archive.ts` 生成四条候选 + HEAD 探活）与「打开仓库」（`repoPageUrl` 统一走能翻页的镜像）；仓库页 chip 从横向滚动改成换行；仓库页补 `mirror` / `onToast` 两个属性。新增 24 项单测，总数 621。
 - **v0.6.1**：应用图标换成 GitHub 官方 mark 反色（白底 + 深色圆盘 + 白猫，标记占底板 58%）；启动图与 `splash_background` 同步改白，Android 12+ 的 `windowSplashScreenBackground` 一起；新增 `window_background`（#0D1117）承接 `windowBackground` / 系统栏色，避免白底启动屏把横屏白边带回来。单测仍 621。
+- **v0.6.2**：全屏铺满（`setDecorFitsSystemWindows(false)` + 原生 insets 注入成 `--inset-*`，`adjustMarginsForEdgeToEdge: 'disable'`）+ 沉浸式全屏开关（自写 `ImmersivePlugin`，`WindowInsetsControllerCompat`）；键盘改用 `ime` insets 让位、底栏淡出；底栏玻璃按「对比度 1.03:1 / σ 超过胶囊高度 / brightness 空操作」三个实测结论重做（tint 0.26 + `blur(12px)` + conic 镜面环 + 背后 `.glass-backdrop` 压暗层）。设计依据见 `docs/liquid-glass-and-edge-to-edge.md`。新增 2 项单测，总数 623。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。

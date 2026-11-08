@@ -44,14 +44,36 @@
   --shadow: rgba(0, 0, 0, 0.62);
 
   /* 液体玻璃底栏：底色 / 描边 / 高光 / 选中药丸
-     底色只留 0.56，剩下的靠 backdrop-filter 真模糊挡住正文 —— 实测 blur 是执行的，
-     之前「不执行」的结论是底色 0.9 压太厚看不出来。 */
-  --glass-bg: rgba(22, 27, 34, 0.42);
-  --glass-line: rgba(255, 255, 255, 0.2);
-  --glass-sheen: rgba(255, 255, 255, 0.3);
-  /* saturate 拉高是液态玻璃的关键：背后的色块被糊开时会自己带上颜色，
-     brightness 略提，让糊出来的那层雾偏亮，不是一块压暗的灰板 */
-  --glass-filter: blur(34px) saturate(200%) brightness(1.02);
+   *
+   * 这一版是拿真截图逐档对照、再把合成色算出来的，别再凭感觉调：
+   * 1. 旧的 rgba(22,27,34,.42) 叠在 #0D1117 上得到 rgb(17,21,28)，对比度 1.03:1 ——
+   *    和页面底色是同一个颜色，看得见它全靠边框和投影，那正好是「实体卡片」的线索；
+   * 2. blur(34px) 按规范是高斯核的标准差，3σ≈102px，而胶囊只有 58px 高，
+   *    一半以上采样能量来自元素外面，背后内容被抹成均匀色斑，透不出形状等于不透明；
+   * 3. brightness(1.02) 对 (13,17,23) 取整后完全不变，是空操作。
+   *
+   * 所以：tint 压到 0.30（浅色 0.60 且带冷调，纯白叠白底等于没有），
+   * 半径降到 14px，saturate 只用来保色，存在感交给 1px 镜面环。
+   */
+  --glass-bg: rgba(24, 29, 36, 0.26);
+  --glass-line: rgba(255, 255, 255, 0.16);
+  --glass-sheen: rgba(255, 255, 255, 0.36);
+  --glass-filter: blur(12px) saturate(185%);
+  /*
+   * 1px 镜面环：玻璃的边会反光，塑料板的边不会 —— 这是两者最省成本的分界。
+   * 亮部固定在左上（320deg–60deg）与右下（180deg 附近），方向和投影一致。
+   * 首尾必须同色，否则 360deg 接回 0deg 会留一道硬接缝。
+   */
+  --glass-rim: conic-gradient(
+    from 205deg at 50% 50%,
+    rgba(255, 255, 255, 0.55) 0deg,
+    rgba(255, 255, 255, 0.07) 60deg,
+    rgba(255, 255, 255, 0.02) 120deg,
+    rgba(255, 255, 255, 0.28) 180deg,
+    rgba(255, 255, 255, 0.03) 250deg,
+    rgba(255, 255, 255, 0.4) 320deg,
+    rgba(255, 255, 255, 0.55) 360deg
+  );
   --glass-active-top: rgba(47, 129, 247, 0.42);
   --glass-active-bottom: rgba(47, 129, 247, 0.24);
   --glass-active-line: rgba(130, 185, 255, 0.42);
@@ -62,8 +84,16 @@
   --tab-active-base: rgba(11, 17, 27, 0.5);
 
   --radius: 10px;
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /*
+   * 系统栏内边距。两个来源取最大值：
+   * - env(safe-area-inset-*)：iOS 与部分 Chromium 版本会给；
+   * - --inset-*：Android 端由 MainActivity 量出来写进 :root（见 pushInsets）。
+   * 用 max 而不是相加 —— 两边都给了值也不会重复让位，顶部不会多出一条空白。
+   */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--inset-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--inset-left, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--inset-right, 0px));
 }
 
 :root[data-theme='light'] {
@@ -107,11 +137,24 @@
   --shadow: rgba(31, 35, 40, 0.18);
 
   /* 浅色下玻璃要更透、更白：参考的是 iOS 那种奶白玻璃，
-     背后正文被模糊成一层灰雾，还留着走向，但读不出字 */
-  --glass-bg: rgba(255, 255, 255, 0.46);
-  --glass-line: rgba(255, 255, 255, 0.78);
-  --glass-sheen: rgba(255, 255, 255, 0.98);
-  --glass-filter: blur(34px) saturate(185%) brightness(1.04);
+     背后正文被模糊成一层灰雾，还留着走向，但读不出字。
+     绝不使用纯白 tint —— 白叠白在数学上等于没有（合成结果仍是 #FFFFFF，对比度 1:1），
+     必须比页面略冷略暗，玻璃才有「存在」可谈。半径同样压到 12px。 */
+  --glass-bg: rgba(240, 243, 247, 0.6);
+  --glass-line: rgba(31, 35, 40, 0.12);
+  --glass-sheen: rgba(255, 255, 255, 0.95);
+  --glass-filter: blur(12px) saturate(150%);
+  /* 浅色的镜面环是「白亮」的：亮部更实，暗部只用极淡的灰，避免一圈脏边 */
+  --glass-rim: conic-gradient(
+    from 205deg at 50% 50%,
+    rgba(255, 255, 255, 1) 0deg,
+    rgba(255, 255, 255, 0.55) 60deg,
+    rgba(31, 35, 40, 0.06) 130deg,
+    rgba(255, 255, 255, 0.82) 195deg,
+    rgba(31, 35, 40, 0.05) 265deg,
+    rgba(255, 255, 255, 0.9) 330deg,
+    rgba(255, 255, 255, 1) 360deg
+  );
   /* 选中项退回浅灰药丸（不是蓝块），图标与文字用品牌蓝 —— 白玻璃上压一块蓝会显脏 */
   --glass-active-top: rgba(15, 23, 42, 0.075);
   --glass-active-bottom: rgba(15, 23, 42, 0.035);
@@ -173,11 +216,20 @@ textarea {
   font-family: 'SF Mono', 'Noto Sans Mono', ui-monospace, monospace;
 }
 
+/*
+ * 全屏铺满之后，.app 是整块屏幕，系统栏区域也归它画。
+ * padding-top 用 --safe-top 让开状态栏（原生端由 MainActivity 量 insets 注入，
+ * Web 端退回 env()），所以状态栏下面露出的就是页面自己的底色，不是黑色窗口底。
+ *
+ * padding-bottom 接的是输入法：decorFitsSystemWindows=false 之后键盘不再自动
+ * 缩小窗口，只能自己吃掉这段高度，否则输入框会被键盘压住。
+ */
 .app {
   height: 100%;
   display: flex;
   flex-direction: column;
   padding-top: var(--safe-top);
+  padding-bottom: var(--inset-ime, 0px);
   background: var(--bg);
 }
 
@@ -455,16 +507,69 @@ textarea {
 }
 
 /*
+ * 玻璃背后的压暗层（scrim）与环境光。
+ *
+ * 没有这一层，底栏静息时背后就是纯色 #0D1117 或一段均匀的列表 ——
+ * 模糊采样不出明暗，玻璃再透也只是一块均匀的板。
+ * 这一层做两件事：
+ * 1. 从下往上把内容压暗，保住底栏文字的对比度 —— 也就是 HIG 对 clear 变体说的
+ *    「把不透明度加在玻璃背后，不是加在玻璃上」，所以 tint 能一直保持很薄；
+ * 2. 底部一团很淡的品牌蓝当环境光，给 saturate 一点色度可吃，
+ *    底栏因此会出现「下缘偏蓝、上缘偏灰」的过渡 —— 这才是「透」的证据。
+ *
+ * 宽度跟内容列走（平板居中时不能横跨整个屏幕），z-index 低于底栏(24)、高于正文。
+ */
+.glass-backdrop {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin-inline: auto;
+  max-width: var(--content-max, 100%);
+  height: calc(132px + var(--safe-bottom));
+  z-index: 23;
+  pointer-events: none;
+  background:
+    radial-gradient(64% 120% at 50% 108%, rgba(47, 129, 247, 0.1), transparent 66%),
+    linear-gradient(
+      to top,
+      rgba(1, 4, 9, 0.5) 0%,
+      rgba(1, 4, 9, 0.22) 46%,
+      rgba(1, 4, 9, 0) 100%
+    );
+}
+
+html[data-theme='light'] .glass-backdrop {
+  background:
+    radial-gradient(64% 120% at 50% 108%, rgba(9, 105, 218, 0.1), transparent 66%),
+    linear-gradient(
+      to top,
+      rgba(31, 35, 40, 0.12) 0%,
+      rgba(31, 35, 40, 0.04) 46%,
+      rgba(31, 35, 40, 0) 100%
+    );
+}
+
+/*
  * 底部导航：悬浮的液态玻璃胶囊。
  *
- * 之前这里写的是「backdrop-filter 不生效，只能靠厚度」，那是误判 ——
- * 当时底色给到 0.9，模糊后与不模糊在视觉上几乎一样，才得出「blur(0) == blur(100)」。
- * 把底色降到 0.22 再测就很清楚了：blur(0) 能从胶囊里读出仓库名，blur(40) 只剩色斑。
- * 所以现在是真正的玻璃：
- * 1. 底色 0.56，透光交给 backdrop-filter（46px + saturate 190%）；
- * 2. 背后正文被糊成色团，读不出字，但能看出密度与走向 —— 这就是「液态」的来源；
- * 3. 顶部高光 + 白描边 + 外投影给出厚度；噪点只留很淡一层，压掉纯色渐变的塑料感。
- * 万一 WebView 太老不认 backdrop-filter，退回 0.92 厚底，宁可像塑料也不能透字。
+ * 为什么旧版看着像一块实心板 —— 三个原因都量过，别再靠「把 alpha 调低」去试：
+ * 1. tint rgba(22,27,34,.42) 叠在 #0D1117 上是 rgb(17,21,28)，对比度 1.03:1；
+ *    浅色主题白叠白更彻底，1.00:1。填充色和页面底色其实是同一个颜色，
+ *    「看得见底栏」全靠边框、顶边高光和那圈大投影 —— 全是实体卡片的线索。
+ * 2. blur(34px) 按规范是高斯核的标准差，3σ≈102px，而胶囊只有 58px 高：
+ *    一半以上采样能量来自元素外面，背后内容被平均成一块色斑。透是透了，
+ *    透不出形状，眼睛就判定成不透明。
+ * 3. brightness(1.02) 作用在 (13,17,23) 上取整后完全不变，是空操作；浅色下还会被 clip。
+ *
+ * 现在：
+ * - tint 压到 0.30，背后七成内容能穿过来（浅色不能用纯白 tint，数学上等于不存在）；
+ * - blur 14px，保住色块的位置与走向；saturate 只负责保色，不再提亮；
+ * - 存在感交给 1px conic 镜面环 + 顶边镜面线：双层 background，
+ *   padding-box 铺底色、border-box 只露那一圈渐变；
+ * - 投影收紧：0 18px 42px 太散，看起来像浮起来的卡片；
+ * - 可读性交给背后的 .glass-backdrop 压暗层，而不是加厚 tint ——
+ *   这是 HIG 对 clear 变体的做法：不透明度加在玻璃背后，不是加在玻璃上。
  */
 .tabbar {
   position: fixed;
@@ -482,34 +587,60 @@ textarea {
   align-items: stretch;
   gap: 2px;
   border-radius: 27px;
-  border: 1px solid var(--glass-line);
-  background: var(--glass-bg);
+  /* 必须是 transparent：实色边会把下面那圈 conic 镜面环整条盖掉 */
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--glass-bg), var(--glass-bg)) padding-box,
+    var(--glass-rim) border-box;
   box-shadow:
-    0 18px 42px rgba(0, 0, 0, 0.44),
-    0 3px 10px rgba(0, 0, 0, 0.3),
-    inset 0 1px 1px var(--glass-sheen),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.26);
+    0 10px 26px rgba(0, 0, 0, 0.38),
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+    inset 0 0 18px rgba(255, 255, 255, 0.035);
   -webkit-backdrop-filter: var(--glass-filter);
   backdrop-filter: var(--glass-filter);
   z-index: 24;
-  /* 这里原来有 isolation: isolate，为了让噪点的 mix-blend-mode 不外溢。
-     但它会给元素再造一层 backdrop root，叠加 transform 后模糊直接失效 ——
-     实际上 backdrop-filter 已经建了 stacking context，噪点本来也漏不出去。 */
+  /* 这里原来有 isolation: isolate。当时以为它会再造一层 backdrop root，
+     但按 Filter Effects 2，触发条件里没有 isolation（只有 filter / opacity<1 / mask /
+     clip-path / backdrop-filter / mix-blend-mode / 对应的 will-change）。
+     删掉是因为不需要，不是因为它把模糊弄坏了 —— 别把这个错误归因写回注释。 */
   overflow: hidden;
 }
 
-/* 老 WebView 不认 backdrop-filter：把底色叠回不透明，绝不能让正文透出来 */
+/*
+ * 键盘弹出时底栏让路。
+ * 它固定在视口底部，键盘一盖正好压在正在编辑的那一行上，而且玻璃会把键盘糊成灰块。
+ * 隐藏但不改布局位置 —— 上移会把输入框顶掉，反而更难用。
+ */
+html[data-ime='1'] .tabbar,
+html[data-ime='1'] .glass-backdrop,
+html[data-ime='1'] .actionbar {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+/* 老 WebView 不认 backdrop-filter：把底色叠回不透明，绝不能让正文透出来。
+   这里要补回实色描边 —— 正常情况下边框是 transparent、由 conic 镜面环占位，
+   没有 filter 的机器上那圈渐变换成纯色，边框不补会露出一条窗口底色。 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .tabbar {
     background: rgba(19, 24, 31, 0.96);
+    border-color: rgba(255, 255, 255, 0.16);
   }
 
   :root[data-theme='light'] .tabbar {
     background: rgba(249, 251, 253, 0.97);
+    border-color: rgba(31, 35, 40, 0.12);
   }
 }
 
-/* 边缘高光：左上角一小片反射 + 顶边亮线，玻璃的「厚度」全靠这两笔 */
+/*
+ * 顶边高光只贴边。
+ * 旧版线性层铺到 44% 高度，等于在胶囊上半部盖了一层白纱，
+ * 背后透上来的颜色（私有标签的红、语言色点）全被冲成灰，看起来还是「一块板」。
+ */
 .tabbar::before {
   content: '';
   position: absolute;
@@ -517,24 +648,18 @@ textarea {
   border-radius: inherit;
   pointer-events: none;
   background:
-    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.2), transparent 56%),
-    radial-gradient(90% 70% at 88% 130%, rgba(255, 255, 255, 0.09), transparent 62%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 44%, transparent 62%);
+    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.14), transparent 50%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 42%);
 }
 
-/* 磨砂颗粒：真模糊之后只留很淡一层，重了就是一块脏玻璃 */
+/* 磨砂颗粒：单层 0.035。作用是打散 8bit 色带，不是「质感」，重了就是一块脏玻璃 */
 .tabbar::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  opacity: 1;
-  /* 两层颗粒：粗的一层做「磨砂」的起伏，细的一层做砂面。
-     必须是普通混合 —— overlay 叠在这么深的底色上等于什么都没画。 */
-  background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='0.022'/%3E%3C/svg%3E"),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.6' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23f)' opacity='0.045'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
 }
 
 .tabbar button {
@@ -574,8 +699,12 @@ textarea {
   border-radius: 22px;
   background-color: var(--tab-active-base);
   background-image: linear-gradient(180deg, var(--glass-active-top), var(--glass-active-bottom));
-  -webkit-backdrop-filter: blur(8px) saturate(140%);
-  backdrop-filter: blur(8px) saturate(140%);
+  /*
+   * 这里原来有一条 backdrop-filter: blur(8px)。它是空操作：
+   * 父级 .tabbar 已经带了 backdrop-filter，backdrop root 在父级就截断了，
+   * 药丸采样到的是父级自身的半透明填充，不是背后的正文。
+   * 想要「药丸里再糊一层」只能拆成独立元素，代价不值，直接用色 + 高光更像。
+   */
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.2),
     inset 0 0 0 1px var(--glass-active-line),
@@ -586,22 +715,22 @@ textarea {
   transform: scale(0.95);
 }
 
-/* 浅色玻璃整体再提一层白雾：不铺这一层，0.66 的底色混出来是「灰白」，
-   不是参考图那种奶白 */
+/* 浅色玻璃的顶边更亮：白玻璃的反光比深色明显。
+   仍然只贴边 —— 铺满整片会把 tint 冲成纯白，玻璃又变回一块白板。 */
 html[data-theme='light'] .tabbar::before {
   background:
-    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.62), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.2) 58%, rgba(255, 255, 255, 0.26));
+    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.72), transparent 46%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent 40%);
 }
 
-/* 浅色玻璃的边缘是「亮」的，不是「暗」的：白色描边 + 底部反光，
-   深色主题那套 inset 暗线照搬过来会变成一圈灰边，像贴在页面上的塑料片 */
+/* 浅色玻璃的边缘是「亮」的，不是「暗」的：白色镜面环 + 底部反光，
+   深色那套 inset 暗线照搬过来会变成一圈灰边，像贴在页面上的塑料片。
+   注意这里不能再写 border-color —— 边框已经是 transparent，实色会盖掉 conic 镜面环。 */
 html[data-theme='light'] .tabbar {
-  border-color: rgba(255, 255, 255, 0.92);
   box-shadow:
-    0 16px 36px rgba(31, 35, 40, 0.16),
-    0 2px 8px rgba(31, 35, 40, 0.08),
-    inset 0 1px 1px #ffffff,
+    0 9px 22px rgba(31, 35, 40, 0.12),
+    0 2px 6px rgba(31, 35, 40, 0.06),
+    inset 0 1px 0 #ffffff,
     inset 0 -1px 0 rgba(255, 255, 255, 0.6);
 }
 
@@ -3560,8 +3689,8 @@ h1.title {
 .app {
   max-width: var(--content-max, 100%);
   margin: 0 auto;
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
 }
 
 /* 弹层跟着内容宽度走，否则平板上一拉就是整屏宽 */
@@ -3572,8 +3701,8 @@ h1.title {
 
 /* 横屏刘海：左右各留一条安全区（底栏是悬浮胶囊，宽度自己收，不跟这条） */
 .topbar {
-  padding-left: calc(16px + env(safe-area-inset-left, 0px));
-  padding-right: calc(16px + env(safe-area-inset-right, 0px));
+  padding-left: calc(16px + var(--safe-left));
+  padding-right: calc(16px + var(--safe-right));
 }
 
 @media (min-width: 640px) {

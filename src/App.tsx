@@ -37,15 +37,18 @@ import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sor
 import { createKV, type KV } from './lib/storage'
 import {
   applyTheme,
+  readFullscreen,
   readThemePref,
   resolveTheme,
   syncStatusBar,
   watchSystemTheme,
+  writeFullscreen,
   writeThemePref,
   type ResolvedTheme,
   type ThemePref,
 } from './lib/theme'
 import { probeToken } from './lib/tokens'
+import { setImmersive } from './lib/immersive'
 import { DEFAULT_TABS, TAB_DEFS, fallbackTab, normalizeTabs, toggleTab, type TabKey } from './lib/tabs'
 import {
   DEFAULT_CHANNEL,
@@ -172,6 +175,8 @@ export default function App() {
   const [guardError, setGuardError] = useState<string | null>(null)
   const [themePref, setThemePref] = useState<ThemePref>(() => readThemePref())
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(readThemePref()))
+  /** 沉浸式全屏：连状态栏一起藏掉，只留内容。只在原生端有意义，Web 上是个空开关。 */
+  const [fullscreen, setFullscreen] = useState<boolean>(() => readFullscreen())
 
   const [records, setRecords] = useState<TokenRecord[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -431,11 +436,13 @@ export default function App() {
       applyTheme(next)
       setResolvedTheme(next)
       void syncStatusBar(next)
+      // 全屏是独立的原生通道：状态栏显隐跟配色无关，但每次切换都对齐一次最省心
+      void setImmersive(fullscreen)
     }
     apply()
     if (themePref !== 'system') return
     return watchSystemTheme(apply)
-  }, [themePref])
+  }, [themePref, fullscreen])
 
   function changeTheme(pref: ThemePref) {
     writeThemePref(pref)
@@ -445,6 +452,12 @@ export default function App() {
     } else {
       showToast(pref === 'dark' ? '已切换深色' : '已切换浅色')
     }
+  }
+
+  function changeFullscreen(on: boolean) {
+    writeFullscreen(on)
+    setFullscreen(on)
+    showToast(on ? '已进入全屏 · 上滑边缘可唤出系统栏' : '已恢复状态栏')
   }
 
   const refreshAudit = useCallback(async () => {
@@ -1551,6 +1564,9 @@ export default function App() {
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}
+          native={Capacitor.isNativePlatform()}
+          fullscreen={fullscreen}
+          onFullscreen={changeFullscreen}
           scope={scope}
           onScope={(next) => {
             setScope(next)
@@ -1903,7 +1919,10 @@ export default function App() {
       )}
 
       {!route && (
-        <nav className="tabbar">
+        <>
+          {/* 玻璃背后的压暗层：让底栏静息时也有可采样的明暗过渡，见 theme.css */}
+          <div className="glass-backdrop" aria-hidden="true" />
+          <nav className="tabbar">
           {tabs.map((key) => {
             const def = TAB_DEFS.find((t) => t.key === key)
             if (!def) return null
@@ -1924,6 +1943,7 @@ export default function App() {
             )
           })}
         </nav>
+        </>
       )}
 
 

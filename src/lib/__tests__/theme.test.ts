@@ -20,3 +20,16 @@ describe('外观偏好', () => {
     expect(() => applyTheme('light')).not.toThrow()
   })
 })
+
+describe('全屏偏好', () => {
+  it('没有 localStorage 时读回 false', async () => {
+    const { readFullscreen } = await import('../theme')
+    expect(readFullscreen()).toBe(false)
+  })
+
+  it('没有 localStorage 时写入不抛错', async () => {
+    const { writeFullscreen } = await import('../theme')
+    expect(() => writeFullscreen(true)).not.toThrow()
+    expect(() => writeFullscreen(false)).not.toThrow()
+  })
+})

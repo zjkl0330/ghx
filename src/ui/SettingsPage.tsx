@@ -26,6 +26,11 @@ interface Props {
   themePref: ThemePref
   resolvedTheme: ResolvedTheme
   onTheme: (pref: ThemePref) => void
+  /** 是否跑在原生壳里。全屏开关只在原生端有意义 */
+  native: boolean
+  /** 沉浸式全屏：藏掉状态栏 */
+  fullscreen: boolean
+  onFullscreen: (on: boolean) => void
   /** 哪些内容需要机翻 */
   scope: TranslateScope
   onScope: (next: TranslateScope) => void
@@ -140,6 +145,15 @@ export function SettingsPage(p: Props) {
               当前显示{p.resolvedTheme === 'dark' ? '深色' : '浅色'}
               {p.themePref === 'system' ? '（跟随系统）' : ''}。切换立即生效，不用重启。
             </div>
+
+            {p.native && (
+              <SwitchRow
+                label="沉浸式全屏"
+                hint="连状态栏一起藏掉，内容顶到屏幕最上沿；从屏幕边缘上滑可临时唤出系统栏"
+                on={p.fullscreen}
+                onChange={p.onFullscreen}
+              />
+            )}
 
             <div className="section-title" style={{ marginTop: 18 }}>
               底栏显示

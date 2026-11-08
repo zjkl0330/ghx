@@ -12,17 +12,23 @@
     <!--
         窗口底色必须显式给深色：DayNight 浅色模式下 windowBackground 是白的，
         横屏时系统导航栏 / 刘海安全区这些 WebView 盖不到的地方就会露出白条。
-        导航栏同理，跟着窗口底色走。
         注意用的是 window_background 而不是 splash_background —— 后者已经跟着
         白底图标改成白色，用它会让横屏白边重新出现。
+
+        系统栏改成透明（全屏铺满）：内容画到栏下面，栏的颜色由页面自己负责。
+        MainActivity 里 setDecorFitsSystemWindows(false) 之后这两条会生效；
+        API 35 上系统本来就强制透明，这里写一遍是为了让老系统也一致。
+        windowBackground 保留深色做兜底 —— 启动瞬间、极端情况下 WebView 还没画出来时，
+        露出的应该是深色而不是白。
     -->
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
         <item name="android:windowBackground">@color/window_background</item>
-        <item name="android:navigationBarColor">@color/window_background</item>
-        <item name="android:statusBarColor">@color/window_background</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 
 

@@ -56,8 +56,13 @@ export function applyTheme(theme: ResolvedTheme): void {
 }
 
 /**
- * 状态栏跟随配色。原生端才生效，Web 调试直接跳过，
+ * 状态栏图标明暗跟随配色。原生端才生效，Web 调试直接跳过，
  * 动态导入避免把插件塞进首屏 chunk。
+ *
+ * 这里刻意不再 setBackgroundColor / setOverlaysWebView：
+ * 全屏铺满交给 MainActivity（setDecorFitsSystemWindows + insets 注入），状态栏本来就是透明的；
+ * 再染一次色会在状态栏区域贴一条实色，把滚过去的内容挡住。
+ * 这两个方法在 API 30 起都是废弃实现，Android 15 上设了也是空操作。
  */
 export async function syncStatusBar(theme: ResolvedTheme): Promise<void> {
   const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -65,9 +70,33 @@ export async function syncStatusBar(theme: ResolvedTheme): Promise<void> {
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar')
     await StatusBar.setStyle({ style: theme === 'dark' ? Style.Dark : Style.Light })
-    await StatusBar.setBackgroundColor({ color: theme === 'dark' ? DARK_BG : LIGHT_BG })
   } catch {
     /* 插件不可用时交给系统主题，不影响使用 */
+  }
+}
+
+/* ---------------- 全屏（沉浸式） ---------------- */
+
+/**
+ * 「隐藏状态栏」这个开关跟配色一样只存 localStorage：
+ * 它决定的是原生窗口外观，不需要跨设备同步，也不该经过保险库那套异步存储。
+ */
+const FULLSCREEN_KEY = 'ghx.fullscreen'
+
+export function readFullscreen(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(FULLSCREEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeFullscreen(on: boolean): void {
+  try {
+    if (on) globalThis.localStorage?.setItem(FULLSCREEN_KEY, '1')
+    else globalThis.localStorage?.removeItem(FULLSCREEN_KEY)
+  } catch {
+    /* 隐私模式下写入失败不影响本次会话 */
   }
 }
 
