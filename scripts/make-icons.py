@@ -100,48 +100,11 @@ def main() -> None:
         fg.alpha_composite(m, ((px - m.width) // 2, (px - m.height) // 2))
         fg.save(os.path.join(RES, f'mipmap-{dpi}/ic_launcher_foreground.png'))
 
-    # 启动图：白底 + 居中标记 + 字标（图标反色后启动屏必须跟着变白）
-    splash_sizes = {
-        'drawable/splash.png': (480, 320),
-        'drawable-land-mdpi/splash.png': (480, 320),
-        'drawable-land-hdpi/splash.png': (800, 480),
-        'drawable-land-xhdpi/splash.png': (1280, 720),
-        'drawable-land-xxhdpi/splash.png': (1600, 960),
-        'drawable-land-xxxhdpi/splash.png': (1920, 1280),
-        'drawable-port-mdpi/splash.png': (320, 480),
-        'drawable-port-hdpi/splash.png': (480, 800),
-        'drawable-port-xhdpi/splash.png': (720, 1280),
-        'drawable-port-xxhdpi/splash.png': (960, 1600),
-        'drawable-port-xxxhdpi/splash.png': (1280, 1920),
-    }
-    for rel, (w, h) in splash_sizes.items():
-        base = Image.new('RGBA', (w, h), (255, 255, 255, 255))
-        d = ImageDraw.Draw(base)
-        # 顶部一抹极淡的冷灰，和图标底板的渐变同源（绿光已随反色一起去掉）
-        glow = Image.new('RGBA', (w, h), (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        r = int(min(w, h) * 0.55)
-        gd.ellipse((w // 2 - r, -r, w // 2 + r, r), fill=(13, 17, 23, 10))
-        base.alpha_composite(glow.filter(ImageFilter.GaussianBlur(r // 3)))
-
-        m = trim(Image.open(mark_src).convert('RGBA'), int(min(w, h) * 0.30))
-        cy = int(h * 0.46)
-        base.alpha_composite(m, ((w - m.width) // 2, cy - m.height // 2))
-
-        font_size = max(14, int(min(w, h) * 0.085))
-        try:
-            font = ImageFont.truetype(FONT_BOLD, font_size)
-        except OSError:
-            font = ImageFont.load_default()
-        text = 'ghx'
-        tracking = int(font_size * 0.14)
-        width = sum(d.textlength(ch, font=font) for ch in text) + tracking * (len(text) - 1)
-        x = (w - width) / 2
-        ty = cy + m.height // 2 + int(min(w, h) * 0.06)
-        for ch in text:
-            d.text((x, ty), ch, font=font, fill=(13, 17, 23, 235))
-            x += d.textlength(ch, font=font) + tracking
-        base.convert('RGB').save(os.path.join(RES, rel))
+    # 启动屏不再由脚本生成位图。
+    # 整屏 PNG 会被不同长宽比的设备拉伸，字号也会随 density 缩放发虚；
+    # 现在 res/drawable/splash_window.xml 用「纯色底 + 居中矢量图标」拼出来，
+    # 图标本体是手写的 res/drawable/splash_icon.xml（正圆 + GitHub mark），
+    # 和 Android 12+ 系统启动屏共用同一份，两套系统终于长得一样。
 
     print('ok')
 

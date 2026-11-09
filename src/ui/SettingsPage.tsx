@@ -1,6 +1,13 @@
 import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
 import { formatSpeed, mirrorLabel } from '../lib/mirrors'
+import {
+  ACCENTS,
+  accentSwatch,
+  type Appearance,
+  type TabLabelMode,
+  type TabbarShape,
+} from '../lib/appearance'
 import type { ResolvedTheme, ThemePref } from '../lib/theme'
 import { TAB_DEFS, type TabKey } from '../lib/tabs'
 import {
@@ -26,6 +33,8 @@ interface Props {
   themePref: ThemePref
   resolvedTheme: ResolvedTheme
   onTheme: (pref: ThemePref) => void
+  appearance: Appearance
+  onAppearance: (patch: Partial<Appearance>, hint: string) => void
   /** 是否跑在原生壳里。全屏开关只在原生端有意义 */
   native: boolean
   /** 沉浸式全屏：藏掉状态栏 */
@@ -144,6 +153,151 @@ export function SettingsPage(p: Props) {
             <div className="hint" style={{ marginTop: 9 }}>
               当前显示{p.resolvedTheme === 'dark' ? '深色' : '浅色'}
               {p.themePref === 'system' ? '（跟随系统）' : ''}。切换立即生效，不用重启。
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 16 }}>
+              强调色
+            </div>
+            <div className="swatches">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.key}
+                  className={`swatch${p.appearance.accent === a.key ? ' on' : ''}`}
+                  aria-label={a.label}
+                  aria-pressed={p.appearance.accent === a.key}
+                  onClick={() => p.onAppearance({ accent: a.key }, `强调色：${a.label}`)}
+                >
+                  <i style={{ background: accentSwatch(a, p.resolvedTheme) }} />
+                </button>
+              ))}
+            </div>
+            <div className="hint" style={{ marginTop: 4 }}>
+              按钮、链接、选中页签和玻璃背后的环境光会一起换，深浅两套主题各有一档。
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 16 }}>
+              底栏形态
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              {(
+                [
+                  ['float', '悬浮胶囊'],
+                  ['dock', '贴底通栏'],
+                ] as [TabbarShape, string][]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  className={p.appearance.tabbar === key ? 'on' : ''}
+                  onClick={() =>
+                    p.onAppearance(
+                      { tabbar: key },
+                      key === 'float' ? '底栏改为悬浮胶囊' : '底栏贴底，内容区让出整块高度',
+                    )
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              底栏文字
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              {(
+                [
+                  ['both', '图标 + 文字'],
+                  ['icon', '仅图标'],
+                ] as [TabLabelMode, string][]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  className={p.appearance.tabLabel === key ? 'on' : ''}
+                  onClick={() =>
+                    p.onAppearance(
+                      { tabLabel: key },
+                      key === 'both' ? '底栏恢复文字' : '底栏只留图标，高度收窄',
+                    )
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              背景
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              <button
+                className={p.appearance.bg === 'plain' ? 'on' : ''}
+                onClick={() => p.onAppearance({ bg: 'plain' }, '背景：纯色')}
+              >
+                纯色
+              </button>
+              <button
+                className={p.appearance.bg === 'glow' ? 'on' : ''}
+                onClick={() => p.onAppearance({ bg: 'glow' }, '背景：顶部一层氛围光')}
+              >
+                氛围光
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              氛围光用的是当前强调色，很淡；滚动时固定不动，不会跟着列表晃。
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              底栏玻璃
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              {(
+                [
+                  ['clear', '通透'],
+                  ['normal', '标准'],
+                  ['thick', '厚实'],
+                ] as [Appearance['glass'], string][]
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  className={p.appearance.glass === key ? 'on' : ''}
+                  onClick={() =>
+                    p.onAppearance(
+                      { glass: key },
+                      key === 'clear'
+                        ? '玻璃更透，靠背后内容撑住可读性'
+                        : key === 'thick'
+                          ? '玻璃更厚，正文几乎被完全糊掉'
+                          : '玻璃回到标准厚度',
+                    )
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              通透档背景几乎全透，字会靠玻璃后的压暗层兜底；看不清就调回标准。
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              动效
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              <button
+                className={p.appearance.motion === 'full' ? 'on' : ''}
+                onClick={() => p.onAppearance({ motion: 'full' }, '动效：标准')}
+              >
+                标准
+              </button>
+              <button
+                className={p.appearance.motion === 'calm' ? 'on' : ''}
+                onClick={() => p.onAppearance({ motion: 'calm' }, '动效：精简，过渡与呼吸动画已关闭')}
+              >
+                精简
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              精简会关掉页面切换、弹层和启动遮罩的动画，省电，也让低端机少掉帧。
             </div>
 
             {p.native && (

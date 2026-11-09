@@ -19,11 +19,16 @@
   --text-dim: #7d8590;
   --icon-dim: #8b949e;
 
-  --blue: #2f81f7;
-  --blue-soft: rgba(47, 129, 247, 0.08);
-  --blue-soft-2: rgba(47, 129, 247, 0.1);
-  --blue-line-soft: rgba(47, 129, 247, 0.34);
-  --blue-text: #a7c7f2;
+  /* 强调色：六个色板只换 --accent-rgb / --accent-fg-rgb 两组 RGB，
+     其余派生色全从这里算 —— 否则每加一个颜色就要抄六行 rgba，迟早漏一处。
+     名字仍叫 --blue 是因为它已经被 60 多处引用，改名的收益只有好看。 */
+  --accent-rgb: 47, 129, 247;
+  --accent-fg-rgb: 167, 199, 242;
+  --blue: rgb(var(--accent-rgb));
+  --blue-soft: rgba(var(--accent-rgb), 0.08);
+  --blue-soft-2: rgba(var(--accent-rgb), 0.1);
+  --blue-line-soft: rgba(var(--accent-rgb), 0.34);
+  --blue-text: rgb(var(--accent-fg-rgb));
 
   --green: #3fb950;
   --green-bg: #12261e;
@@ -55,10 +60,16 @@
    * 所以：tint 压到 0.30（浅色 0.60 且带冷调，纯白叠白底等于没有），
    * 半径降到 14px，saturate 只用来保色，存在感交给 1px 镜面环。
    */
-  --glass-bg: rgba(24, 29, 36, 0.26);
+  /* 玻璃拆成四个可调项：tint、alpha、blur、saturate。
+     设置里的「通透 / 标准 / 厚实」只改这四项，底栏结构不用动。 */
+  --glass-tint: 24, 29, 36;
+  --glass-alpha: 0.26;
+  --glass-blur: 12px;
+  --glass-sat: 185%;
+  --glass-bg: rgba(var(--glass-tint), var(--glass-alpha));
   --glass-line: rgba(255, 255, 255, 0.16);
   --glass-sheen: rgba(255, 255, 255, 0.36);
-  --glass-filter: blur(12px) saturate(185%);
+  --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   /*
    * 1px 镜面环：玻璃的边会反光，塑料板的边不会 —— 这是两者最省成本的分界。
    * 亮部固定在左上（320deg–60deg）与右下（180deg 附近），方向和投影一致。
@@ -74,16 +85,18 @@
     rgba(255, 255, 255, 0.4) 320deg,
     rgba(255, 255, 255, 0.55) 360deg
   );
-  --glass-active-top: rgba(47, 129, 247, 0.42);
-  --glass-active-bottom: rgba(47, 129, 247, 0.24);
-  --glass-active-line: rgba(130, 185, 255, 0.42);
-  --glass-active-glow: rgba(47, 129, 247, 0.2);
+  --glass-active-top: rgba(var(--accent-rgb), 0.42);
+  --glass-active-bottom: rgba(var(--accent-rgb), 0.24);
+  --glass-active-line: rgba(var(--accent-rgb), 0.55);
+  --glass-active-glow: rgba(var(--accent-rgb), 0.2);
   --tab-active-fg: #eaf3ff;
   --tab-fg: #97a1ad;
   --tab-label-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
   --tab-active-base: rgba(11, 17, 27, 0.5);
 
   --radius: 10px;
+  /* 底栏高度：只留图标时收窄到 50px，页面让位也跟着它走 */
+  --tabbar-h: 58px;
   /*
    * 系统栏内边距。两个来源取最大值：
    * - env(safe-area-inset-*)：iOS 与部分 Chromium 版本会给；
@@ -112,11 +125,13 @@
   --text-dim: #656d76;
   --icon-dim: #6e7781;
 
-  --blue: #0969da;
-  --blue-soft: rgba(9, 105, 218, 0.08);
-  --blue-soft-2: rgba(9, 105, 218, 0.1);
-  --blue-line-soft: rgba(9, 105, 218, 0.3);
-  --blue-text: #0969da;
+  --accent-rgb: 9, 105, 218;
+  --accent-fg-rgb: 9, 105, 218;
+  --blue: rgb(var(--accent-rgb));
+  --blue-soft: rgba(var(--accent-rgb), 0.08);
+  --blue-soft-2: rgba(var(--accent-rgb), 0.1);
+  --blue-line-soft: rgba(var(--accent-rgb), 0.3);
+  --blue-text: rgb(var(--accent-fg-rgb));
 
   --green: #1a7f37;
   --green-bg: #dafbe1;
@@ -140,10 +155,14 @@
      背后正文被模糊成一层灰雾，还留着走向，但读不出字。
      绝不使用纯白 tint —— 白叠白在数学上等于没有（合成结果仍是 #FFFFFF，对比度 1:1），
      必须比页面略冷略暗，玻璃才有「存在」可谈。半径同样压到 12px。 */
-  --glass-bg: rgba(240, 243, 247, 0.6);
+  --glass-tint: 240, 243, 247;
+  --glass-alpha: 0.6;
+  --glass-blur: 12px;
+  --glass-sat: 150%;
+  --glass-bg: rgba(var(--glass-tint), var(--glass-alpha));
   --glass-line: rgba(31, 35, 40, 0.12);
   --glass-sheen: rgba(255, 255, 255, 0.95);
-  --glass-filter: blur(12px) saturate(150%);
+  --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   /* 浅色的镜面环是「白亮」的：亮部更实，暗部只用极淡的灰，避免一圈脏边 */
   --glass-rim: conic-gradient(
     from 205deg at 50% 50%,
@@ -160,11 +179,195 @@
   --glass-active-bottom: rgba(15, 23, 42, 0.035);
   --glass-active-line: rgba(15, 23, 42, 0.1);
   --glass-active-glow: rgba(15, 23, 42, 0.1);
-  --tab-active-fg: #0969da;
+  --tab-active-fg: rgb(var(--accent-rgb));
   /* 白玻璃上灰得太淡会飘，未选中项压到近黑 */
   --tab-fg: #3d444d;
   --tab-label-shadow: 0 1px 2px rgba(255, 255, 255, 0.7);
   --tab-active-base: rgba(15, 23, 42, 0.045);
+}
+
+/* ================= 外观选项 =================
+ *
+ * 全部由 <html> 上的 data-* 驱动，值来自 src/lib/appearance.ts。
+ * 首屏由 index.html 的内联脚本先打一遍，React 挂载后再同步一次 ——
+ * 所以这里的默认值必须和 DEFAULT_APPEARANCE 一致（天蓝 / 悬浮 / 图文 / 纯色 / 标准 / 完整）。
+ */
+
+/* ---- 强调色 ---- */
+:root[data-accent='violet'] {
+  --accent-rgb: 163, 113, 247;
+  --accent-fg-rgb: 210, 184, 255;
+}
+:root[data-accent='teal'] {
+  --accent-rgb: 57, 197, 207;
+  --accent-fg-rgb: 159, 229, 236;
+}
+:root[data-accent='green'] {
+  --accent-rgb: 63, 185, 80;
+  --accent-fg-rgb: 168, 230, 180;
+}
+:root[data-accent='amber'] {
+  --accent-rgb: 210, 153, 34;
+  --accent-fg-rgb: 242, 204, 122;
+}
+:root[data-accent='rose'] {
+  --accent-rgb: 247, 120, 186;
+  --accent-fg-rgb: 255, 179, 217;
+}
+
+/* 浅色主题下每个强调色要压深一档，否则白底上读不清。
+   特异性 (0,3,0) 高于上面的 (0,2,0)，不用 !important。 */
+:root[data-theme='light'][data-accent='violet'] {
+  --accent-rgb: 130, 80, 223;
+  --accent-fg-rgb: 130, 80, 223;
+}
+:root[data-theme='light'][data-accent='teal'] {
+  --accent-rgb: 14, 124, 134;
+  --accent-fg-rgb: 14, 124, 134;
+}
+:root[data-theme='light'][data-accent='green'] {
+  --accent-rgb: 26, 127, 55;
+  --accent-fg-rgb: 26, 127, 55;
+}
+:root[data-theme='light'][data-accent='amber'] {
+  --accent-rgb: 154, 103, 0;
+  --accent-fg-rgb: 154, 103, 0;
+}
+:root[data-theme='light'][data-accent='rose'] {
+  --accent-rgb: 191, 57, 137;
+  --accent-fg-rgb: 191, 57, 137;
+}
+
+/* ---- 玻璃厚度 ----
+ * 浅色的 alpha 必须单独给：tint 是冷白，直接套深色的 0.18 会透成一层灰纱。
+ */
+:root[data-glass='clear'] {
+  --glass-alpha: 0.18;
+  --glass-blur: 9px;
+}
+:root[data-theme='light'][data-glass='clear'] {
+  --glass-alpha: 0.46;
+  --glass-blur: 9px;
+}
+:root[data-glass='thick'] {
+  --glass-alpha: 0.46;
+  --glass-blur: 18px;
+  --glass-sat: 150%;
+}
+:root[data-theme='light'][data-glass='thick'] {
+  --glass-alpha: 0.78;
+  --glass-blur: 18px;
+  --glass-sat: 140%;
+}
+
+/* ---- 底栏只留图标 ---- */
+:root[data-tablabel='icon'] {
+  --tabbar-h: 50px;
+}
+
+html[data-tablabel='icon'] .tabbar button {
+  gap: 0;
+}
+
+html[data-tablabel='icon'] .tabbar .tab-label {
+  display: none;
+}
+
+/* ---- 底栏贴底通栏 ----
+ * 圆角只保留顶部两个角；底部要给手势条让位，所以高度和 padding 都带上 safe-bottom。
+ * 投影方向反过来朝上，否则通栏底栏会像一张浮在半空的纸。
+ */
+html[data-tabbar='dock'] .tabbar {
+  bottom: 0;
+  width: 100%;
+  height: calc(var(--tabbar-h) + var(--safe-bottom));
+  padding: 5px 6px calc(5px + var(--safe-bottom));
+  border-radius: 20px 20px 0 0;
+  box-shadow:
+    0 -8px 26px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 0 18px rgba(255, 255, 255, 0.03);
+}
+
+/* 浅色通栏在白页面上几乎融成一片，只靠投影分不出边界；
+   补一条 1px 顶边（比投影更容易被看见，也不会像一圈深色描边那样脏） */
+html[data-theme='light'][data-tabbar='dock'] .tabbar {
+  border-top-color: rgba(31, 35, 40, 0.09);
+  box-shadow:
+    0 -6px 22px rgba(31, 35, 40, 0.12),
+    inset 0 1px 0 #ffffff;
+}
+
+/* 通栏时背后的压暗层要更高一点，否则正文会直接撞在底栏顶上 */
+html[data-tabbar='dock'] .glass-backdrop {
+  height: calc(160px + var(--safe-bottom));
+}
+
+html[data-tabbar='dock'] .actionbar {
+  bottom: calc(64px + var(--safe-bottom));
+}
+
+/* ---- 背景氛围光 ---- */
+html[data-bg='glow'] .app {
+  background-image:
+    radial-gradient(120% 52% at 14% -8%, rgba(var(--accent-rgb), 0.16), transparent 62%),
+    radial-gradient(90% 42% at 96% 2%, rgba(var(--accent-rgb), 0.08), transparent 60%);
+  background-attachment: fixed;
+}
+
+html[data-theme='light'][data-bg='glow'] .app {
+  background-image:
+    radial-gradient(120% 52% at 14% -8%, rgba(var(--accent-rgb), 0.1), transparent 62%),
+    radial-gradient(90% 42% at 96% 2%, rgba(var(--accent-rgb), 0.05), transparent 60%);
+}
+
+/* ---- 动效精简 ----
+ * 只压时长，不删规则：删掉 transition 会让某些靠 transitionend 收尾的交互卡住。
+ * 0.01ms 仍会触发终态。
+ */
+html[data-motion='calm'] *,
+html[data-motion='calm'] *::before,
+html[data-motion='calm'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ---- 设置页的色块 ---- */
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 0 2px;
+}
+
+.swatch {
+  width: 34px;
+  height: 34px;
+  padding: 3px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  transition: border-color 0.18s ease, transform 0.16s ease;
+}
+
+.swatch i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.35);
+}
+
+.swatch.on {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-soft);
+}
+
+.swatch:active {
+  transform: scale(0.94);
 }
 
 * {
@@ -230,7 +433,9 @@ textarea {
   flex-direction: column;
   padding-top: var(--safe-top);
   padding-bottom: var(--inset-ime, 0px);
-  background: var(--bg);
+  /* 用 background-color 而不是简写：data-bg='glow' 要在上面叠一层 background-image，
+     简写会把那层 image 重置掉。 */
+  background-color: var(--bg);
 }
 
 .page {
@@ -530,7 +735,7 @@ textarea {
   z-index: 23;
   pointer-events: none;
   background:
-    radial-gradient(64% 120% at 50% 108%, rgba(47, 129, 247, 0.1), transparent 66%),
+    radial-gradient(64% 120% at 50% 108%, rgba(var(--accent-rgb), 0.1), transparent 66%),
     linear-gradient(
       to top,
       rgba(1, 4, 9, 0.5) 0%,
@@ -581,7 +786,7 @@ html[data-theme='light'] .glass-backdrop {
      用 auto margin 居中，效果一样但不碰 transform。 */
   margin-inline: auto;
   width: min(calc(100% - 24px), calc(var(--content-max, 100%) - 24px));
-  height: 58px;
+  height: var(--tabbar-h);
   padding: 5px;
   display: flex;
   align-items: stretch;
@@ -742,7 +947,7 @@ html[data-theme='light'] .tabbar::after {
 
 /* 底栏脱离文档流后，页面末尾要自己让出这段高度 */
 .app.with-tabs > .page {
-  padding-bottom: calc(58px + 22px + var(--safe-bottom));
+  padding-bottom: calc(var(--tabbar-h) + 22px + var(--safe-bottom));
 }
 
 
@@ -3962,4 +4167,19 @@ button.ustat:active {
 
 .sheet-head .icon-btn {
   flex: none;
+}
+
+/*
+ * 横屏矮屏 + 贴底通栏：底栏要跟着收窄。
+ * 上面那条媒体查询只写了 .tabbar（特异性 0,1,0），会被 dock 的 (0,2,1) 盖住，
+ * 于是矮屏上通栏底栏还留着竖屏的 58px 高度，占掉本就紧张的纵向空间。
+ */
+@media (orientation: landscape) and (max-height: 620px) {
+  html[data-tabbar='dock'] .tabbar {
+    height: calc(46px + var(--safe-bottom));
+  }
+
+  html[data-tabbar='dock'] .glass-backdrop {
+    height: calc(120px + var(--safe-bottom));
+  }
 }

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android 11 及以下的启动窗口背景（API 31+ 由系统启动屏接管，不看这里）。
+
+    以前这里是 @drawable/splash —— 一张 1280×1920 的整屏位图。它有三个问题：
+    1. 长宽比和设备不一致时被拉伸，字标会变形；
+    2. 位图按 density 目录选，尺寸对不上时还要再缩放一次，边缘发虚；
+    3. 系统切换深浅色时它永远是同一张白图。
+
+    现在改成「纯色底 + 居中矢量图标」，底色走 @color/splash_background（values-night 有深色版），
+    图标与 Android 12+ 系统启动屏完全同一份，两套系统的启动画面终于长得一样。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background" />
+    <item
+        android:width="168dp"
+        android:height="168dp"
+        android:drawable="@drawable/splash_icon"
+        android:gravity="center" />
+</layer-list>

@@ -68,6 +68,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `archive.ts` | 源码 zip：`archiveFileName` / `archivePath` / `codeloadViaProxy`、`archiveCandidates`（四条候选按可通性排序）、`pickArchive`（HEAD 探活取第一条通的） |
 | `immersive.ts` | 沉浸式全屏的 JS 侧：`setImmersive(on)` 调自写的 `Immersive` 原生插件（Web 端静默跳过） |
 | `users.ts` | 用户维度纯逻辑：`visibleUserRepos`（排序 + 只看源仓库）、`forkCount`、`userKindLabel`、`displayName`、`userFacts`（公司/位置/博客/X/加入，空字段不出现）、`normalizeBlogUrl`（补协议）、`joinedText`、`followPath`、`hasMoreFollowers`、`userRepoSummary` |
+| `appearance.ts` | 外观偏好（强调色 / 底栏形态 / 底栏文字 / 背景 / 玻璃 / 动效）：`normalizeAppearance` 逐字段兜底、`applyAppearance` 只写 `<html data-*>`、`ACCENTS` 色板、`accentSwatch` |
+| `boot.ts` | 首屏遮罩的撤除：给 `#boot` 打 `data-leaving`，`transitionend` + 420ms 超时双保险，重复调用幂等 |
 | `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
 
 ### ui（组件）
@@ -79,6 +81,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 第三批（v0.5.4）：`AccountSheet` 账号切换面板 + 多设备响应式（内容居中、safe-area、横屏矮屏）
 
 第四批（v0.5.5）：磨砂玻璃底栏（悬浮胶囊 + 厚底色 + 砂面噪点 + 实心选中态图标）· 热门/星标接入简介机翻 · 应用图标与启动图重绘（`assets/icon/*.svg` + `scripts/make-icons.py`）· `scripts/shots.py` 用 mock API 出 README 截图
+
+第六批（v0.6.4）：`SettingsPage` 的外观面板（色板 / 六组分段控件）· 首屏遮罩改为 `index.html` 内联，不经 React
 
 第五批（v0.6.3）：`UserListSheet` 关注者 / 正在关注列表（30 一页，点人继续跳）· `UserPage` 重写（头像 / 资料事实行 / 三个统计 / 仓库排序与 fork 过滤 / 加载更多）
 
@@ -93,6 +97,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 > **玻璃为什么看起来像实心板（v0.6.2 量出来的，别再靠调 alpha 试）**：① 旧 tint `rgba(22,27,34,.42)` 叠在 `#0D1117` 上是 `rgb(17,21,28)`，对比度 **1.03:1**；浅色白 tint 叠白底更彻底，**1.00:1** —— 填充色和页面底色其实是一个颜色，看得见它全靠边框 + 顶边高光 + 大投影，而那三样都是「实体卡片」的线索。② `blur(<length>)` 的参数是高斯核**标准差**，`blur(34px)` 的 3σ≈102px，胶囊只有 58px 高，一半以上采样能量来自元素外，背后内容被平均成色斑 —— 透不出形状，眼睛就判定成不透明。③ `brightness(1.02)` 对 `(13,17,23)` 取整后完全不变，是空操作；浅色下还会被 clip。④ 解法不是降 alpha（降到 0.1 只是「没有板」），而是：tint 0.26 + `blur(12px)` + `saturate(185%)`，加 1px `conic-gradient` 镜面环（`border: 1px solid transparent` + 双层 `background`，padding-box 铺色、border-box 露环），可读性交给玻璃**背后**的 `.glass-backdrop` 压暗层 —— 这正是 HIG 对 clear 变体的建议：不透明度加在玻璃背后，不是加在玻璃上。⑤ `isolation: isolate` **不在** backdrop root 的触发条件里（Filter Effects 2 只列 filter / opacity<1 / mask / clip-path / backdrop-filter / mix-blend-mode / 对应 will-change），别再把它写成「会切断模糊」；`.tabbar button.on::before` 里的 `backdrop-filter` 才是真空操作 —— 父级已建 backdrop root，子元素采样到的是父级填充。⑥ 老 WebView 降级分支要同时补回实色 `border-color`，否则 transparent 边框会露出窗口底色。
 
 > **全屏（edge-to-edge）的坑**：① 别把 Capacitor 的 `adjustMarginsForEdgeToEdge` 设成 `auto`/`force` —— 它会直接给 WebView 加四边 margin 并 `CONSUMED`，全屏立刻失效；保持 `disable`，由 `MainActivity` 自己 `setDecorFitsSystemWindows(false)`。② `env(safe-area-inset-*)` 在 Android WebView 多数机型恒为 0，必须把 `WindowInsetsCompat` 量出来的值注入成 `--inset-*`，CSS 里用 `max(env(...), var(--inset-*))` 取大值（不能相加，否则重复让位）。③ `setDecorFitsSystemWindows(false)` 之后 `adjustResize` 不再缩窗口，输入法只报 `ime` insets —— 页面要自己 `padding-bottom: var(--inset-ime)`，底栏与压暗层同时淡出，否则键盘会盖住输入框。④ `StatusBar.setOverlaysWebView()` 只动状态栏、用的全是 API 30 就废弃的 `setSystemUiVisibility`，铺不到导航栏；`StatusBar.hide()` 也不设 `systemBarsBehavior`。要沉浸式全屏就用自写的 `ImmersivePlugin`（`WindowInsetsControllerCompat.hide(systemBars)` + `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`）。⑤ 自定义插件必须在 `super.onCreate()` **之前** `registerPlugin()`，Bridge 在 `super` 里就建好了。
+
+> **启动屏的三个坑（v0.6.4）**：① `android:background` 是 View 属性，写在主题里对窗口无效 —— 启动背景必须用 `android:windowBackground`，否则 Android 11 及以下显示的是 DayNight 默认底色，开屏先白/黑闪一下。② `windowSplashScreenAnimatedIcon` 不要复用 `@mipmap/ic_launcher_foreground`：自适应图标前景层是 108dp 画布里只占 66dp，系统又按 192dp 的圆裁一次，图标会小到看不清。用专用矢量，且形状必须是正圆（无 `iconBackgroundColor` 时系统强制圆裁，方形图标的四角会被切）。③ WebView 内的启动遮罩尺寸要对齐系统 splash：Android 12 的内容圆是 192dp，遮罩里的图标直径按 192 铺（本项目的 SVG viewBox 就是 192，铺 184px），差一倍时切换会明显「缩一下」。
 
 > **用户主页的两个坑（v0.6.3）**：① `.avatar` 是固定尺寸容器（30 / 58px），往里塞 `<img>` 必须给 `width:100%; height:100%`，容器还要 `overflow:hidden` —— 少了这一步，460px 原图按自身尺寸绘制，整页被横向撑爆：统计卡飘到头像上、仓库列表被推出屏幕，表现上就是「个人主页打不开」。更稳的是照其它页面把 `.avatar` 直接写在 `<img>` 上。② `theme.css` 里 `.badge` 有两处定义，后一处是通知未读角标的红底方块，它会把仓库行的 Public / 私有 / 已归档标签一起染成红块。计数角标现在叫 `.badge.count`，新加标签类别再撞 `.badge`。
 
@@ -243,4 +249,5 @@ user / notifications / search / profile / settings / tokens / audit
 - **v0.6.1**：应用图标换成 GitHub 官方 mark 反色（白底 + 深色圆盘 + 白猫，标记占底板 58%）；启动图与 `splash_background` 同步改白，Android 12+ 的 `windowSplashScreenBackground` 一起；新增 `window_background`（#0D1117）承接 `windowBackground` / 系统栏色，避免白底启动屏把横屏白边带回来。单测仍 621。
 - **v0.6.2**：全屏铺满（`setDecorFitsSystemWindows(false)` + 原生 insets 注入成 `--inset-*`，`adjustMarginsForEdgeToEdge: 'disable'`）+ 沉浸式全屏开关（自写 `ImmersivePlugin`，`WindowInsetsControllerCompat`）；键盘改用 `ime` insets 让位、底栏淡出；底栏玻璃按「对比度 1.03:1 / σ 超过胶囊高度 / brightness 空操作」三个实测结论重做（tint 0.26 + `blur(12px)` + conic 镜面环 + 背后 `.glass-backdrop` 压暗层）。设计依据见 `docs/liquid-glass-and-edge-to-edge.md`。新增 2 项单测，总数 623。
 - **v0.6.3**：修好用户主页（旧版 `<img>` 无尺寸约束把整页撑爆，现在头像与仓库行都按列表页结构）；用户搜索结果补头像 / 组织徽标 / 箭头，`name` 图标（不存在）换回 `user`，关键词自动去前导 `@`；用户主页扩展（关注者与正在关注可点开列表、仓库三种排序 + 只看源仓库 + 加载更多、公司/位置/博客/X/加入成行且外链可开）；仓库详情与仓库页的 owner、Issue/PR 作者与审核人可点进主页；拆分 `.badge.count` 修掉仓库标签被染红。新增 `users.ts` 与 `UserListSheet`，单测 623 → 657。
+- **v0.6.4**：启动动画重做 —— 旧系统改用 `windowBackground` + layer-list（`android:background` 对窗口不生效，之前开屏会先闪一下默认底色）；Android 12+ 换专用矢量启动图标（正圆白底 + 深色猫，不再复用自适应图标前景层）；新增 `values-night` 深色启动屏；`index.html` 内联首屏遮罩与系统 splash 同构图同尺寸，保险库就绪后淡出，中间不再有白屏。外观新增六组选项（强调色六选一、底栏悬浮/通栏、底栏文字图文/仅图标、背景纯色/氛围光、玻璃三档、动效两档），全部存 localStorage 并在首屏内联脚本里先应用一遍。新增 `appearance.ts` 与 `boot.ts`，单测 657 → 678。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。

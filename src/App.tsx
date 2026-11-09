@@ -48,6 +48,8 @@ import {
   type ThemePref,
 } from './lib/theme'
 import { probeToken } from './lib/tokens'
+import { dismissBoot } from './lib/boot'
+import { applyAppearance, readAppearance, writeAppearance, type Appearance } from './lib/appearance'
 import { setImmersive } from './lib/immersive'
 import { DEFAULT_TABS, TAB_DEFS, fallbackTab, normalizeTabs, toggleTab, type TabKey } from './lib/tabs'
 import {
@@ -174,6 +176,8 @@ export default function App() {
   const [guardBusy, setGuardBusy] = useState(false)
   const [guardError, setGuardError] = useState<string | null>(null)
   const [themePref, setThemePref] = useState<ThemePref>(() => readThemePref())
+  /** 外观选项：首屏已由 index.html 应用到 <html>，这里接管后续变更 */
+  const [appearance, setAppearance] = useState<Appearance>(() => readAppearance())
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(readThemePref()))
   /** 沉浸式全屏：连状态栏一起藏掉，只留内容。只在原生端有意义，Web 上是个空开关。 */
   const [fullscreen, setFullscreen] = useState<boolean>(() => readFullscreen())
@@ -429,6 +433,27 @@ export default function App() {
   }, [applyBack])
 
 
+  /**
+   * 启动遮罩的撤除。
+   * 两个条件：保险库初始化完（ready）→ 再等一帧让首屏画进屏幕，然后淡出。
+   * 另有一个 4 秒兜底：保险库卡住时也不能让遮罩永远盖着。
+   */
+  useEffect(() => {
+    if (!ready) return
+    const t = setTimeout(() => dismissBoot(), 120)
+    return () => clearTimeout(t)
+  }, [ready])
+
+  useEffect(() => {
+    const t = setTimeout(() => dismissBoot(), 4000)
+    return () => clearTimeout(t)
+  }, [])
+
+  // 外观与配色一样：首屏内联脚本已经打上 data-*，这里只做挂载后的对齐
+  useEffect(() => {
+    applyAppearance(appearance)
+  }, [appearance])
+
   /** 配色：首屏已由 index.html 内联脚本处理，这里负责后续切换与系统监听。 */
   useEffect(() => {
     const apply = () => {
@@ -452,6 +477,13 @@ export default function App() {
     } else {
       showToast(pref === 'dark' ? '已切换深色' : '已切换浅色')
     }
+  }
+
+  function changeAppearance(patch: Partial<Appearance>, hint: string) {
+    const next = { ...appearance, ...patch }
+    writeAppearance(next)
+    setAppearance(next)
+    showToast(hint)
   }
 
   function changeFullscreen(on: boolean) {
@@ -1564,6 +1596,8 @@ export default function App() {
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}
+          appearance={appearance}
+          onAppearance={changeAppearance}
           native={Capacitor.isNativePlatform()}
           fullscreen={fullscreen}
           onFullscreen={changeFullscreen}

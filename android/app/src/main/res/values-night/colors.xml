@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        深色系统下的启动屏底色。
+        图标本身带白色圆底，放在深底上反而比白底更清楚（白底 + 白圆只剩深色圆盘）。
+        这样启动屏和 App 的深色界面是同一条色阶，开屏不会先白一下再变深。
+        注意：App 内的主题来自 WebView 的 localStorage，原生侧读不到；
+        用户手动指定了和系统相反的配色时，这一跳无法避免，属于所有原生 App 的共同限制。
+    -->
+    <color name="splash_background">#0D1117</color>
+</resources>

@@ -24,24 +24,195 @@
       首屏前同步应用配色，避免先渲染深色再跳浅色。
       这段必须内联在 head 里：等 React 挂载再切换会闪一帧。
     -->
+    <!--
+      启动遮罩的样式必须内联：外链 CSS 要等打包产物下载完，这中间的几百毫秒
+      正是从系统启动屏切到 WebView 的空窗，不盖住就会看到一闪的白底。
+
+      构图刻意和原生启动屏对齐（圆底猫居中、屏幕正中），这样系统 splash 淡出、
+      这一层淡入时图标不会跳位置；字标和进度条再晚一拍出现，避免两个画面完全一样。
+    -->
+    <style>
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #0d1117;
+        transition: opacity 0.32s ease, visibility 0.32s ease;
+      }
+
+      html[data-theme='light'] #boot {
+        background: #ffffff;
+      }
+
+      #boot[data-leaving='1'] {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      /*
+       * 尺寸要和系统启动屏对齐：Android 12 的启动图标画布是 288dp、
+       * 内容圆是 192dp。这里 SVG 的 viewBox 正好 192，铺到 184px 时
+       * 深色圆盘约 126px，和系统那枚 132dp 的圆盘基本同大 ——
+       * 系统 splash 淡出、这层淡入时不会「缩一下」。
+       */
+      .boot-mark {
+        width: 184px;
+        height: 184px;
+        display: block;
+        animation: boot-in 0.46s cubic-bezier(0.22, 0.9, 0.24, 1) both;
+      }
+
+      .boot-word {
+        margin-top: 18px;
+        font: 600 17px/1 -apple-system, 'PingFang SC', system-ui, sans-serif;
+        letter-spacing: 0.18em;
+        /* 字距是加在每个字右边，整行会偏左；补一个同样的缩进把它摆正 */
+        text-indent: 0.18em;
+        color: #e6edf3;
+        animation: boot-word 0.46s 0.1s ease both;
+      }
+
+      html[data-theme='light'] .boot-word {
+        color: #1f2328;
+      }
+
+      .boot-bar {
+        margin-top: 20px;
+        width: 72px;
+        height: 2px;
+        border-radius: 2px;
+        overflow: hidden;
+        background: rgba(125, 133, 144, 0.22);
+        animation: boot-word 0.46s 0.18s ease both;
+      }
+
+      .boot-bar i {
+        display: block;
+        width: 38%;
+        height: 100%;
+        border-radius: 2px;
+        background: rgba(125, 133, 144, 0.72);
+        animation: boot-slide 1.15s ease-in-out infinite;
+      }
+
+      /* 精简动效：不要缩放也不要滑动，直接静止。
+         系统级的「减少动画」也一起尊重，用户没进 App 改设置之前就已经生效。 */
+      @media (prefers-reduced-motion: reduce) {
+        .boot-mark,
+        .boot-word,
+        .boot-bar,
+        .boot-bar i,
+        #boot {
+          animation: none !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      html[data-motion='calm'] .boot-mark,
+      html[data-motion='calm'] .boot-word,
+      html[data-motion='calm'] .boot-bar,
+      html[data-motion='calm'] .boot-bar i,
+      html[data-motion='calm'] #boot {
+        animation: none;
+        transition-duration: 0.01ms;
+      }
+
+      /* 系统启动屏退出时图标是「略微放大 + 淡出」，这里从 1.04 回落到 1，
+         方向一致，看起来像同一枚图标在收拢，而不是换了一个 */
+      @keyframes boot-in {
+        from {
+          opacity: 0;
+          transform: scale(1.04);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      @keyframes boot-word {
+        from {
+          opacity: 0;
+          transform: translateY(5px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      @keyframes boot-slide {
+        0% {
+          transform: translateX(-110%);
+        }
+        70%,
+        100% {
+          transform: translateX(290%);
+        }
+      }
+    </style>
+    <!--
+      首屏前同步应用配色与外观，避免先渲染默认蓝再跳成用户选的颜色。
+      这段必须内联在 head 里：等 React 挂载再切换会闪一帧。
+      白名单要和 src/lib/appearance.ts 里的 APPEARANCE_FIELDS 一致。
+    -->
     <script>
       ;(function () {
         try {
+          var root = document.documentElement
           var pref = localStorage.getItem('ghx.theme')
           var dark =
             pref === 'dark' ||
             (pref !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-          var root = document.documentElement
           root.dataset.theme = dark ? 'dark' : 'light'
           root.style.colorScheme = dark ? 'dark' : 'light'
           root.style.backgroundColor = dark ? '#0d1117' : '#ffffff'
           var meta = document.querySelector('meta[name="theme-color"]')
           if (meta) meta.setAttribute('content', dark ? '#0d1117' : '#ffffff')
+
+          var pick = function (v, list, fallback) {
+            return list.indexOf(v) >= 0 ? v : fallback
+          }
+          var ap = {}
+          try {
+            ap = JSON.parse(localStorage.getItem('ghx.appearance') || '{}') || {}
+          } catch (e) {
+            ap = {}
+          }
+          root.dataset.accent = pick(ap.accent, ['blue', 'violet', 'teal', 'green', 'amber', 'rose'], 'blue')
+          root.dataset.tabbar = pick(ap.tabbar, ['float', 'dock'], 'float')
+          root.dataset.tablabel = pick(ap.tabLabel, ['both', 'icon'], 'both')
+          root.dataset.bg = pick(ap.bg, ['plain', 'glow'], 'plain')
+          root.dataset.glass = pick(ap.glass, ['clear', 'normal', 'thick'], 'normal')
+          root.dataset.motion = pick(ap.motion, ['full', 'calm'], 'full')
         } catch (e) {}
       })()
     </script>
   </head>
   <body>
+    <!--
+      启动遮罩：系统 splash 退出后由它接力，等保险库初始化完再淡出。
+      结构写死在 HTML 里，不依赖 React —— 它要盖住的正是 React 还没挂载的那段时间。
+    -->
+    <div id="boot" aria-hidden="true">
+      <svg class="boot-mark" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="96" cy="96" r="96" fill="#ffffff" />
+        <g transform="translate(30 30) scale(8.25)">
+          <path
+            fill="#141a22"
+            fill-rule="evenodd"
+            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+          />
+        </g>
+      </svg>
+      <div class="boot-word">ghx</div>
+      <div class="boot-bar"><i></i></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
