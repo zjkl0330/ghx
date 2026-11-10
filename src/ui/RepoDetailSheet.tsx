@@ -358,10 +358,12 @@ export function RepoDetailSheet(p: Props) {
 
           {action('forks', 'fork', '复刻', `${p.repo.forks_count} 份复刻 · 可复刻到自己账号`, async () => p.onOpenForks())}
 
-          {action('clone', 'copy', '复制克隆地址', `https://github.com/${p.repo.full_name}.git`, async () => {
-            const url = `https://github.com/${p.repo.full_name}.git`
-            await navigator.clipboard.writeText(url)
-            p.onToast('克隆地址已复制')
+          {/* 复制的是网页地址，不是 clone 用的 .git 地址：
+              这个 App 里没有终端，拿到 git@… 或 .git 结尾的地址没地方用；
+              仓库地址可以直接粘进浏览器、分享给别人，也能让 git 自己补 .git。 */}
+          {action('repo-url', 'copy', '复制仓库地址', `https://github.com/${p.repo.full_name}`, async () => {
+            await navigator.clipboard.writeText(`https://github.com/${p.repo.full_name}`)
+            p.onToast('仓库地址已复制')
           })}
 
           {action(

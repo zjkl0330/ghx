@@ -3,6 +3,8 @@ import {
   EDGE_BATCH,
   cacheKeyFor,
   hasChinese,
+  isNameLike,
+  looksLikePinyin,
   needsTranslation,
   translateAzureBatch,
   translateBlocks,
@@ -46,6 +48,42 @@ describe('判断是否还需要翻译', () => {
   it('目标日文时，有假名就认为已经是日文', () => {
     expect(needsTranslation('これは日本語の説明です。', 'ja')).toBe(false)
     expect(needsTranslation('A tool for repos.', 'ja')).toBe(true)
+  })
+
+  it('名字型简介不翻（拼音被音译成汉字就是这里漏掉的）', () => {
+    // 真实案例：仓库简介是 MiyoQian，被 Edge 通道翻成「美代倩」
+    expect(needsTranslation('MiyoQian')).toBe(false)
+    expect(needsTranslation('miyouqian')).toBe(false)
+    expect(needsTranslation('esp32_wol')).toBe(false)
+    expect(needsTranslation('ghx')).toBe(false) // 三个字母切不成拼音，但不该被当成句子硬翻
+  })
+
+  it('带空格的短句照常翻，别把句子也当成名字', () => {
+    expect(needsTranslation('My blog')).toBe(true)
+    expect(needsTranslation('self-hosted')).toBe(true)
+    expect(needsTranslation('A small tool.')).toBe(true)
+  })
+})
+
+describe('拼音与名字识别', () => {
+  it('整串拼音切得通才算拼音', () => {
+    expect(looksLikePinyin('miyouqian')).toBe(true)
+    expect(looksLikePinyin('MiyoQian')).toBe(true)
+    expect(looksLikePinyin('beijing')).toBe(true)
+    expect(looksLikePinyin('shanghai')).toBe(true)
+    // 长度不够或切不通的英文词不能误判
+    expect(looksLikePinyin('github')).toBe(false)
+    expect(looksLikePinyin('android')).toBe(false)
+    expect(looksLikePinyin('rust')).toBe(false)
+  })
+
+  it('名字判定保守：多词与带连字符的一律不算名字', () => {
+    expect(isNameLike('MiyoQian')).toBe(true)
+    expect(isNameLike('ghx')).toBe(true)
+    expect(isNameLike('one')).toBe(false) // 有元音的短词是单词，不能当名字跳过
+    expect(isNameLike('clist-cf')).toBe(false)
+    expect(isNameLike('A small tool for repos.')).toBe(false)
+    expect(isNameLike('这是一个中文简介。')).toBe(false)
   })
 })
 

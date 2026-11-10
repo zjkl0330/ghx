@@ -142,6 +142,30 @@ def public(items):
     return [{k: v for k, v in r.items() if k != '_zh'} for r in items]
 
 
+def scroll_row_behind_bar(pg, start=300, target=800):
+    """把一整行挪到底栏正中。
+
+    直接 scrollTo(300) 经常正好停在两行之间的空白上，截图里底栏背后一片纯白，
+    看不出玻璃是不是真的在采样背景 —— 这组图是给「透不透」下判断用的，不能赌。
+    """
+    pg.evaluate(f"document.querySelector('.page').scrollTo(0, {start})")
+    pg.wait_for_timeout(300)
+    pg.evaluate(
+        """(target) => {
+          const page = document.querySelector('.page')
+          const row = [...document.querySelectorAll('.row')].find((r) => {
+            const b = r.getBoundingClientRect()
+            return b.top < target - 100 && b.bottom > target - 100
+          })
+          if (!row) return
+          const b = row.getBoundingClientRect()
+          page.scrollTop += b.top + b.height / 2 - target
+        }""",
+        target,
+    )
+    pg.wait_for_timeout(600)
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     user = {
@@ -251,8 +275,7 @@ def main():
         pg.screenshot(path=f'{OUT}/01-repos.png')
 
         # 滚到底，让内容从玻璃底栏后面穿过去
-        pg.evaluate("document.querySelector('.page').scrollTo(0, 300)")
-        pg.wait_for_timeout(700)
+        scroll_row_behind_bar(pg)
         pg.screenshot(path=f'{OUT}/02-glass-scroll.png')
         pg.evaluate("document.querySelector('.page').scrollTo(0, 0)")
         pg.wait_for_timeout(400)
@@ -291,8 +314,7 @@ def main():
 
         # 浅色主题下的玻璃特写：底栏压着正文，展示模糊与亮边
         pg.evaluate("document.documentElement.dataset.theme='light'")
-        pg.evaluate("document.querySelector('.page').scrollTo(0, 300)")
-        pg.wait_for_timeout(700)
+        scroll_row_behind_bar(pg)
         pg.screenshot(path=f'{OUT}/09-glass-light.png')
         pg.evaluate("document.documentElement.dataset.theme='dark'")
         pg.evaluate("document.querySelector('.page').scrollTo(0, 0)")

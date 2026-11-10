@@ -170,6 +170,80 @@ export function hasChinese(text: string): boolean {
   return han / letters > 0.15
 }
 
+/*
+ * 拼音音节表（不带声调）。只用来判断「这串字母是不是拼音」，
+ * 不做注音转换 —— 转换要词典，离线做不了，做出来也是错的。
+ * 覆盖《汉语拼音方案》全部 400 多个音节，含 lv/nv 这类 v 写法。
+ */
+const PINYIN = new Set(
+  (
+    'a ai an ang ao ba bai ban bang bao bei ben beng bi bian biao bie bin bing bo bu ' +
+    'ca cai can cang cao ce cei cen ceng cha chai chan chang chao che chen cheng chi chong chou chu chua chuai chuan chuang chui chun chuo ci cong cou cu cuan cui cun cuo ' +
+    'da dai dan dang dao de dei den deng di dia dian diao die ding diu dong dou du duan dui dun duo ' +
+    'e ei en eng er fa fan fang fei fen feng fo fou fu ' +
+    'ga gai gan gang gao ge gei gen geng gong gou gu gua guai guan guang gui gun guo ' +
+    'ha hai han hang hao he hei hen heng hong hou hu hua huai huan huang hui hun huo ' +
+    'ji jia jian jiang jiao jie jin jing jiong jiu ju juan jue jun ' +
+    'ka kai kan kang kao ke ken keng kong kou ku kua kuai kuan kuang kui kun kuo ' +
+    'la lai lan lang lao le lei leng li lia lian liang liao lie lin ling liu lo long lou lu luan lun luo lv lve ' +
+    'ma mai man mang mao me mei men meng mi mian miao mie min ming miu mo mou mu ' +
+    'na nai nan nang nao ne nei nen neng ni nian niang niao nie nin ning niu nong nou nu nuan nuo nv nve ' +
+    'o ou pa pai pan pang pao pei pen peng pi pian piao pie pin ping po pou pu ' +
+    'qi qia qian qiang qiao qie qin qing qiong qiu qu quan que qun ' +
+    'ran rang rao re ren reng ri rong rou ru rua ruan rui run ruo ' +
+    'sa sai san sang sao se sen seng sha shai shan shang shao she shei shen sheng shi shou shu shua shuai shuan shuang shui shun shuo si song sou su suan sui sun suo ' +
+    'ta tai tan tang tao te teng ti tian tiao tie ting tong tou tu tuan tui tun tuo ' +
+    'wa wai wan wang wei wen weng wo wu ' +
+    'xi xia xian xiang xiao xie xin xing xiong xiu xu xuan xue xun ' +
+    'ya yan yang yao ye yi yin ying yo yong you yu yuan yue yun ' +
+    'za zai zan zang zao ze zei zen zeng zha zhai zhan zhang zhao zhe zhen zheng zhi zhong zhou zhu zhua zhuai zhuan zhuang zhui zhun zhuo zi zong zou zu zuan zui zun zuo'
+  ).split(' '),
+)
+
+/**
+ * 这串字母能不能整段切成拼音音节（至少两个音节）。
+ *
+ * 为什么要判：机翻通道拿到纯拼音会当外语硬翻，
+ * 「MiyoQian」被音译成「美代倩」—— 用户看到的是一句根本不存在的译文。
+ * 这里用动态规划逐段切，比正则可靠：拼音没有词边界，只能穷举。
+ *
+ * 会有误伤（case = ca+se、awesome = a+we+so+me 都切得通），
+ * 但只在「整段简介就一个词」时才用得上，代价只是少一次没必要的翻译。
+ */
+export function looksLikePinyin(text: string): boolean {
+  const s = text.toLowerCase().replace(/[^a-z]/g, '')
+  if (s.length < 4 || s.length > 40) return false
+  const ok = new Array<boolean>(s.length + 1).fill(false)
+  const syllables = new Array<number>(s.length + 1).fill(0)
+  ok[0] = true
+  for (let i = 1; i <= s.length; i += 1) {
+    for (let len = 1; len <= 6 && len <= i; len += 1) {
+      if (!ok[i - len] || !PINYIN.has(s.slice(i - len, i))) continue
+      ok[i] = true
+      syllables[i] = Math.max(syllables[i], syllables[i - len] + 1)
+    }
+  }
+  return ok[s.length] && syllables[s.length] >= 2
+}
+
+/**
+ * 这段文字是不是「名字」而不是「句子」。
+ *
+ * 典型形态：仓库名、账号、项目名 —— miyouqian / MiyoQian / ghx / esp32-wol。
+ * 这类文本没有语法可翻，机器只能按音硬凑，所以宁可不翻，让原文原样显示。
+ * 判定保守：带空格的（多词）、带连字符的（多半是短语，如 self-hosted）都交给人翻。
+ */
+export function isNameLike(text: string): boolean {
+  const t = text.trim()
+  if (!t || /\s/.test(t)) return false
+  if (!/^[A-Za-z][A-Za-z0-9_.]*$/.test(t)) return false
+  if (/[A-Z]/.test(t.slice(1))) return true // camelCase 与 PascalCase，几乎都是名字
+  if (/[0-9_.]/.test(t)) return true // v2 / esp32 / my_repo
+  // 三个字母以内又没有元音：只可能是缩写或代号（ghx、sdk 之类），不是能翻的词
+  if (t.length <= 3 && !/[aeiouy]/i.test(t)) return true
+  return looksLikePinyin(t)
+}
+
 /**
  * 这段文字对目标语言来说还需不需要翻。
  *
@@ -178,6 +252,8 @@ export function hasChinese(text: string): boolean {
  * 这里按「非目标语言字符占比」判断，中文目标下只要还有成片的英文就翻。
  */
 export function needsTranslation(text: string, target: TargetLang = DEFAULT_TARGET): boolean {
+  // 名字先排除：不管目标语言是什么，翻一个名字都只会得到音译垃圾
+  if (isNameLike(text)) return false
   const visible = text.replace(/\s/g, '').length || 1
   const cjk = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []).length
   const latin = (text.match(/[A-Za-z\u00c0-\u024f]/g) ?? []).length

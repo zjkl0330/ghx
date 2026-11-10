@@ -151,14 +151,17 @@
   --mask: rgba(31, 35, 40, 0.45);
   --shadow: rgba(31, 35, 40, 0.18);
 
-  /* 浅色下玻璃要更透、更白：参考的是 iOS 那种奶白玻璃，
-     背后正文被模糊成一层灰雾，还留着走向，但读不出字。
-     绝不使用纯白 tint —— 白叠白在数学上等于没有（合成结果仍是 #FFFFFF，对比度 1:1），
-     必须比页面略冷略暗，玻璃才有「存在」可谈。半径同样压到 12px。 */
-  --glass-tint: 240, 243, 247;
-  --glass-alpha: 0.6;
-  --glass-blur: 12px;
-  --glass-sat: 150%;
+  /* 浅色玻璃：先满足「看得见背后」，再谈质感。
+   *
+   * 两个数是被截图逼出来的，别再凭手感往上加：
+   * - alpha 0.2：0.6 时合成色是 rgb(246,248,250)，和 #FFFFFF 差 5 级，眼睛判定为实心；
+   * - blur 6px：CSS 的 blur(σ) 是高斯核标准差，σ=20px 时 3σ=60px > 胶囊高度，
+   *   一行 14px 的正文被平均成纯色，透是透了，什么都看不见。σ=6px 才留得住字块轮廓。
+   * tint 用近白冷调（236,241,249），白叠白等于没有，必须差一点点才有「玻璃」可言。 */
+  --glass-tint: 236, 241, 249;
+  --glass-alpha: 0.2;
+  --glass-blur: 6px;
+  --glass-sat: 175%;
   --glass-bg: rgba(var(--glass-tint), var(--glass-alpha));
   --glass-line: rgba(31, 35, 40, 0.12);
   --glass-sheen: rgba(255, 255, 255, 0.95);
@@ -246,8 +249,8 @@
   --glass-blur: 9px;
 }
 :root[data-theme='light'][data-glass='clear'] {
-  --glass-alpha: 0.46;
-  --glass-blur: 9px;
+  --glass-alpha: 0.12;
+  --glass-blur: 5px;
 }
 :root[data-glass='thick'] {
   --glass-alpha: 0.46;
@@ -255,9 +258,9 @@
   --glass-sat: 150%;
 }
 :root[data-theme='light'][data-glass='thick'] {
-  --glass-alpha: 0.78;
-  --glass-blur: 18px;
-  --glass-sat: 140%;
+  --glass-alpha: 0.5;
+  --glass-blur: 14px;
+  --glass-sat: 160%;
 }
 
 /* ---- 底栏只留图标 ---- */
@@ -745,12 +748,14 @@ textarea {
 }
 
 html[data-theme='light'] .glass-backdrop {
+  /* 浅色下压暗层不能重：它铺在正文和底栏之间，压深了正文就变灰，
+     玻璃反而更像一块实色板。留 3% 只为了让玻璃边缘和页面有分界。 */
   background:
-    radial-gradient(64% 120% at 50% 108%, rgba(9, 105, 218, 0.1), transparent 66%),
+    radial-gradient(64% 120% at 50% 108%, rgba(9, 105, 218, 0.08), transparent 66%),
     linear-gradient(
       to top,
-      rgba(31, 35, 40, 0.12) 0%,
-      rgba(31, 35, 40, 0.04) 46%,
+      rgba(31, 35, 40, 0.03) 0%,
+      rgba(31, 35, 40, 0.01) 46%,
       rgba(31, 35, 40, 0) 100%
     );
 }
@@ -792,11 +797,18 @@ html[data-theme='light'] .glass-backdrop {
   align-items: stretch;
   gap: 2px;
   border-radius: 27px;
-  /* 必须是 transparent：实色边会把下面那圈 conic 镜面环整条盖掉 */
   border: 1px solid transparent;
-  background:
-    linear-gradient(var(--glass-bg), var(--glass-bg)) padding-box,
-    var(--glass-rim) border-box;
+  /*
+   * 底色只有一层，镜面环不跟它挤在同一组 background 里。
+   *
+   * 之前写的是 `linear-gradient(玻璃色) padding-box, conic(镜面环) border-box`，
+   * 想用 padding-box 那层盖住环的内侧、只露 1px 边。这招只在不透明底色下成立：
+   * 玻璃是半透明的，压不住底下那层 conic —— 环里 0deg/360deg 是纯白，
+   * 于是一整块底栏被垫成了白板，alpha 调到 0.18 也一样白。
+   * 这正是「浅色下怎么调都不透」的真正原因，不是色值问题。
+   * 环现在由 ::after 用 mask 只留 1px 边，见下面 .tabbar::after。
+   */
+  background: var(--glass-bg);
   box-shadow:
     0 10px 26px rgba(0, 0, 0, 0.38),
     0 2px 6px rgba(0, 0, 0, 0.28),
@@ -811,6 +823,19 @@ html[data-theme='light'] .glass-backdrop {
      clip-path / backdrop-filter / mix-blend-mode / 对应的 will-change）。
      删掉是因为不需要，不是因为它把模糊弄坏了 —— 别把这个错误归因写回注释。 */
   overflow: hidden;
+}
+
+/*
+ * 浅色玻璃的投影要单独给：深色那套 38% 黑压在白纸上是一圈脏影，
+ * 玻璃的边界感靠 1px 环 + 一层很浅的扩散影就够了。
+ */
+:root[data-theme='light'] .tabbar {
+  box-shadow:
+    0 8px 24px rgba(31, 35, 40, 0.13),
+    0 1px 3px rgba(31, 35, 40, 0.09),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 -1px 0 rgba(31, 35, 40, 0.05),
+    inset 0 0 18px rgba(255, 255, 255, 0.1);
 }
 
 /*
@@ -852,19 +877,45 @@ html[data-ime='1'] .actionbar {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
+  /* 颗粒并进这一层：它和顶边高光都是「极淡的一层」，分两个伪元素纯属浪费 */
   background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E"),
     radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.14), transparent 50%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 42%);
 }
 
-/* 磨砂颗粒：单层 0.035。作用是打散 8bit 色带，不是「质感」，重了就是一块脏玻璃 */
-.tabbar::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+/* 浅色下这层白纱要更薄：底色只剩 20%，再糊一层白就回到实心板 */
+:root[data-theme='light'] .tabbar::before {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E"),
+    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.05), transparent 50%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 42%);
+}
+
+/*
+ * 1px 镜面环：只留边框那一圈。
+ *
+ * 用 mask 把中间挖空（content-box 显形 + 整块显形，exclude 取差集），
+ * 环以外的区域完全不绘制，玻璃的透明度因此不会被它拖回实心。
+ *
+ * 必须包在 @supports 里：老 WebView 不认 mask-composite 时，两层 mask 会按
+ * source-over 叠加 —— 结果正是「整块显形」，环又变回一张白板。
+ * 不支持就干脆不画环：底栏还有 1px 内阴影与投影，边界照样分得清。
+ */
+@supports (mask-composite: exclude) {
+  .tabbar::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: var(--glass-rim);
+    pointer-events: none;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
 }
 
 .tabbar button {
