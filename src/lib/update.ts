@@ -228,13 +228,18 @@ export async function openExternal(url: string): Promise<void> {
 export const openDownload = openExternal
 
 /**
- * 探活用 HEAD：只要不是 4xx/5xx 就算通。
+ * 探活用 HEAD，只有 2xx 才算通。
  *
- * 为什么要先探：zip 的候选地址有好几条（url 型反代 / 自建站 302 / 官方），
+ * 为什么要先探：候选地址有好几条（url 型反代 / 自建站 302 / 官方），
  * 国内往往只有其中一条真的能下。把不能下的那条交给浏览器，用户看到的是
  * 「点了没反应」或者一个 0 字节的文件，比多等两秒糟得多。
  *
- * Web 端不做探活：HEAD 基本都被 CORS 挡住，探了反而误判成「全不通」。
+ * 302 不算通：自建站对资产就是先回 302，重定向目标那条链路会 522。
+ * CapacitorHttp 默认跟随重定向，跟到 522 自然是 false；万一没跟随、
+ * 直接把 302 交回来，也应当换下一条而不是赌它。
+ *
+ * Web 端不做探活：HEAD 基本都被 CORS 挡住，探了反而误判成「全不通」，
+ * 所以这里直接返回 true，让调用方沿用第一条（与旧版行为一致）。
  */
 export async function headReachable(url: string, timeoutMs = 2500): Promise<boolean> {
   const cap = (globalThis as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor
@@ -247,7 +252,7 @@ export async function headReachable(url: string, timeoutMs = 2500): Promise<bool
       connectTimeout: timeoutMs,
       readTimeout: timeoutMs,
     })
-    return res.status >= 200 && res.status < 400
+    return res.status >= 200 && res.status < 300
   } catch {
     return false
   }

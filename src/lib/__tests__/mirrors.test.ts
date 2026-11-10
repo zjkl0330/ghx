@@ -31,8 +31,10 @@ import {
   probeMirror,
   rankProbes,
   rawUrlAt,
+  releaseCandidates,
   releaseDownloadUrl,
   releasePageUrl,
+  pickReachable,
   snapshotFresh,
   snapshotOf,
   type ProbeResult,
@@ -468,5 +470,36 @@ describe('改地址后全局生效', () => {
     const list = effectiveMirrors(store)
     expect(list.find((m) => m.id === 'ghproxy')?.base).toBe('https://gh-proxy.com')
     expect(list.find((m) => m.id === 'ghfast')?.base).toBe('https://ghfast.top')
+  })
+})
+
+describe('安装包下载线路', () => {
+  it('当前镜像排第一，公共反代与官方直连依次兜底', () => {
+    const list = releaseCandidates(DEFAULT_MIRROR, 'o', 'r', 'v1', 'a.apk')
+    expect(list[0]).toBe('https://gh.zjkl0330.dpdns.org/o/r/releases/download/v1/a.apk')
+    expect(list).toContain('https://gh-proxy.com/https://github.com/o/r/releases/download/v1/a.apk')
+    expect(list[list.length - 1]).toBe('https://github.com/o/r/releases/download/v1/a.apk')
+    expect(list.length).toBeLessThanOrEqual(4)
+  })
+
+  it('当前镜像本身就是公共反代时不重复出现', () => {
+    const list = releaseCandidates('https://gh-proxy.com', 'o', 'r', 'v1', 'a.apk')
+    expect(list.filter((u) => u.startsWith('https://gh-proxy.com/')).length).toBe(1)
+  })
+
+  it('资产名里的空格与 # 会被编码，不会把路径截断', () => {
+    const list = releaseCandidates(DEFAULT_MIRROR, 'o', 'r', 'v1.0.0', 'gh x#1.apk')
+    expect(list[0]).toContain('gh%20x%231.apk')
+  })
+
+  it('pickReachable 取第一条通的；全不通时退回第一条交给浏览器', async () => {
+    const urls = ['a', 'b', 'c']
+    expect(await pickReachable(urls, async (u) => u === 'b')).toBe('b')
+    expect(await pickReachable(urls, async () => false)).toBe('a')
+    expect(
+      await pickReachable(urls, async () => {
+        throw new Error('boom')
+      }),
+    ).toBe('a')
   })
 })

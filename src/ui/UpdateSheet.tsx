@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { formatSpeed, mirrorLabel, releaseDownloadUrl, releasePageUrl } from '../lib/mirrors'
+import { formatSpeed, mirrorLabel, pickReachable, releaseCandidates, releasePageUrl } from '../lib/mirrors'
 import {
   formatBytes,
   formatDate,
+  headReachable,
   openExternal,
   UPDATE_OWNER,
   UPDATE_REPO,
@@ -54,19 +55,23 @@ export function UpdateSheet(p: Props) {
   const showToggle = notes.length > 260 && !expanded
 
   // 下载地址与页面地址都按「当前镜像」现算：测速换站后不必重新检查更新
-  const downloadUrl =
+  const downloadUrls =
     info?.asset != null
-      ? releaseDownloadUrl(p.mirror, UPDATE_OWNER, UPDATE_REPO, info.tag, info.asset.name)
-      : null
+      ? releaseCandidates(p.mirror, UPDATE_OWNER, UPDATE_REPO, info.tag, info.asset.name)
+      : []
   const pageUrl = releasePageUrl(p.mirror, UPDATE_OWNER, UPDATE_REPO, info?.tag)
   const mirrorName = mirrorLabel(p.mirror)
 
   async function download() {
-    if (!downloadUrl) return
+    if (downloadUrls.length === 0) return
     setOpening(true)
     setOpenError(null)
     try {
-      await openExternal(downloadUrl)
+      // 先 HEAD 探活再唤起浏览器：自建站这类「页面能开、资产偶发 522」的站点会让
+      // 浏览器停在错误页，用户只看到「打不开」。探到能下的那条再交出去；
+      // 探活本身不可靠时（Web 端 CORS）pickReachable 会回退第一条，行为同旧版。
+      const url = await pickReachable(downloadUrls, (u) => headReachable(u))
+      await openExternal(url)
       setOpening(false)
     } catch (err) {
       setOpening(false)
@@ -174,7 +179,7 @@ export function UpdateSheet(p: Props) {
                   </button>
                   <button className="btn primary" disabled={opening} onClick={() => void download()}>
                     <Icon name="download" size={14} />
-                    {opening ? '正在唤起…' : '下载并安装'}
+                    {opening ? '正在选择线路…' : '下载并安装'}
                   </button>
                 </div>
                 <button className="btn ghost block" style={{ marginTop: 8 }} disabled={pageBusy} onClick={() => void openPage()}>

@@ -324,6 +324,68 @@ export function releasePageUrl(base: string, owner: string, repo: string, tag?: 
   return githubUrlAt(useBase, `${seg(owner)}/${seg(repo)}${tail}`)
 }
 
+/* ---------------- Release 资产：多站候选 ---------------- */
+
+/**
+ * 能吃 release 资产的公共反代。
+ *
+ * 实测 2026-11-10：对 ghx 的 APK 做 HEAD 都是 `200` 且 `content-length: 4332867`
+ * （与本地构建逐字节一致），整包能下完。ghproxy.net 同样可用，只是候选总数要留
+ * 位置给官方直连，所以这里只放两个 —— 前两条同时挂掉的概率已经很低。
+ * 自建站不在此列：它把资产 302 到 `release-assets-…` 子域，那条链路返回 522。
+ */
+export const KNOWN_RELEASE_PROXIES = ['https://gh-proxy.com', 'https://ghfast.top']
+
+/**
+ * 下载候选，当前镜像排第一。
+ *
+ * 把用户选中的站放在最前是刻意的：站点修好之后必须立刻恢复默认线路，
+ * 不能因为兜底列表存在就永久绕开自建站。它真的坏了也不会卡住 —— 探活会跳过。
+ */
+export function releaseCandidates(
+  base: string,
+  owner: string,
+  repo: string,
+  tag: string,
+  asset: string,
+  proxies: string[] = KNOWN_RELEASE_PROXIES,
+): string[] {
+  const path = `${seg(owner)}/${seg(repo)}/releases/download/${seg(tag)}/${seg(asset)}`
+  const out: string[] = [githubUrlAt(base, path)]
+  for (const p of proxies) if (p) out.push(githubUrlAt(p, path))
+  out.push(githubUrlAt('https://github.com', path))
+
+  const seen = new Set<string>()
+  const uniq: string[] = []
+  for (const url of out) {
+    const key = url.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    uniq.push(url)
+  }
+  return uniq.slice(0, 4)
+}
+
+/** 探活回调：true 表示这条线路能下 */
+export type ReachProbe = (url: string) => Promise<boolean>
+
+/**
+ * 顺序探活，返回第一条通的。
+ *
+ * 全都不通时回第一条而不是报错：探活本身会失败（企业网络拦 HEAD、代理没给 CORS），
+ * 这时候把选择权交回浏览器比直接判定「下载失败」更有机会成功。
+ */
+export async function pickReachable(candidates: string[], probe: ReachProbe): Promise<string> {
+  for (const url of candidates) {
+    try {
+      if (await probe(url)) return url
+    } catch {
+      // 探活自身异常按不通处理，继续下一条
+    }
+  }
+  return candidates[0] ?? ''
+}
+
 /* ---------------- 测速 ---------------- */
 
 /** 单次探测拉多少字节。够看出吞吐，又不至于在移动网络下太费流量 */
