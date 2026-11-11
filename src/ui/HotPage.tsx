@@ -2,6 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
 import { descText, pickDescItems } from '../lib/desc'
 import {
+  HOT_FRESH,
+  HOT_PAGE_SIZE,
+  loadHotEntry,
+  loadHotPref,
+  peekHot,
+  recallHotPref,
+  rememberHotPref,
+  saveHotEntry,
+  saveHotPref,
+  type HotPref,
+} from '../lib/hotCache'
+import {
   COMMON_LANGUAGES,
   RANGE_LABEL,
   TRENDING_RANGES,
@@ -17,12 +29,16 @@ import {
   repoSearchQuery,
   type SearchSort,
 } from '../lib/search'
+import { snapshotAge } from '../lib/snapshot'
+import type { KV } from '../lib/storage'
 import type { Repo } from '../lib/types'
 import { Icon } from './icons'
 import { useDescTranslation, type DescOptions } from './useDescTranslation'
 
 interface Props {
   client: GitHubClient | null
+  kv: KV | null
+  tokenId: string | null
   descOpts: DescOptions
   onOpenRepo: (repo: Repo) => void
   onToast: (msg: string) => void
@@ -39,27 +55,62 @@ function relTime(iso: string | undefined): string {
   return `${Math.floor(days / 365)} 年前`
 }
 
+/** 首屏骨架。有缓存时根本走不到这里，只有第一次点某个组合才看得到 */
+function SkeletonRows({ count }: { count: number }) {
+  return (
+    <div className="rows" aria-hidden>
+      {Array.from({ length: count }, (_, i) => (
+        <div className="row hot-row" key={i}>
+          <span className="skel skel-rank" />
+          <div className="skel-main">
+            <span className="skel skel-bar" style={{ width: `${34 + ((i * 13) % 38)}%` }} />
+            <span className="skel skel-bar sm" style={{ width: `${58 + ((i * 7) % 34)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /**
  * 热门 / 仓库搜索。
  *
  * 空关键词时走 trending 查询（最近创建 + 日均涨星排序）；
  * 输入关键词后切到 GitHub 全区搜索，可按相关度 / 星数 / 更新时间排序。
- * 两者共用一条列表，避免再开一个页面。
+ *
+ * 两种模式都先吃缓存：热门按 (range, lang) 存快照，十分钟内连请求都不发；
+ * 超过十分钟先把旧的贴上来再静默刷新，切组合时列表原地换掉，不用干等。
  */
 export function HotPage(p: Props) {
-  const [range, setRange] = useState<TrendingRange>('week')
-  const [lang, setLang] = useState<string | null>(null)
+  const firstPref = useMemo(
+    () => (p.tokenId ? recallHotPref(p.tokenId) : null),
+    // 只用于首屏初值，之后由「令牌变化」那个 effect 接管
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+  const firstRange = firstPref?.range ?? 'week'
+  const firstLang = firstPref?.lang ?? null
+  const firstEntry = peekHot(p.tokenId, firstRange, firstLang)
+
+  const [range, setRange] = useState<TrendingRange>(firstRange)
+  const [lang, setLang] = useState<string | null>(firstLang)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<SearchSort>('best')
-  const [repos, setRepos] = useState<Repo[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(false)
+  const [repos, setRepos] = useState<Repo[]>(firstEntry?.repos ?? [])
+  const [total, setTotal] = useState(firstEntry?.repos.length ?? 0)
+  /** 这份数据是什么时候拿到/确认的，副标题用它显示「3 分钟前更新」 */
+  const [at, setAt] = useState<number | null>(firstEntry?.at ?? null)
+  /** 首屏还没有内容时的骨架 */
+  const [loading, setLoading] = useState(firstEntry === null)
+  /** 已经有内容、正在后台换新 */
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** 搜索结果不返回「我是否 star 过」，这里只记本次会话里的手动操作 */
   const [starred, setStarred] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
   /** 连打关键词时只认最后一次请求的结果，避免旧响应把新结果盖掉 */
   const seq = useRef(0)
+  const lastToken = useRef(p.tokenId)
 
   const searchMode = hasKeyword(query)
 
@@ -67,32 +118,145 @@ export function HotPage(p: Props) {
   const descItems = useMemo(() => pickDescItems(repos, 30), [repos])
   const descZh = useDescTranslation(descItems, p.descOpts)
 
+  /** 换组合时先把那一份缓存贴上来：点下去就换，不等网络 */
+  const applyCached = useCallback(
+    (nextRange: TrendingRange, nextLang: string | null) => {
+      // 搜索模式下切语言要重新搜，不能把热门榜单贴到搜索结果里闪一下
+      if (searchMode) {
+        setRepos([])
+        setTotal(0)
+        setAt(null)
+        setError(null)
+        setLoading(true)
+        return
+      }
+      const entry = peekHot(p.tokenId, nextRange, nextLang)
+      setRepos(entry?.repos ?? [])
+      setTotal(entry?.repos.length ?? 0)
+      setAt(entry?.at ?? null)
+      setError(null)
+      setLoading(entry === null)
+    },
+    [p.tokenId, searchMode],
+  )
+
+  const persistPref = useCallback(
+    (pref: HotPref) => {
+      if (!p.tokenId) return
+      rememberHotPref(p.tokenId, pref)
+      void saveHotPref(p.kv, p.tokenId, pref)
+    },
+    [p.kv, p.tokenId],
+  )
+
+  const chooseRange = useCallback(
+    (next: TrendingRange) => {
+      if (next === range) return
+      applyCached(next, lang)
+      setRange(next)
+      persistPref({ range: next, lang })
+    },
+    [applyCached, lang, persistPref, range],
+  )
+
+  const chooseLang = useCallback(
+    (next: string | null) => {
+      if (next === lang) return
+      applyCached(range, next)
+      setLang(next)
+      persistPref({ range, lang: next })
+    },
+    [applyCached, lang, persistPref, range],
+  )
+
+  /**
+   * 冷启动 / 换账号：把设备上存的筛选条件与榜单贴回来。
+   * 内存里没有对应快照时才需要读设备存储（换页签回来是同步命中的）。
+   */
+  useEffect(() => {
+    const id = p.tokenId
+    const changed = lastToken.current !== id
+    lastToken.current = id
+
+    if (!id) {
+      setRepos([])
+      setTotal(0)
+      setAt(null)
+      return
+    }
+    if (changed) {
+      setRepos([])
+      setTotal(0)
+      setAt(null)
+    }
+
+    let alive = true
+    void (async () => {
+      const pref = recallHotPref(id) ?? (await loadHotPref(p.kv, id))
+      if (!alive || !pref) return
+      const entry = await loadHotEntry(p.kv, id, pref.range, pref.lang)
+      if (!alive) return
+      setRange(pref.range)
+      setLang(pref.lang)
+      if (entry) {
+        setRepos(entry.repos)
+        setTotal(entry.repos.length)
+        setAt(entry.at)
+        setLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [p.kv, p.tokenId])
+
   const load = useCallback(
-    async (fresh = false) => {
-      if (!p.client) {
+    async (opts: { fresh?: boolean } = {}) => {
+      const client = p.client
+      if (!client) {
         setRepos([])
         setTotal(0)
         return
       }
       const mine = seq.current + 1
       seq.current = mine
-      setLoading(true)
       setError(null)
+
+      const cached = searchMode ? null : peekHot(p.tokenId, range, lang)
+      const fresh = opts.fresh === true
+      if (cached && !fresh) {
+        // 先把本地那份贴上来，列表立刻有内容
+        setRepos(cached.repos)
+        setTotal(cached.repos.length)
+        setAt(cached.at)
+        setLoading(false)
+        // 足够新就到此为止：热门榜十分钟内不会变出第二副样子，省一次往返与配额
+        if (Date.now() - cached.at < HOT_FRESH) {
+          setRefreshing(false)
+          return
+        }
+      }
+
+      if (cached && cached.repos.length > 0) setRefreshing(true)
+      else setLoading(true)
+
       try {
         if (!searchMode) {
-          const { data } = await p.client.searchRepos(trendingQuery(range, lang), {
-            perPage: 30,
+          const { data } = await client.searchRepos(trendingQuery(range, lang), {
+            perPage: HOT_PAGE_SIZE,
             fresh,
           })
           if (seq.current !== mine) return
           const ranked = rankHot(data)
           setRepos(ranked)
           setTotal(ranked.length)
+          setAt(Date.now())
+          if (p.tokenId) void saveHotEntry(p.kv, p.tokenId, range, lang, ranked)
         } else {
           const q = repoSearchQuery(query, { language: lang })
-          const { data, total: count } = await p.client.searchRepos(q, {
+          const { data, total: count } = await client.searchRepos(q, {
             sort,
-            perPage: 30,
+            perPage: HOT_PAGE_SIZE,
             fresh,
           })
           if (seq.current !== mine) return
@@ -103,10 +267,13 @@ export function HotPage(p: Props) {
         if (seq.current !== mine) return
         setError((err as Error).message)
       } finally {
-        if (seq.current === mine) setLoading(false)
+        if (seq.current === mine) {
+          setLoading(false)
+          setRefreshing(false)
+        }
       }
     },
-    [p.client, range, lang, query, sort, searchMode],
+    [p.client, p.kv, p.tokenId, range, lang, query, sort, searchMode],
   )
 
   // 搜索框边打边搜，别的条件变化立即重查
@@ -115,6 +282,33 @@ export function HotPage(p: Props) {
     const timer = window.setTimeout(() => void load(), delay)
     return () => window.clearTimeout(timer)
   }, [load, searchMode])
+
+  /**
+   * 空闲时把另外两个时间段也拉一遍。
+   *
+   * 用户点「今日」时如果从来没缓存，就得干等一次往返；提前预取，那次点击基本都能命中。
+   * 只在热门模式、且当前组合已经出数据之后做，免得跟首屏请求抢配额。
+   */
+  useEffect(() => {
+    const client = p.client
+    const tokenId = p.tokenId
+    if (!client || !tokenId || searchMode || repos.length === 0) return
+
+    const timer = window.setTimeout(() => {
+      for (const r of TRENDING_RANGES) {
+        if (r === range) continue
+        const known = peekHot(tokenId, r, lang)
+        if (known && Date.now() - known.at < HOT_FRESH) continue
+        void client
+          .searchRepos(trendingQuery(r, lang), { perPage: HOT_PAGE_SIZE })
+          .then(({ data }) => saveHotEntry(p.kv, tokenId, r, lang, rankHot(data)))
+          .catch(() => {
+            /* 预取失败无所谓，点过去时照常请求 */
+          })
+      }
+    }, 1500)
+    return () => window.clearTimeout(timer)
+  }, [p.client, p.kv, p.tokenId, range, lang, searchMode, repos.length])
 
   async function toggleStar(repo: Repo) {
     if (!p.client || busy) return
@@ -136,21 +330,25 @@ export function HotPage(p: Props) {
     }
   }
 
+  const subtitle = searchMode
+    ? loading
+      ? '正在搜索…'
+      : `找到 ${total} 个仓库${total > 30 ? ' · 显示前 30 个' : ''}`
+    : refreshing
+      ? '正在更新…'
+      : at
+        ? `${snapshotAge(at)}更新`
+        : '最近创建 · 按日均涨星排序'
+
   return (
     <>
       <div className="topbar">
         <div style={{ minWidth: 0 }}>
           <div className="page-title">{searchMode ? '搜索' : '热门'}</div>
-          <div className="page-sub ellipsis">
-            {searchMode
-              ? loading
-                ? '正在搜索…'
-                : `找到 ${total} 个仓库${total > 30 ? ' · 显示前 30 个' : ''}`
-              : '最近创建 · 按日均涨星排序'}
-          </div>
+          <div className="page-sub ellipsis">{subtitle}</div>
         </div>
         <div className="spacer" />
-        <button className="icon-btn" onClick={() => void load(true)} aria-label="刷新">
+        <button className="icon-btn" onClick={() => void load({ fresh: true })} aria-label="刷新">
           <Icon name="refresh" size={17} />
         </button>
       </div>
@@ -184,7 +382,7 @@ export function HotPage(p: Props) {
       ) : (
         <div className="seg" style={{ margin: '10px 16px 0' }}>
           {TRENDING_RANGES.map((r) => (
-            <button key={r} className={range === r ? 'on' : ''} onClick={() => setRange(r)}>
+            <button key={r} className={range === r ? 'on' : ''} onClick={() => chooseRange(r)}>
               {RANGE_LABEL[r]}
             </button>
           ))}
@@ -192,14 +390,14 @@ export function HotPage(p: Props) {
       )}
 
       <div className="chips" style={{ paddingTop: 8 }}>
-        <button className={`chip${lang === null ? ' on' : ''}`} onClick={() => setLang(null)}>
+        <button className={`chip${lang === null ? ' on' : ''}`} onClick={() => chooseLang(null)}>
           全部语言
         </button>
         {COMMON_LANGUAGES.map((l) => (
           <button
             key={l}
             className={`chip${lang === l ? ' on' : ''}`}
-            onClick={() => setLang(lang === l ? null : l)}
+            onClick={() => chooseLang(lang === l ? null : l)}
           >
             {l}
           </button>
@@ -207,6 +405,8 @@ export function HotPage(p: Props) {
       </div>
 
       <div className="page" style={{ marginTop: 0 }}>
+        {refreshing && <div className="refresh-bar" />}
+
         {error && (
           <div className="warnbox" style={{ margin: '12px 16px 0' }}>
             <Icon name="warn" size={14} />
@@ -214,9 +414,7 @@ export function HotPage(p: Props) {
           </div>
         )}
 
-        {loading && repos.length === 0 && (
-          <div className="empty">{searchMode ? '正在搜索…' : '正在找最近的热门…'}</div>
-        )}
+        {loading && repos.length === 0 && <SkeletonRows count={8} />}
 
         {!loading && !error && repos.length === 0 && (
           <div className="empty">

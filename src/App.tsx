@@ -33,6 +33,7 @@ import { createIssue } from './lib/issues'
 import { createPull } from './lib/pulls'
 import { canUseNotifications, listNotifications, unreadCount } from './lib/notifications'
 import { loadSnapshot, saveSnapshot, type Snapshot } from './lib/snapshot'
+import { clearHotCache } from './lib/hotCache'
 import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
 import { createKV, type KV } from './lib/storage'
 import {
@@ -908,6 +909,8 @@ export default function App() {
     if (!v) return
     const rec = records.find((r) => r.id === id)
     await v.remove(id)
+    // 账号删了，它名下的热门快照与筛选也一起清掉，别留明文仓库名在设备上
+    void clearHotCache(kvRef.current, id)
     const list = await v.list()
     setRecords(list)
     if (kvRef.current) {
@@ -1543,6 +1546,8 @@ export default function App() {
       {!route && tab === 'hot' && (
         <HotPage
           client={client}
+          kv={kvRef.current}
+          tokenId={activeId}
           descOpts={descOpts}
           onOpenRepo={(r) => {
             setDetailRepo(r)

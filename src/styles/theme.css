@@ -2374,6 +2374,85 @@ h1.title {
   color: var(--green);
 }
 
+/*
+ * 后台刷新：顶部一条 2px 的流动亮条。
+ * 用 sticky + 负 margin 抵消高度，出现与消失都不推动列表。
+ */
+.refresh-bar {
+  position: sticky;
+  top: 0;
+  height: 3px;
+  margin-bottom: -3px;
+  z-index: 3;
+  /* 常驻一条淡底，让「在更新」这件事一眼可见；亮段在上面跑 */
+  background-color: rgba(var(--accent-rgb), 0.22);
+  background-image: linear-gradient(90deg, transparent, rgb(var(--accent-rgb)), transparent);
+  background-size: 45% 100%;
+  background-repeat: no-repeat;
+  animation: refresh-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes refresh-slide {
+  from {
+    background-position: -45% 0;
+  }
+  to {
+    background-position: 145% 0;
+  }
+}
+
+/*
+ * 首屏骨架。只在从来没有缓存过的组合下出现一瞬，
+ * 目的不是装饰，是让「点下去有反应」这件事成立 —— 空的页面看不出在加载。
+ */
+.skel {
+  display: block;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.18);
+  animation: skel-pulse 1.4s ease-in-out infinite;
+}
+
+.skel-rank {
+  width: 14px;
+  height: 10px;
+  margin-top: 3px;
+  flex: none;
+}
+
+.skel-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.skel-bar {
+  height: 11px;
+}
+
+.skel-bar.sm {
+  height: 9px;
+  opacity: 0.7;
+}
+
+@keyframes skel-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refresh-bar,
+  .skel {
+    animation: none;
+  }
+}
+
 /* ---- 排序与快照提示 ---- */
 .segrow {
   display: flex;

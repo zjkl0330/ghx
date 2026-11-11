@@ -51,7 +51,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `releases.ts` `forks.ts` `workflows.ts` | 发行版/复刻/工作流的状态与校验 |
 | `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block、图片路径与镜像 |
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
-| `search.ts` `trending.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、底栏配置、主题、返回键决策、审计、领域类型 |
+| `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策、审计、领域类型 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
 | `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
 | `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked` |
@@ -251,6 +251,7 @@ user / notifications / search / profile / settings / tokens / audit
 - **v0.6.1**：应用图标换成 GitHub 官方 mark 反色（白底 + 深色圆盘 + 白猫，标记占底板 58%）；启动图与 `splash_background` 同步改白，Android 12+ 的 `windowSplashScreenBackground` 一起；新增 `window_background`（#0D1117）承接 `windowBackground` / 系统栏色，避免白底启动屏把横屏白边带回来。单测仍 621。
 - **v0.6.2**：全屏铺满（`setDecorFitsSystemWindows(false)` + 原生 insets 注入成 `--inset-*`，`adjustMarginsForEdgeToEdge: 'disable'`）+ 沉浸式全屏开关（自写 `ImmersivePlugin`，`WindowInsetsControllerCompat`）；键盘改用 `ime` insets 让位、底栏淡出；底栏玻璃按「对比度 1.03:1 / σ 超过胶囊高度 / brightness 空操作」三个实测结论重做（tint 0.26 + `blur(12px)` + conic 镜面环 + 背后 `.glass-backdrop` 压暗层）。设计依据见 `docs/liquid-glass-and-edge-to-edge.md`。新增 2 项单测，总数 623。
 - **v0.6.3**：修好用户主页（旧版 `<img>` 无尺寸约束把整页撑爆，现在头像与仓库行都按列表页结构）；用户搜索结果补头像 / 组织徽标 / 箭头，`name` 图标（不存在）换回 `user`，关键词自动去前导 `@`；用户主页扩展（关注者与正在关注可点开列表、仓库三种排序 + 只看源仓库 + 加载更多、公司/位置/博客/X/加入成行且外链可开）；仓库详情与仓库页的 owner、Issue/PR 作者与审核人可点进主页；拆分 `.badge.count` 修掉仓库标签被染红。新增 `users.ts` 与 `UserListSheet`，单测 623 → 657。
+- **v0.6.7**：热门提速。`hotCache.ts` 按 (range, lang) 存快照，三层（模块内存 / Preferences / api 请求缓存），切换 740ms → 27–31ms 且 0 请求；首屏出数据 1.5s 后空闲预取另外两个时间段；10 分钟内不发请求，超过先渲染再静默刷新；冷启动 147ms（旧 868ms）。`HotPage` 增加骨架行与 3px 刷新条，`loaded` 与 `refreshing` 分开表达「没内容」与「在更新」。落盘只写公开仓库（剔除 private / disabled / permissions），删账号时 `clearHotCache` 一并清。单测 686 → 709。
 - **v0.6.6**：安装包下载改成多候选 + 探活（当前镜像 → gh-proxy.com → ghfast.top → 官方直连），只有 2xx 才算通；此前单条地址直交浏览器，自建站资产偶发 522 时用户只看到白页。`headReachable` 判定由 `< 400` 收紧到 `< 300`。单测 682 → 686。
 - **v0.6.5**：浅色底栏真正透出来 —— 根因是镜面环和半透明底色挤在同一组 `background` 里，`border-box` 的 conic 从 padding-box 底下透出来把整块垫成白板；改成 `::after` 蒙版只留 1px 边，浅色 0.20 底色 + `blur(6px)`。仓库详情「复制克隆地址」改为「复制仓库地址」（网页地址，不带 `.git`）。简介机翻新增名字识别（`isNameLike` / `looksLikePinyin`），拼音不再被音译成汉字。`shots.py` 截图前先把整行挪到底栏正中。单测 678 → 682。
 - **v0.6.4**：启动动画重做 —— 旧系统改用 `windowBackground` + layer-list（`android:background` 对窗口不生效，之前开屏会先闪一下默认底色）；Android 12+ 换专用矢量启动图标（正圆白底 + 深色猫，不再复用自适应图标前景层）；新增 `values-night` 深色启动屏；`index.html` 内联首屏遮罩与系统 splash 同构图同尺寸，保险库就绪后淡出，中间不再有白屏。外观新增六组选项（强调色六选一、底栏悬浮/通栏、底栏文字图文/仅图标、背景纯色/氛围光、玻璃三档、动效两档），全部存 localStorage 并在首屏内联脚本里先应用一遍。新增 `appearance.ts` 与 `boot.ts`，单测 657 → 678。
