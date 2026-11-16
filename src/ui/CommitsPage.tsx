@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
-import { commitTitle, getCommit, listCommits, type CommitDetail, type CommitItem } from '../lib/code'
+import {
+  commitTitle,
+  getCommit,
+  listCommitsPage,
+  mergeCommits,
+  type CommitDetail,
+  type CommitItem,
+} from '../lib/code'
 import type { PullFile } from '../lib/pulls'
 import { relTime, shortDate } from '../lib/format'
 import { DiffView } from './DiffView'
@@ -18,7 +25,11 @@ export function CommitsPage(p: {
   onOpenCommit: (sha: string) => void
 }) {
   const [list, setList] = useState<CommitItem[]>([])
+  /** 下一页页码；null 表示已经到底 */
+  const [next, setNext] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
+  const [more, setMore] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(
@@ -29,9 +40,16 @@ export function CommitsPage(p: {
       }
       if (!silent) setLoading(true)
       setError(null)
+      setMoreError(null)
       try {
-        const data = await listCommits(p.client, p.owner, p.repo, { path: p.path, ref: p.ref, fresh: silent })
-        setList(data)
+        // 刷新一律回到第 1 页：用户点刷新是想要「最新的」，不是想接着往下翻
+        const res = await listCommitsPage(p.client, p.owner, p.repo, {
+          path: p.path,
+          ref: p.ref,
+          fresh: silent,
+        })
+        setList(res.items)
+        setNext(res.next)
       } catch (err) {
         setError((err as Error).message)
       } finally {
@@ -40,6 +58,25 @@ export function CommitsPage(p: {
     },
     [p.client, p.owner, p.repo, p.path, p.ref],
   )
+
+  const loadMore = useCallback(async () => {
+    if (!p.client || next === null || more) return
+    setMore(true)
+    setMoreError(null)
+    try {
+      const res = await listCommitsPage(p.client, p.owner, p.repo, {
+        path: p.path,
+        ref: p.ref,
+        page: next,
+      })
+      setList((prev) => mergeCommits(prev, res.items))
+      setNext(res.next)
+    } catch (err) {
+      setMoreError((err as Error).message)
+    } finally {
+      setMore(false)
+    }
+  }, [p.client, p.owner, p.repo, p.path, p.ref, next, more])
 
   useEffect(() => {
     void load()
@@ -87,8 +124,26 @@ export function CommitsPage(p: {
       </div>
 
       {list.length > 0 && (
-        <div className="hint" style={{ padding: '4px 16px 24px' }}>
-          只列最近 30 条。更早的记录请在网页端按日期翻页。
+        <div className="more-wrap">
+          {moreError && (
+            <div className="warnbox" style={{ marginBottom: 10 }}>
+              <Icon name="warn" size={14} />
+              <span>翻页失败：{moreError}</span>
+              <button className="warn-retry" onClick={() => void loadMore()}>
+                重试
+              </button>
+            </div>
+          )}
+          {next !== null ? (
+            <button className="btn ghost block" onClick={() => void loadMore()} disabled={more}>
+              {more ? <span className="spin" style={{ width: 12, height: 12 }} /> : <Icon name="chevron" size={14} />}
+              {more ? '正在加载…' : `加载更早的提交（已有 ${list.length} 条）`}
+            </button>
+          ) : (
+            <div className="hint" style={{ textAlign: 'center' }}>
+              已到最早一条，共 {list.length} 条
+            </div>
+          )}
         </div>
       )}
     </div>

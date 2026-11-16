@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { GitHubClient, GitHubError, RateLimitError, describeError } from '../api'
+import { GitHubClient, GitHubError, NetworkError, RateLimitError, describeError, isNetworkError } from '../api'
 
 function mockFetch(status: number, body: unknown, headers: Record<string, string> = {}) {
   return vi.fn(async () =>
@@ -353,5 +353,91 @@ describe('Link 头与条件请求', () => {
     const page = await client.request<null>('/notifications', {}, { conditional: true })
     expect(page.notModified).toBe(true)
     expect(page.data).toBe(null)
+  })
+})
+
+describe('网络层失败', () => {
+  /** 模拟浏览器 fetch 的原生拒绝：文案按内核不同 */
+  function failFetch(msg = 'Failed to fetch') {
+    return vi.fn(async () => {
+      throw new TypeError(msg)
+    }) as unknown as typeof fetch
+  }
+
+  it('原生 "Failed to fetch" 被翻译成中文，不透到界面', async () => {
+    const client = new GitHubClient({ token: 't', fetchImpl: failFetch(), retryDelayMs: 0 })
+    const err = await client.request('/user/repos').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(NetworkError)
+    expect((err as Error).message).not.toMatch(/Failed to fetch/i)
+    expect((err as Error).message).toContain('连不上 GitHub')
+    expect((err as NetworkError).status).toBe(0)
+  })
+
+  it('GET 重试一次就能救回瞬时断网', async () => {
+    let n = 0
+    const f = vi.fn(async () => {
+      n += 1
+      if (n === 1) throw new TypeError('Failed to fetch')
+      return new Response(JSON.stringify([{ id: 7 }]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+    const client = new GitHubClient({ token: 't', fetchImpl: f, retryDelayMs: 0 })
+    const page = await client.request<{ id: number }[]>('/user/repos')
+    expect(page.data).toEqual([{ id: 7 }])
+    expect(f).toHaveBeenCalledTimes(2)
+  })
+
+  it('重试也失败时只发两次，不会一直打', async () => {
+    const f = failFetch()
+    const client = new GitHubClient({ token: 't', fetchImpl: f, retryDelayMs: 0 })
+    await expect(client.request('/user/repos')).rejects.toBeInstanceOf(NetworkError)
+    expect(f).toHaveBeenCalledTimes(2)
+  })
+
+  it('写操作不重试：重复 POST 会建出重复资源', async () => {
+    const f = failFetch()
+    const client = new GitHubClient({ token: 't', fetchImpl: f, retryDelayMs: 0 })
+    await expect(
+      client.request('/user/repos', { method: 'POST', body: '{}' }),
+    ).rejects.toBeInstanceOf(NetworkError)
+    expect(f).toHaveBeenCalledTimes(1)
+  })
+
+  it('AbortError 是主动取消，原样抛出且不重试', async () => {
+    let n = 0
+    const f = vi.fn(async () => {
+      n += 1
+      const e = new Error('aborted')
+      e.name = 'AbortError'
+      throw e
+    }) as unknown as typeof fetch
+    const client = new GitHubClient({ token: 't', fetchImpl: f, retryDelayMs: 0 })
+    const err = await client.request('/user/repos').catch((e: unknown) => e)
+    expect((err as Error).name).toBe('AbortError')
+    expect(err).not.toBeInstanceOf(NetworkError)
+    expect(n).toBe(1)
+  })
+
+  it('isNetworkError 认得各内核与 Node 的文案', () => {
+    expect(isNetworkError(new TypeError('Failed to fetch'))).toBe(true)
+    expect(isNetworkError(new TypeError('Load failed'))).toBe(true)
+    expect(isNetworkError(new TypeError('fetch failed'))).toBe(true)
+    expect(isNetworkError(new Error('ECONNREFUSED 127.0.0.1:7890'))).toBe(true)
+    expect(isNetworkError(new GitHubError('仓库不存在', 404))).toBe(false)
+    expect(isNetworkError(null)).toBe(false)
+  })
+
+  it('断网时文案更肯定', async () => {
+    const client = new GitHubClient({ token: 't', fetchImpl: failFetch(), retryDelayMs: 0 })
+    vi.stubGlobal('navigator', { onLine: false })
+    try {
+      const err = await client.request('/user').catch((e: unknown) => e)
+      expect((err as Error).message).toContain('离线')
+      expect((err as NetworkError).offline).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

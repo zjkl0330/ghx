@@ -24,6 +24,7 @@
  * 早期的坑：一个段落整块丢给 MyMemory，超过 500 字节直接被拒，
  * 于是长段落静悄悄留在英文 —— 现在先在块内切分再翻，不会再漏。
  */
+import { isNetworkError } from './api'
 import type { KV } from './storage'
 
 export type TranslateChannel = 'auto' | 'edge' | 'azure' | 'google' | 'mymemory'
@@ -595,15 +596,23 @@ export async function translateChunk(
               : ['edge', 'mymemory', 'google']
 
   const errors: string[] = []
+  let allNetwork = true
   for (const ch of order) {
     try {
       const out = await viaChannel(ch, text, timed, opts)
       return { text: out, channel: ch }
     } catch (err) {
-      errors.push(`${ch}: ${(err as Error).message}`)
+      // 各通道的 fetch 失败会带原生文案（Failed to fetch / Load failed），
+      // 拼进错误串给用户看等于没说话；统一改写成「网络不通」。
+      const net = isNetworkError(err)
+      if (!net) allNetwork = false
+      errors.push(`${ch}: ${net ? '网络不通' : (err as Error).message}`)
     }
   }
-  throw new TranslateError(errors.join(' | ') || '翻译失败', order.join('+'))
+  throw new TranslateError(
+    allNetwork ? '翻译服务连不上，检查网络或换加速站' : errors.join(' | ') || '翻译失败',
+    order.join('+'),
+  )
 }
 
 const joinGlue = (target: TargetLang) => (target.match(/^(zh|ja|ko)/) ? '' : ' ')

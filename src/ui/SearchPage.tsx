@@ -9,6 +9,7 @@ import {
   searchIssues,
   searchQuotaHint,
   searchUsers,
+  highlightTerm,
   splitFullName,
   type SearchKind,
 } from '../lib/search-ext'
@@ -21,6 +22,7 @@ import { Icon } from './icons'
 type Row =
   | { kind: 'repo'; full: string; title: string; sub: string; stars?: number }
   | { kind: 'code'; full: string; path: string; title: string }
+  | { kind: 'commit'; full: string; sha: string; title: string; sub: string }
   | { kind: 'issue'; full: string; number: number; title: string; sub: string }
   | { kind: 'user'; login: string; title: string; sub: string; avatar?: string; badge?: string }
 
@@ -29,16 +31,24 @@ type Row =
  *
  * 不做输入即搜 —— 代码搜索 10 次/分钟的配额经不起边打边搜。
  * 必须点「搜索」或回车才发请求。
+ *
+ * `scope` 是「只在这个仓库里搜」。从仓库页进来时会带上，
+ * 结果点进去直接打开那个文件 / 那次提交，而不是只回到仓库首页。
  */
 export function SearchPage(p: {
   client: GitHubClient | null
+  /** owner/repo；只搜这个仓库 */
+  scope?: string
   onBack: () => void
   onOpenRepo: (full: string) => void
   onOpenUser: (login: string) => void
   onOpenIssue: (owner: string, repo: string, n: number) => void
+  onOpenCode?: (owner: string, repo: string, path: string, find?: string) => void
+  onOpenCommit?: (owner: string, repo: string, sha: string) => void
   onToast: (s: string) => void
 }) {
-  const [kind, setKind] = useState<SearchKind>('repos')
+  const scopeKinds = SEARCH_KINDS.filter((k) => k.key !== 'repos' && k.key !== 'users')
+  const [kind, setKind] = useState<SearchKind>(p.scope ? 'code' : 'repos')
   const [term, setTerm] = useState('')
   const [rows, setRows] = useState<Row[] | null>(null)
   const [total, setTotal] = useState(0)
@@ -75,7 +85,7 @@ export function SearchPage(p: {
           })),
         )
       } else if (k === 'code') {
-        const r = await searchCode(p.client, t, { fresh: true })
+        const r = await searchCode(p.client, t, { fresh: true, repo: p.scope })
         setTotal(r.total)
         setIncomplete(r.incomplete)
         setRows(
@@ -87,7 +97,7 @@ export function SearchPage(p: {
           })),
         )
       } else if (k === 'issues' || k === 'pulls') {
-        const r = await searchIssues(p.client, t, k, { fresh: true })
+        const r = await searchIssues(p.client, t, k, { fresh: true, repo: p.scope })
         setTotal(r.total)
         setIncomplete(r.incomplete)
         setRows(
@@ -118,15 +128,16 @@ export function SearchPage(p: {
           })),
         )
       } else {
-        const r = await searchCommits(p.client, t, { fresh: true })
+        const r = await searchCommits(p.client, t, { fresh: true, repo: p.scope })
         setTotal(r.total)
         setIncomplete(r.incomplete)
         setRows(
           r.items.map((c) => ({
-            kind: 'code' as const,
+            kind: 'commit' as const,
             full: c.repository?.full_name ?? '',
-            path: c.sha.slice(0, 7),
+            sha: c.sha,
             title: c.commit.message.split('\n')[0],
+            sub: `${c.sha.slice(0, 7)} · ${relTime(c.commit.author?.date ?? '')}`,
           })),
         )
       }
@@ -142,7 +153,7 @@ export function SearchPage(p: {
       p.onOpenUser(r.login)
       return
     }
-    const parts = splitFullName(r.full)
+    const parts = splitFullName(r.full) ?? splitFullName(p.scope ?? null)
     if (!parts) {
       p.onToast('这条结果没有仓库信息')
       return
@@ -151,16 +162,37 @@ export function SearchPage(p: {
       p.onOpenIssue(parts.owner, parts.repo, r.number)
       return
     }
-    p.onOpenRepo(r.full)
+    if (r.kind === 'code' && p.onOpenCode) {
+      // 把关键词一起带过去：文件页打开就定位到第一处命中，省掉用户自己再查一遍
+      p.onOpenCode(parts.owner, parts.repo, r.path, highlightTerm(term))
+      return
+    }
+    if (r.kind === 'commit' && p.onOpenCommit) {
+      p.onOpenCommit(parts.owner, parts.repo, r.sha)
+      return
+    }
+    p.onOpenRepo(`${parts.owner}/${parts.repo}`)
   }
 
   const quota = searchQuotaHint(kind)
+  const kinds = p.scope ? scopeKinds : SEARCH_KINDS
 
   return (
     <>
-      <PageHeader title="搜索" sub="GitHub 全区" onBack={p.onBack} />
+      <PageHeader
+        title="搜索"
+        sub={p.scope ? `仅 ${p.scope}` : 'GitHub 全区'}
+        onBack={p.onBack}
+      />
 
       <div className="page" style={{ marginTop: 0 }}>
+        {p.scope && (
+          <div className="scopebar">
+            <Icon name="repo" size={13} />
+            <span className="ellipsis">只在 {p.scope} 里搜</span>
+          </div>
+        )}
+
         <div className="search" style={{ margin: '4px 16px 0' }}>
           <Icon name="search" size={15} />
           <input
@@ -169,7 +201,7 @@ export function SearchPage(p: {
             onKeyDown={(e) => {
               if (e.key === 'Enter') void run()
             }}
-            placeholder="关键词，回车搜索"
+            placeholder={p.scope ? '在这个仓库里找代码、Issue、提交' : '关键词，回车搜索'}
             autoFocus
           />
           <button className="btn ghost tiny" disabled={loading} onClick={() => void run()}>
@@ -178,7 +210,7 @@ export function SearchPage(p: {
         </div>
 
         <div className="chips">
-          {SEARCH_KINDS.map((k) => (
+          {kinds.map((k) => (
             <button
               key={k.key}
               className={`chip${kind === k.key ? ' on' : ''}`}
@@ -229,7 +261,12 @@ export function SearchPage(p: {
                 </span>
               ) : (
                 <span className="file-ic">
-                  <Icon name={r.kind === 'repo' ? 'repo' : r.kind === 'code' ? 'file' : 'issue'} size={16} />
+                  <Icon
+                    name={
+                      r.kind === 'repo' ? 'repo' : r.kind === 'code' ? 'file' : r.kind === 'commit' ? 'clock' : 'issue'
+                    }
+                    size={16}
+                  />
                 </span>
               )}
               <span className="row-main">
@@ -238,7 +275,15 @@ export function SearchPage(p: {
                   {r.kind === 'user' && r.badge && <span className="badge">{r.badge}</span>}
                 </span>
                 <span className="row-meta ellipsis">
-                  {r.kind === 'repo' ? r.sub : r.kind === 'code' ? r.full : r.kind === 'issue' ? `${r.full} #${r.number} · ${r.sub}` : r.sub}
+                  {r.kind === 'repo'
+                    ? r.sub
+                    : r.kind === 'code'
+                      ? r.full
+                      : r.kind === 'commit'
+                        ? r.sub
+                        : r.kind === 'issue'
+                          ? `${r.full} #${r.number} · ${r.sub}`
+                          : r.sub}
                 </span>
               </span>
               {r.kind === 'repo' && r.stars !== undefined && (
@@ -255,6 +300,7 @@ export function SearchPage(p: {
 
         <div className="hint" style={{ padding: '12px 16px 24px' }}>
           代码搜索只搜默认分支，这是 GitHub 的限制。Issue 与 PR 分开搜，因为搜索接口会把两类混在一起。
+          {p.scope ? '限定到仓库时无法搜「仓库」和「用户」这两类。' : ''}
         </div>
       </div>
     </>

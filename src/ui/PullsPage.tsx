@@ -26,6 +26,9 @@ import { PageHeader, PageState } from './PageHeader'
 import { MarkdownView } from './MarkdownView'
 import { DiffView } from './DiffView'
 import { Icon } from './icons'
+import { EMPTY_FILTER, activeCount, filterSummary, matchesFilter, type IssueFilter } from '../lib/issue-filter'
+import { listMilestones, type Milestone } from '../lib/milestones'
+import { IssueFilterSheet } from './IssueFilterSheet'
 import { useLoad } from './useLoad'
 
 /** PR 列表 */
@@ -33,34 +36,77 @@ export function PullsPage(p: {
   client: GitHubClient | null
   owner: string
   repo: string
+  /** 当前账号登录名，用于筛选里的「我」快捷值 */
+  me?: string | null
   onOpen: (n: number) => void
 }) {
   const [filter, setFilter] = useState<'open' | 'closed' | 'all'>('open')
   const [query, setQuery] = useState('')
+  const [adv, setAdv] = useState<IssueFilter>(EMPTY_FILTER)
+  const [sheet, setSheet] = useState(false)
+  const [milestones, setMilestones] = useState<Milestone[]>([])
+  const [msLoading, setMsLoading] = useState(false)
 
   const { data, loading, error, reload } = useLoad(
     () => (p.client ? listPulls(p.client, p.owner, p.repo, { state: filter, perPage: 40 }) : null),
     [p.client, p.owner, p.repo, filter],
   )
 
+  // PR 列表端点不支持 labels / assignee / creator / milestone / since，
+  // 所以筛选只能在这一页里做 —— 弹层里已经写明，避免被当成「全仓库没有」
   const items = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const list = data ?? []
+    const list = (data ?? []).filter((pr) => matchesFilter(pr, adv))
     if (!q) return list
     return list.filter(
-      (pr) => pr.title.toLowerCase().includes(q) || String(pr.number) === q || pr.user?.login?.toLowerCase().includes(q),
+      (pr) =>
+        pr.title.toLowerCase().includes(q) ||
+        String(pr.number) === q ||
+        pr.user?.login?.toLowerCase().includes(q),
     )
-  }, [data, query])
+  }, [data, query, adv])
+
+  const advN = activeCount(adv)
+  const summary = useMemo(() => filterSummary(adv), [adv])
+
+  const openSheet = useCallback(() => {
+    setSheet(true)
+    if (!p.client || msLoading || milestones.length > 0) return
+    setMsLoading(true)
+    listMilestones(p.client, p.owner, p.repo)
+      .then(setMilestones)
+      .catch(() => setMilestones([]))
+      .finally(() => setMsLoading(false))
+  }, [p.client, p.owner, p.repo, msLoading, milestones.length])
 
   return (
     <>
-      <div className="seg" style={{ margin: '8px 16px 0' }}>
-        {(['open', 'closed', 'all'] as const).map((k) => (
-          <button key={k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>
-            {k === 'open' ? '开启中' : k === 'closed' ? '已关闭' : '全部'}
-          </button>
-        ))}
+      <div className="flt-bar">
+        <div className="seg" style={{ flex: 1 }}>
+          {(['open', 'closed', 'all'] as const).map((k) => (
+            <button key={k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>
+              {k === 'open' ? '开启中' : k === 'closed' ? '已关闭' : '全部'}
+            </button>
+          ))}
+        </div>
+        <button
+          className={`flt-btn${advN > 0 ? ' on' : ''}`}
+          onClick={openSheet}
+          aria-label="高级筛选"
+        >
+          <Icon name="filter" size={14} />
+          {advN > 0 ? `筛选 ${advN}` : '筛选'}
+        </button>
       </div>
+
+      {summary.length > 0 && (
+        <div className="flt-sum">
+          <span className="ellipsis">{summary.join(' · ')}</span>
+          <button className="linkbtn" onClick={() => setAdv(EMPTY_FILTER)}>
+            清除
+          </button>
+        </div>
+      )}
 
       <div className="search" style={{ margin: '10px 16px 0' }}>
         <Icon name="search" size={15} />
@@ -71,7 +117,15 @@ export function PullsPage(p: {
         loading={loading && !data}
         error={error}
         onRetry={() => void reload(true)}
-        empty={data && items.length === 0 ? (filter === 'open' ? '没有开启中的 PR' : '这个筛选下没有 PR') : undefined}
+        empty={
+          data && items.length === 0
+            ? advN > 0
+              ? '这一页里没有匹配的 PR，放宽条件或翻页试试'
+              : filter === 'open'
+                ? '没有开启中的 PR'
+                : '这个筛选下没有 PR'
+            : undefined
+        }
       />
 
       <div className="rows">
@@ -79,6 +133,18 @@ export function PullsPage(p: {
           <PullRow key={pr.number} pr={pr} onOpen={() => p.onOpen(pr.number)} />
         ))}
       </div>
+
+      {sheet && (
+        <IssueFilterSheet
+          filter={adv}
+          milestones={milestones}
+          milestonesLoading={msLoading}
+          me={p.me ?? null}
+          pulls
+          onChange={setAdv}
+          onClose={() => setSheet(false)}
+        />
+      )}
     </>
   )
 }

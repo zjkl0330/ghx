@@ -9,6 +9,8 @@ export type SheetName =
   | 'none'
   | 'add'
   | 'visibility'
+  /** 批量动作选择（归档 / 取消归档 / 加话题） */
+  | 'batchpick'
   | 'update'
   | 'detail'
   | 'create'

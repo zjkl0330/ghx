@@ -37,3 +37,24 @@ export function parseTopics(input: string): string[] {
 export function topicsToInput(topics: string[] | undefined | null): string {
   return (topics ?? []).join(', ')
 }
+
+/**
+ * 合并话题：保留原有，追加新的，去重（大小写不敏感），不超过 20 个。
+ *
+ * 批量加话题时必须先读再合并：`PUT /topics` 是**整体替换**，
+ * 直接写新话题会把仓库原有的话题全冲掉。
+ */
+export function mergeTopics(existing: string[] | null | undefined, add: string[]): string[] {
+  const out: string[] = []
+  for (const raw of existing ?? []) {
+    const t = normalizeTopic(raw)
+    if (t && !out.includes(t)) out.push(t)
+  }
+  for (const raw of add) {
+    if (out.length >= MAX_TOPICS) break
+    const t = normalizeTopic(raw)
+    if (!t || out.includes(t)) continue
+    out.push(t)
+  }
+  return out.slice(0, MAX_TOPICS)
+}

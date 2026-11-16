@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
 import {
   deleteFile,
@@ -14,10 +14,68 @@ import {
   writeErrorHint,
   type ContentItem,
 } from '../lib/code'
+import {
+  CODE_PREFS_KEY,
+  CODE_SIZES,
+  DEFAULT_CODE_PREFS,
+  blobUrl,
+  fileStats,
+  findHits,
+  groupHitsByLine,
+  parseCodePrefs,
+  serializeCodePrefs,
+  splitHighlight,
+  stepCodeSize,
+  stepHit,
+  type CodePrefs,
+} from '../lib/code-view'
+import { copyText } from '../lib/clipboard'
 import { baseName, formatBytes, pathSegments } from '../lib/format'
 import { mirrorImage } from '../lib/images'
+import { openExternal } from '../lib/update'
 import { PageHeader, PageState } from './PageHeader'
 import { Icon } from './icons'
+
+/** 读阅读偏好。隐私模式下 localStorage 会抛错，不能让它把整个页面搞崩 */
+function readPrefs(): CodePrefs {
+  try {
+    return parseCodePrefs(localStorage.getItem(CODE_PREFS_KEY))
+  } catch {
+    return { ...DEFAULT_CODE_PREFS }
+  }
+}
+
+function savePrefs(p: CodePrefs): void {
+  try {
+    localStorage.setItem(CODE_PREFS_KEY, serializeCodePrefs(p))
+  } catch {
+    /* 无痕模式写不进去，本次会话仍然生效 */
+  }
+}
+
+/**
+ * 图片文件预览。
+ *
+ * 和 README 里的图一个道理：加速前缀经常不通，只报「加载失败」等于让人放弃。
+ * 先试加速地址，失败自动退回 raw.githubusercontent.com 原图，两次都不行才提示。
+ * 独立组件是为了让 fallback 状态跟着文件切换自动重置（key 换掉就重建）。
+ */
+function FileImage(p: { raw: string; fast: string | null; alt: string; onFail: () => void }) {
+  const [fallback, setFallback] = useState(!p.fast)
+  return (
+    <img
+      src={fallback || !p.fast ? p.raw : p.fast}
+      alt={p.alt}
+      onError={() => {
+        if (!fallback && p.fast) {
+          setFallback(true)
+          return
+        }
+        p.onFail()
+      }}
+    />
+  )
+}
 
 /**
  * 代码浏览：一个组件同时处理「目录」和「文件」。
@@ -40,12 +98,48 @@ export function CodePage(p: {
   /** 看这个文件的提交历史；目录根上不给入口 */
   onHistory: (path: string) => void
   onToast: (s: string) => void
+  /** 从搜索结果跳进来时带的关键词：文件加载完自动打开查找栏并定位第一处 */
+  initialFind?: string
 }) {
   const [kind, setKind] = useState<'dir' | 'file' | 'binary' | 'image' | 'unknown'>('unknown')
   const [items, setItems] = useState<ContentItem[]>([])
   const [file, setFile] = useState<{ item: ContentItem; text: string; truncated: boolean } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  /** 阅读偏好：字号与折行，落 localStorage，换文件不重置 */
+  const [prefs, setPrefs] = useState<CodePrefs>(readPrefs)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [findOpen, setFindOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [hitIdx, setHitIdx] = useState(0)
+  const hitLineRef = useRef<HTMLDivElement | null>(null)
+
+  const lines = useMemo(() => (file ? withLineNumbers(file.text) : []), [file])
+  const hits = useMemo(() => (findOpen ? findHits(lines.map((l) => l.text), query) : []), [findOpen, lines, query])
+  const hitMap = useMemo(() => groupHitsByLine(hits), [hits])
+  const curIndex = hits.length === 0 ? -1 : Math.min(Math.max(hitIdx, 0), hits.length - 1)
+  const curHit = curIndex >= 0 ? hits[curIndex] : undefined
+
+  // 换关键词后从第一处看起，别停在上一次的第 17 处
+  useEffect(() => {
+    setHitIdx(0)
+  }, [query])
+
+  // 搜索跳进来：文件到位后再开查找栏。放在 file 加载之后，
+  // 否则 findHits 拿到的还是空行数组，计数会显示 0/0
+  const seeded = useRef(false)
+  useEffect(() => {
+    if (seeded.current || !p.initialFind || !file) return
+    seeded.current = true
+    setQuery(p.initialFind)
+    setFindOpen(true)
+  }, [p.initialFind, file])
+
+  // 当前命中滚到视野中间：手机上 2000 行文件里靠手动滑根本找不到
+  useEffect(() => {
+    if (!findOpen || !curHit) return
+    hitLineRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [findOpen, curHit?.line, curHit?.start])
 
   const load = useCallback(
     async (silent = false) => {
@@ -199,45 +293,336 @@ export function CodePage(p: {
               <span className="mono ellipsis">
                 {file.item.path} · {languageOf(file.item.path)} · {formatBytes(file.item.size)}
               </span>
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  setFindOpen((on) => !on)
+                  if (findOpen) setQuery('')
+                }}
+                aria-label="文件内查找"
+                style={findOpen ? { color: 'var(--blue)' } : undefined}
+              >
+                <Icon name="search" size={16} />
+              </button>
+              <button className="icon-btn" onClick={() => setSheetOpen(true)} aria-label="更多操作">
+                <Icon name="dots" size={16} />
+              </button>
               <button className="btn ghost tiny" onClick={() => p.onEdit(file.item.path, file.item.sha)}>
                 <Icon name="edit" size={13} />
                 编辑
               </button>
             </div>
+
+            {findOpen && (
+              <div className="findbar">
+                <Icon name="search" size={13} />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="在这个文件里找"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoFocus
+                />
+                <span className={`find-count${query && hits.length === 0 ? ' none' : ''}`}>
+                  {query ? (hits.length === 0 ? '无匹配' : `${curIndex + 1}/${hits.length}`) : ''}
+                </span>
+                <button
+                  className="icon-btn"
+                  disabled={hits.length === 0}
+                  onClick={() => setHitIdx(stepHit(curIndex, hits.length, -1))}
+                  aria-label="上一处"
+                >
+                  <Icon name="chevron" size={15} style={{ transform: 'rotate(180deg)' }} />
+                </button>
+                <button
+                  className="icon-btn"
+                  disabled={hits.length === 0}
+                  onClick={() => setHitIdx(stepHit(curIndex, hits.length, 1))}
+                  aria-label="下一处"
+                >
+                  <Icon name="chevron" size={15} />
+                </button>
+                <button
+                  className="icon-btn"
+                  onClick={() => {
+                    setFindOpen(false)
+                    setQuery('')
+                  }}
+                  aria-label="关闭查找"
+                >
+                  <Icon name="close" size={15} />
+                </button>
+              </div>
+            )}
+
             {file.truncated && (
               <div className="warnbox slim">文件太大，只显示了前一部分</div>
             )}
-            <div className="codeview">
-              {withLineNumbers(file.text).map((l) => (
-                <div className="code-line" key={l.no}>
-                  <span className="code-no">{l.no}</span>
-                  <span className="code-text">{l.text || '\u00a0'}</span>
-                </div>
-              ))}
+            <div
+              className={`codeview${prefs.wrap ? ' wrap' : ''}`}
+              style={{ fontSize: `${prefs.size}px` }}
+            >
+              {lines.map((l, i) => {
+                const onLine = hitMap.get(i)
+                const isCur = curHit?.line === i
+                return (
+                  <div
+                    className={`code-line${onLine ? ' has-hit' : ''}${isCur ? ' cur-hit' : ''}`}
+                    key={l.no}
+                    ref={isCur ? hitLineRef : undefined}
+                  >
+                    <span className="code-no">{l.no}</span>
+                    <span className="code-text">
+                      {onLine
+                        ? splitHighlight(l.text, onLine).map((seg, k) =>
+                            seg.hit ? (
+                              <mark key={k} className="hit">
+                                {seg.text}
+                              </mark>
+                            ) : (
+                              <span key={k}>{seg.text}</span>
+                            ),
+                          )
+                        : l.text || '\u00a0'}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
+
           </>
         )}
 
         {!loading && !error && kind === 'image' && file && (
-          <div className="imgview">
-            <img
-              src={mirrorImage(file.item.download_url ?? '', p.mirror) ?? file.item.download_url ?? ''}
-              alt={file.item.name}
-              onError={(e) => {
-                ;(e.target as HTMLImageElement).style.display = 'none'
-                p.onToast('图片加载失败，可能是加速站没通')
-              }}
-            />
-            <div className="hint" style={{ textAlign: 'center', marginTop: 10 }}>
-              {file.item.path} · {formatBytes(file.item.size)}
+          <>
+            <div className="filebar">
+              <span className="mono ellipsis">
+                {file.item.path} · {formatBytes(file.item.size)}
+              </span>
+              <button className="icon-btn" onClick={() => setSheetOpen(true)} aria-label="更多操作">
+                <Icon name="dots" size={16} />
+              </button>
             </div>
-          </div>
+            <div className="imgview">
+              <FileImage
+                key={file.item.path}
+                raw={file.item.download_url ?? ''}
+                fast={mirrorImage(file.item.download_url ?? '', p.mirror)}
+                alt={file.item.name}
+                onFail={() => p.onToast('图片加载失败：加速站与原图都没通')}
+              />
+              <div className="hint" style={{ textAlign: 'center', marginTop: 10 }}>
+                {file.item.path} · {formatBytes(file.item.size)}
+              </div>
+            </div>
+          </>
         )}
 
         {!loading && !error && kind === 'binary' && file && (
-          <div className="empty">
-            <b>二进制文件</b>
-            这类文件（{formatBytes(file.item.size)}）没法在手机上按文本打开，需要下载后用别的应用看。
+          <>
+            <div className="filebar">
+              <span className="mono ellipsis">
+                {file.item.path} · {formatBytes(file.item.size)}
+              </span>
+              <button className="icon-btn" onClick={() => setSheetOpen(true)} aria-label="更多操作">
+                <Icon name="dots" size={16} />
+              </button>
+            </div>
+            <div className="empty">
+              <b>二进制文件</b>
+              这类文件（{formatBytes(file.item.size)}）没法在手机上按文本打开，用右上「⋯」里的「下载原文件」交给系统应用打开。
+            </div>
+          </>
+        )}
+
+        {/* 操作面板对文本、图片、二进制共用：链接、下载、历史都不依赖文件能否按文本读 */}
+        {sheetOpen && file && !loading && !error && (
+          <div className="mask" onClick={() => setSheetOpen(false)}>
+            <div className="sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="handle" />
+              <div className="sheet-head">
+                <div style={{ minWidth: 0 }}>
+                  <div className="sheet-title ellipsis">{file.item.name}</div>
+                  <div className="sheet-sub mono ellipsis">
+                    {kind === 'file' ? `${fileStats(file.text).lines} 行 · ` : ''}
+                    {formatBytes(file.item.size)} · {languageOf(file.item.path)}
+                  </div>
+                </div>
+                <div className="spacer" />
+                <button className="icon-btn" onClick={() => setSheetOpen(false)} aria-label="关闭">
+                  <Icon name="close" size={17} />
+                </button>
+              </div>
+
+              {kind === 'file' && (
+                <button
+                  className="linkrow"
+                  onClick={() => {
+                    void copyText(file.text).then((ok) =>
+                      p.onToast(
+                        ok
+                          ? `已复制 ${fileStats(file.text).lines} 行${file.truncated ? '（仅已加载部分）' : ''}`
+                          : '复制失败，长按代码手动选择',
+                      ),
+                    )
+                    setSheetOpen(false)
+                  }}
+                >
+                  <Icon name="copy" size={16} />
+                  <span className="linkrow-main">
+                    <b>复制文件内容</b>
+                    <i>整份文本进剪贴板{file.truncated ? '（当前只加载了前一部分）' : ''}</i>
+                  </span>
+                </button>
+              )}
+
+              <button
+                className="linkrow"
+                onClick={() => {
+                  const url = blobUrl(p.owner, p.repo, p.ref, file.item.path, file.item.html_url)
+                  void copyText(url).then((ok) => p.onToast(ok ? '已复制链接' : '复制失败'))
+                  setSheetOpen(false)
+                }}
+              >
+                <Icon name="link" size={16} />
+                <span className="linkrow-main">
+                  <b>复制文件链接</b>
+                  <i>{blobUrl(p.owner, p.repo, p.ref, file.item.path, file.item.html_url)}</i>
+                </span>
+              </button>
+
+              <button
+                className="linkrow"
+                onClick={() => {
+                  void copyText(`${p.owner}/${p.repo}/${file.item.path}`).then((ok) =>
+                    p.onToast(ok ? '已复制路径' : '复制失败'),
+                  )
+                  setSheetOpen(false)
+                }}
+              >
+                <Icon name="repo" size={16} />
+                <span className="linkrow-main">
+                  <b>复制仓库内路径</b>
+                  <i>{file.item.path}</i>
+                </span>
+              </button>
+
+              <button
+                className="linkrow"
+                onClick={() => {
+                  setSheetOpen(false)
+                  void openExternal(blobUrl(p.owner, p.repo, p.ref, file.item.path, file.item.html_url))
+                }}
+              >
+                <Icon name="external" size={16} />
+                <span className="linkrow-main">
+                  <b>在浏览器打开</b>
+                  <i>跳到 github.com 的这个文件</i>
+                </span>
+              </button>
+
+              <button
+                className="linkrow"
+                onClick={() => {
+                  const raw = file.item.download_url
+                  const target = raw ? (mirrorImage(raw, p.mirror) ?? raw) : null
+                  setSheetOpen(false)
+                  if (!target) {
+                    p.onToast('这个文件没有直链，用「在浏览器打开」再保存')
+                    return
+                  }
+                  void openExternal(target)
+                }}
+              >
+                <Icon name="download" size={16} />
+                <span className="linkrow-main">
+                  <b>下载原文件</b>
+                  <i>交给系统浏览器下载，图片与二进制走这里</i>
+                </span>
+              </button>
+
+              <button
+                className="linkrow"
+                onClick={() => {
+                  setSheetOpen(false)
+                  p.onHistory(file.item.path)
+                }}
+              >
+                <Icon name="clock" size={16} />
+                <span className="linkrow-main">
+                  <b>这个文件的提交历史</b>
+                  <i>只列出动过这个路径的提交</i>
+                </span>
+              </button>
+
+              {kind === 'file' && (
+                <div className="sheet-sec">
+                  <div className="sizerow">
+                    <span className="sheet-sec-label" style={{ flex: 1 }}>
+                      字号
+                    </span>
+                    <button
+                      className="sizebtn"
+                      disabled={prefs.size === CODE_SIZES[0]}
+                      onClick={() => {
+                        const next = { ...prefs, size: stepCodeSize(prefs.size, -1) }
+                        setPrefs(next)
+                        savePrefs(next)
+                      }}
+                      aria-label="缩小字号"
+                    >
+                      A−
+                    </button>
+                    <span className="sizeval mono">{prefs.size}</span>
+                    <button
+                      className="sizebtn"
+                      disabled={prefs.size === CODE_SIZES[CODE_SIZES.length - 1]}
+                      onClick={() => {
+                        const next = { ...prefs, size: stepCodeSize(prefs.size, 1) }
+                        setPrefs(next)
+                        savePrefs(next)
+                      }}
+                      aria-label="放大字号"
+                    >
+                      A+
+                    </button>
+                  </div>
+                  <label className="tglrow">
+                    <span className="tgl-main">
+                      <b>长行折行</b>
+                      <i>关掉就横向滚动，和 GitHub 网页一致</i>
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="tgl"
+                      checked={prefs.wrap}
+                      onChange={(e) => {
+                        const next = { ...prefs, wrap: e.target.checked }
+                        setPrefs(next)
+                        savePrefs(next)
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+
+              {kind === 'file' && (
+                <div className="btnrow" style={{ paddingBottom: 22 }}>
+                  <button
+                    className="btn primary"
+                    onClick={() => {
+                      setSheetOpen(false)
+                      p.onEdit(file.item.path, file.item.sha)
+                    }}
+                  >
+                    <Icon name="edit" size={14} />
+                    编辑这个文件
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

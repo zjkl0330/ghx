@@ -44,4 +44,24 @@ public class ImmersivePlugin extends Plugin {
             call.resolve(ret);
         });
     }
+
+    /**
+     * 让页面主动要一次 insets。
+     *
+     * 为什么需要它：启动阶段原生推过四次，但页面可能在第四次之后才真正挂载完成
+     * （保险库解密慢、低端机、或者从后台被系统杀掉后重建）。这时变量是空的，
+     * 顶栏又会钻到状态栏底下。由 JS 在自己认为「已经就绪」的时刻再要一次，
+     * 比在原生侧继续拉长轮询时间可靠。
+     *
+     * 顺带把当前值回给调用方，方便排查：页面上拿到的什么，这里就能对上。
+     */
+    @PluginMethod
+    public void syncInsets(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            InsetsBridge.sync(getActivity(), true);
+            JSObject ret = new JSObject();
+            ret.put("ok", true);
+            call.resolve(ret);
+        });
+    }
 }

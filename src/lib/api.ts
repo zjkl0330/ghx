@@ -41,6 +41,44 @@ export class RateLimitError extends GitHubError {
   }
 }
 
+/**
+ * 网络层失败：断网、DNS 解析不到、代理挂掉、被跨域拦截。
+ * 这时浏览器抛的是原生 TypeError，文案按内核各不相同 —— Chromium 给
+ * "Failed to fetch"，老 WebKit 给 "Load failed"，Firefox 给
+ * "NetworkError when attempting to fetch resource"。这些句子对用户没有
+ * 任何信息量，所以在这一层统一翻掉，别让它冒到界面上。
+ * status 记 0：请求根本没拿到回复，和 GitHub 返回的 4xx/5xx 不是一回事。
+ */
+export class NetworkError extends GitHubError {
+  constructor(
+    /** 设备自己就没联网（navigator.onLine === false），文案可以更肯定 */
+    readonly offline = false,
+    readonly cause?: unknown,
+  ) {
+    super(offline ? '设备已离线，联网后再试' : '连不上 GitHub，检查网络或换加速站', 0)
+    this.name = 'NetworkError'
+  }
+}
+
+/** 各内核的网络层错误文案，加上 Node/undici 与常见 socket 错误码 */
+const NET_FAIL_RE = /Failed to fetch|Load failed|NetworkError|fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ERR_NETWORK/i
+
+/** 判断是不是网络层失败。已包装过的 NetworkError 与外层原生 TypeError 都算。 */
+export function isNetworkError(err: unknown): boolean {
+  if (err instanceof NetworkError) return true
+  if ((err as Error)?.name === 'AbortError') return false
+  const msg = (err as Error)?.message
+  return typeof msg === 'string' && NET_FAIL_RE.test(msg)
+}
+
+function offlineNow(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 interface RawError {
   message?: string
   documentation_url?: string
@@ -82,6 +120,8 @@ export interface ClientOptions {
   token: string
   baseUrl?: string
   fetchImpl?: typeof fetch
+  /** 网络层失败后重试的等待毫秒数，默认 400；单测传 0 免得白等 */
+  retryDelayMs?: number
 }
 
 /**
@@ -98,6 +138,7 @@ export class GitHubClient {
   readonly baseUrl: string
   private readonly token: string
   private readonly fetchImpl: typeof fetch
+  private readonly retryDelayMs: number
   /** 请求级缓存，跟着 client 走：换令牌就是新实例，不会串数据 */
   private readonly cache = new ResponseCache()
   rate: RateLimit | null = null
@@ -107,6 +148,32 @@ export class GitHubClient {
     this.token = opts.token
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
+    this.retryDelayMs = opts.retryDelayMs ?? 400
+  }
+
+  /**
+   * 发请求，网络层失败重试一次。
+   *
+   * 手机上「Failed to fetch」多半是切基站、锁屏后重连、代理抖一下这种瞬时故障，
+   * 隔几百毫秒重发一次就能救回来，比让用户看到红条再自己点刷新体验好得多。
+   * 只重试 GET：写操作重发可能重复建仓库、重复评论。
+   * AbortError 是调用方主动取消（切页、组件卸载），不是故障，原样抛出。
+   */
+  private async send(url: string, init: RequestInit, retryable: boolean): Promise<Response> {
+    const tries = retryable ? 2 : 1
+    for (let i = 0; i < tries; i += 1) {
+      try {
+        return await this.fetchImpl(url, init)
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') throw err
+        if (i < tries - 1) {
+          if (this.retryDelayMs > 0) await sleep(this.retryDelayMs)
+          continue
+        }
+        throw new NetworkError(offlineNow(), err)
+      }
+    }
+    throw new NetworkError(offlineNow())
   }
 
   /** 手动清缓存。刷新按钮与下拉刷新用得到 */
@@ -151,17 +218,21 @@ export class GitHubClient {
     const stale = method === 'GET' && opts.conditional ? this.cache.peek<T>(path) : null
 
     const url = path.startsWith('http') ? path : `${this.baseUrl}${path}`
-    const res = await this.fetchImpl(url, {
-      ...init,
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${this.token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(stale?.etag ? { 'If-None-Match': stale.etag } : {}),
-        ...(init.headers as Record<string, string> | undefined),
+    const res = await this.send(
+      url,
+      {
+        ...init,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${this.token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(stale?.etag ? { 'If-None-Match': stale.etag } : {}),
+          ...(init.headers as Record<string, string> | undefined),
+        },
       },
-    })
+      method === 'GET',
+    )
 
     const rate = this.readRate(res.headers)
     this.rate = rate
@@ -211,13 +282,17 @@ export class GitHubClient {
     opts: { accept?: string; maxBytes?: number } = {},
   ): Promise<{ text: string; status: number; rate: RateLimit | null; truncated: boolean }> {
     const url = path.startsWith('http') ? path : `${this.baseUrl}${path}`
-    const res = await this.fetchImpl(url, {
-      headers: {
-        Accept: opts.accept ?? 'application/vnd.github.raw',
-        Authorization: `Bearer ${this.token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
+    const res = await this.send(
+      url,
+      {
+        headers: {
+          Accept: opts.accept ?? 'application/vnd.github.raw',
+          Authorization: `Bearer ${this.token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
       },
-    })
+      true,
+    )
     const rate = this.readRate(res.headers)
     this.rate = rate
     if (!res.ok) {

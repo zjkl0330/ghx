@@ -17,13 +17,6 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
 
-    /** 上一次注入给页面的内边距（CSS px）。相同就不重复 evaluate，避免每次布局都过一遍 JS 桥。 */
-    private int lastTop = -1;
-    private int lastBottom = -1;
-    private int lastLeft = -1;
-    private int lastRight = -1;
-    private int lastKeyboard = -1;
-
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // 自定义插件要在 super 之前登记：BridgeActivity 在 onCreate 里就把 Bridge 建好了。
@@ -101,59 +94,45 @@ public class MainActivity extends BridgeActivity {
              * 判据是 ime.bottom 是否超过系统栏：手势条高度在键盘收起时也非零。
              */
             int keyboard = ime.bottom > bars.bottom ? ime.bottom : 0;
-            pushInsets(bars.top, bars.bottom, bars.left, bars.right, keyboard);
+            InsetsBridge.apply(this, webView, bars.top, bars.bottom, bars.left, bars.right, keyboard, false);
             // 不消费：别的监听者（输入法、键盘避让）还要用这份 insets
             return windowInsets;
         });
 
-        // 冷启动兜底：insets 回调可能早于页面脚本执行，那时 evaluateJavascript 落空。
-        // 页面加载完不会再有 insets 变化，所以补两次延时注入。
-        final WebView wv = webView;
-        wv.postDelayed(() -> repush(wv), 400);
-        wv.postDelayed(() -> repush(wv), 1600);
-    }
-
-    private void repush(WebView webView) {
-        WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(webView);
-        if (insets == null) return;
-        Insets bars = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-        Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
-        pushInsets(bars.top, bars.bottom, bars.left, bars.right,
-                ime.bottom > bars.bottom ? ime.bottom : 0);
+        /*
+         * 启动兜底：必须 force。
+         *
+         * insets 回调大多发生在页面开始加载之前，那一次 evaluateJavascript 跑在 about:blank 上，
+         * 变量随着导航到 https://localhost/ 一起消失。而「值没变就不推」的去重会让后面的补推
+         * 直接 return —— v0.6.7 之前顶栏被状态栏压住就是这个原因。
+         *
+         * 四次覆盖前 5 秒：本地资源一般 1 秒内加载完，慢机型也不会超过 5 秒。
+         * 之后由 onResume 与 JS 主动调用 Immersive.syncInsets 兜后续场景。
+         */
+        webView.postDelayed(() -> InsetsBridge.sync(this, true), 300);
+        webView.postDelayed(() -> InsetsBridge.sync(this, true), 900);
+        webView.postDelayed(() -> InsetsBridge.sync(this, true), 2000);
+        webView.postDelayed(() -> InsetsBridge.sync(this, true), 4000);
     }
 
     /**
-     * 把 insets 换成 CSS px 写到 :root 上。
-     * 用 density 而不是 scaledDensity —— 布局单位不跟系统字体缩放走。
+     * 切回前台时补一次。
+     * 用户可能在别的应用里改了系统栏样式（手势导航、隐藏状态栏、旋转锁定），
+     * 回来时窗口不会重新派发 insets，页面里的变量就停在旧值上。
      */
-    private void pushInsets(int top, int bottom, int left, int right, int keyboard) {
-        float density = getResources().getDisplayMetrics().density;
-        if (density <= 0f) density = 1f;
-        int t = Math.round(top / density);
-        int b = Math.round(bottom / density);
-        int l = Math.round(left / density);
-        int r = Math.round(right / density);
-        int k = Math.round(keyboard / density);
-
-        if (t == lastTop && b == lastBottom && l == lastLeft && r == lastRight && k == lastKeyboard) {
-            return;
-        }
-        lastTop = t;
-        lastBottom = b;
-        lastLeft = l;
-        lastRight = r;
-        lastKeyboard = k;
-
-        String js = "(function(){var d=document.documentElement,s=d.style;"
-                + "s.setProperty('--inset-top','" + t + "px');"
-                + "s.setProperty('--inset-bottom','" + b + "px');"
-                + "s.setProperty('--inset-left','" + l + "px');"
-                + "s.setProperty('--inset-right','" + r + "px');"
-                + "s.setProperty('--inset-ime','" + k + "px');"
-                + "if(" + k + ">0){d.setAttribute('data-ime','1');}else{d.removeAttribute('data-ime');}"
-                + "})();";
-        WebView webView = getBridge().getWebView();
-        webView.post(() -> webView.evaluateJavascript(js, null));
+    @Override
+    public void onResume() {
+        super.onResume();
+        /*
+         * 窗口标志再写一遍。
+         * 主题切换、系统改手势导航、从分屏恢复，都可能让 decorFitsSystemWindows 回到默认值 ——
+         * 一旦回到 true，insets 在派发到 WebView 之前就被 decor 消费掉，
+         * 页面拿到的永远是 0。这一步是幂等的，代价只有一次属性赋值。
+         */
+        Window window = getWindow();
+        WindowCompat.setDecorFitsSystemWindows(window, false);
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+        InsetsBridge.sync(this, true);
     }
 }

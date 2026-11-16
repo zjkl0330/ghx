@@ -65,6 +65,24 @@ export function issueQuery(
   return parts.filter(Boolean).join(' ')
 }
 
+/**
+ * 从查询串里挑出「真正要高亮的那几个字」。
+ *
+ * 代码搜索的输入常常是 `foo lang:ts repo:a/b path:src`，把整串丢给文件页的查找栏
+ * 一条都匹配不上 —— 文件里不会出现 `repo:` 这种字面量。
+ * 这里去掉限定符（`key:value` / `key:"a b"`），剩下的第一个词当关键词。
+ */
+export function highlightTerm(query: string): string {
+  const stripped = query
+    .replace(/\b[a-zA-Z_]+:"[^"]*"/g, ' ')
+    .replace(/\b[a-zA-Z_]+:\S+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const first = stripped.split(' ')[0] ?? ''
+  // 去掉包裹的引号，`"foo bar"` 里取 foo 更可能命中
+  return first.replace(/^"|"$/g, '')
+}
+
 /** 搜索接口的总数统计。incomplete_results 表示服务端没扫完，别把数字说成精确值 */
 export interface SearchResult<T> {
   items: T[]

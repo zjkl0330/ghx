@@ -140,6 +140,13 @@ function textWithoutImages(raw: string): string {
 
 const HR = /^ {0,3}([-*_])\s*(\1\s*){2,}$/
 const HEADING = /^ {0,3}(#{1,6})\s+(.*)$/
+/**
+ * 独占一行的 HTML 标题：`<h1 align="center">标题</h1>`。
+ * GitHub 上大量个人主页自述就是这么写标题的，按普通段落处理会丢掉层级，
+ * 一整页看起来全是等大的正文。只认「整行一个标签」这种最常见的形式，
+ * 里面还有别的块级结构就留给段落逻辑，不硬猜。
+ */
+const HTML_HEADING = /^\s*<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>\s*$/i
 const UL = /^(\s*)[-*+]\s+(.*)$/
 const OL = /^(\s*)\d{1,3}[.)]\s+(.*)$/
 const QUOTE = /^ {0,3}>\s?(.*)$/
@@ -249,6 +256,15 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
     if (HR.test(line)) {
       flushPara()
       blocks.push({ kind: 'hr' })
+      i += 1
+      continue
+    }
+
+    const htmlHeading = HTML_HEADING.exec(line)
+    if (htmlHeading) {
+      flushPara()
+      const text = inline(htmlHeading[2])
+      if (text) blocks.push({ kind: 'h', level: Number(htmlHeading[1]), text })
       i += 1
       continue
     }

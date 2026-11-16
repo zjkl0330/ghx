@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { GitHubClient } from '../api'
 import {
+  branchFromBlobUrl,
   findChineseReadmeLink,
   joinRepoPath,
   looksChinese,
+  normalizeReadme,
   pickChineseReadmeFile,
   readmeDir,
   type ReadmeFile,
@@ -214,5 +216,55 @@ describe('图片式语言切换与标签很重的中文 README', () => {
       '不需要注册账号，也不需要安装任何东西，全部在本地运行。',
     ].join('\n')
     expect(looksChinese(md)).toBe(true)
+  })
+})
+
+
+describe('branchFromBlobUrl', () => {
+  it('从 html_url 里取分支名', () => {
+    expect(
+      branchFromBlobUrl('https://github.com/zjkl0330/zjkl0330/blob/main/README.md', 'README.md'),
+    ).toBe('main')
+  })
+
+  it('分支名带斜杠也能取对', () => {
+    expect(
+      branchFromBlobUrl('https://github.com/o/r/blob/feat/docs/README.md', 'README.md'),
+    ).toBe('feat/docs')
+  })
+
+  it('README 在子目录时取的是分支而不是目录', () => {
+    expect(
+      branchFromBlobUrl('https://github.com/o/r/blob/dev/docs/README.md', 'docs/README.md'),
+    ).toBe('dev')
+  })
+
+  it('中文分支名会被解码', () => {
+    expect(
+      branchFromBlobUrl(
+        'https://github.com/o/r/blob/%E4%B8%BB%E5%B9%B2/README.md',
+        'README.md',
+      ),
+    ).toBe('主干')
+  })
+
+  it('解不出来时返回 null，调用方退回 main', () => {
+    expect(branchFromBlobUrl(null, 'README.md')).toBeNull()
+    expect(branchFromBlobUrl('https://github.com/o/r', 'README.md')).toBeNull()
+    expect(branchFromBlobUrl('https://github.com/o/r/blob/main/other.md', 'README.md')).toBeNull()
+    expect(branchFromBlobUrl('https://github.com/o/r/blob/main/README.md', '')).toBeNull()
+  })
+})
+
+describe('normalizeReadme 保留 sha', () => {
+  it('响应带 sha 时留在结果里，编辑要用它做乐观锁', () => {
+    const f = normalizeReadme({ ...file('README.md', '# hi'), sha: 'abc123' } as never)
+    expect(f?.sha).toBe('abc123')
+  })
+
+  it('没有 sha 时不塞一个空值进去', () => {
+    const f = normalizeReadme(file('README.md', '# hi') as never)
+    expect(f).not.toBeNull()
+    expect('sha' in (f as object)).toBe(false)
   })
 })

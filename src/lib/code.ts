@@ -11,6 +11,7 @@
  */
 
 import type { ApiClient, GitHubClient } from './api'
+import { nextPage } from './paging'
 
 export type ContentType = 'file' | 'dir' | 'symlink' | 'submodule'
 
@@ -267,6 +268,55 @@ export async function deleteFile(
   )
 }
 
+export interface CommitPageResult {
+  items: CommitItem[]
+  /** 下一页页码，null 表示到底 */
+  next: number | null
+}
+
+/**
+ * 提交历史（一页）。传 path 就只看这个文件的历史。
+ *
+ * 为什么单独给一页而不是「一次拉到底」：仓库动辄几千次提交，
+ * 全量拉十页既慢又容易把配额烧光，用户九成情况下只看最近几条。
+ */
+export async function listCommitsPage(
+  client: ApiClient,
+  owner: string,
+  repo: string,
+  opts: { path?: string; ref?: string; page?: number; perPage?: number; fresh?: boolean } = {},
+): Promise<CommitPageResult> {
+  const perPage = opts.perPage ?? 30
+  const page = opts.page ?? 1
+  const query = new URLSearchParams({ per_page: String(perPage), page: String(page) })
+  if (opts.path) query.set('path', opts.path)
+  if (opts.ref) query.set('sha', opts.ref)
+  const res = await client.request<CommitItem[]>(
+    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?${query.toString()}`,
+    {},
+    { fresh: opts.fresh },
+  )
+  const items = res.data ?? []
+  return { items, next: nextPage(res.link, page, items.length, perPage) }
+}
+
+/**
+ * 合并两页提交，按 sha 去重。
+ *
+ * 去重不是洁癖：force push 或分页边界上服务端可能吐出重复项，
+ * 重复的 React key 会让列表跳一下，还会把「已加载 N 条」这个数字算多。
+ */
+export function mergeCommits(prev: CommitItem[], incoming: CommitItem[]): CommitItem[] {
+  const seen = new Set(prev.map((c) => c.sha))
+  const out = [...prev]
+  for (const c of incoming) {
+    if (seen.has(c.sha)) continue
+    seen.add(c.sha)
+    out.push(c)
+  }
+  return out
+}
+
 /** 提交历史。传 path 就只看这个文件的历史 */
 export async function listCommits(
   client: ApiClient,
@@ -274,18 +324,8 @@ export async function listCommits(
   repo: string,
   opts: { path?: string; ref?: string; page?: number; perPage?: number; fresh?: boolean } = {},
 ): Promise<CommitItem[]> {
-  const query = new URLSearchParams({
-    per_page: String(opts.perPage ?? 30),
-    page: String(opts.page ?? 1),
-  })
-  if (opts.path) query.set('path', opts.path)
-  if (opts.ref) query.set('sha', opts.ref)
-  const { data } = await client.request<CommitItem[]>(
-    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?${query.toString()}`,
-    {},
-    { fresh: opts.fresh },
-  )
-  return data ?? []
+  const res = await listCommitsPage(client, owner, repo, opts)
+  return res.items
 }
 
 export interface CommitDetail extends CommitItem {

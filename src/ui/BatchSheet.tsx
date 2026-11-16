@@ -1,8 +1,16 @@
-import type { BatchResult, VisibilityPlan } from '../lib/types'
+import type { BatchPlanItem } from '../lib/repos'
+import type { BatchResult } from '../lib/types'
 import { Icon } from './icons'
 
-interface Props {
-  plan: VisibilityPlan[]
+/**
+ * 批量动作的确认 / 执行 / 结果三态面板。
+ *
+ * 早先只服务「改可见度」，现在把动作抽象成 `BatchPlanItem`，
+ * 归档、加话题都走同一套进度与逐条回执，不再各写一个弹层。
+ */
+export function BatchSheet(p: {
+  title: string
+  plan: BatchPlanItem[]
   phase: 'confirm' | 'running' | 'done'
   results: BatchResult[]
   done: number
@@ -11,12 +19,10 @@ interface Props {
   onCancel: () => void
   onConfirm: () => void
   onClose: () => void
-}
-
-export function VisibilitySheet(p: Props) {
-  const target = p.plan[0]?.to ?? 'private'
-  const destructive = p.plan.filter((i) => i.destructive)
+}) {
+  const destructive = p.plan.filter((i) => i.destructive && !i.skip)
   const blocked = p.plan.filter((i) => i.blocked)
+  const skip = p.plan.filter((i) => i.skip)
   const okCount = p.results.filter((r) => r.status === 'ok').length
   const failCount = p.results.length - okCount
 
@@ -26,7 +32,7 @@ export function VisibilitySheet(p: Props) {
         <div className="mask" onClick={p.onClose} />
         <div className="sheet">
           <div className="grab" />
-          <h3>{failCount === 0 ? '修改完成' : '部分完成'}</h3>
+          <h3>{failCount === 0 ? '执行完成' : '部分完成'}</h3>
           <div className="sheet-sub">
             成功 {okCount} 个{failCount > 0 ? ` · 失败 ${failCount} 个` : ''} · 已写入审计日志
           </div>
@@ -38,7 +44,7 @@ export function VisibilitySheet(p: Props) {
                 <span className="nm">{r.repo}</span>
                 <span className="arrow">
                   {r.status === 'ok' ? (
-                    <span style={{ color: 'var(--green)' }}>已完成</span>
+                    <span style={{ color: 'var(--green)' }}>{r.message ?? '已完成'}</span>
                   ) : (
                     <span style={{ color: 'var(--red)' }}>{r.message ?? '失败'}</span>
                   )}
@@ -62,12 +68,13 @@ export function VisibilitySheet(p: Props) {
       <div className="mask" onClick={p.phase === 'running' ? undefined : p.onCancel} />
       <div className="sheet">
         <div className="grab" />
-        <h3>修改可见度</h3>
+        <h3>{p.title}</h3>
         <div className="sheet-sub">
-          {p.total} 个仓库将切换为 {target === 'private' ? 'Private' : 'Public'}
+          {p.total} 个仓库
+          {skip.length > 0 ? ` · 其中 ${skip.length} 个无需变更` : ''}
         </div>
 
-        {destructive.length > 0 && (
+        {destructive.length > 0 && p.title.includes('可见度') && (
           <div className="warnbox">
             <Icon name="warn" size={14} />
             <span>
@@ -76,10 +83,19 @@ export function VisibilitySheet(p: Props) {
           </div>
         )}
 
+        {destructive.length > 0 && !p.title.includes('可见度') && (
+          <div className="warnbox" style={{ background: 'var(--amber-bg)', borderColor: 'var(--amber-line)', color: '#e8c06a' }}>
+            <Icon name="warn" size={14} />
+            <span>
+              归档后仓库变只读：不能提交、不能开 Issue、不能发版。可以随时取消归档，但期间数据不会更新。
+            </span>
+          </div>
+        )}
+
         {blocked.length > 0 && (
           <div className="warnbox" style={{ background: 'var(--amber-bg)', borderColor: 'var(--amber-line)', color: '#e8c06a' }}>
             <Icon name="warn" size={14} />
-            <span>{blocked.length} 个仓库当前令牌没有 admin 权限，预计会被拒绝。</span>
+            <span>{blocked.length} 个仓库当前令牌权限不足，预计会被拒绝。</span>
           </div>
         )}
 
@@ -88,16 +104,10 @@ export function VisibilitySheet(p: Props) {
             <div className="diff-row" key={item.repo.full_name}>
               <span className="nm">{item.repo.name}</span>
               <span className="arrow">
-                {item.from === item.to ? (
+                {item.skip ? (
                   <span style={{ color: 'var(--text-dim)' }}>无需变更</span>
                 ) : (
-                  <>
-                    {item.from === 'private' ? 'Private' : 'Public'}
-                    <Icon name="arrowRight" size={11} />
-                    <span className={item.blocked ? 'to blocked' : 'to'}>
-                      {item.to === 'private' ? 'Private' : 'Public'}
-                    </span>
-                  </>
+                  <span className={item.blocked ? 'to blocked' : 'to'}>{item.label}</span>
                 )}
               </span>
             </div>
@@ -129,7 +139,7 @@ export function VisibilitySheet(p: Props) {
               style={{ flex: 1, background: destructive.length > 0 ? '#da3633' : '#238636' }}
               onClick={p.onConfirm}
             >
-              确认修改 {p.total} 个
+              确认执行 {p.total} 个
             </button>
           </div>
         )}

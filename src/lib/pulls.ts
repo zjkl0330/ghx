@@ -33,6 +33,8 @@ export interface PullRequest {
   body: string | null
   user: IssueUser | null
   labels: IssueLabel[]
+  assignees?: IssueUser[] | null
+  milestone?: { number: number; title: string; state?: 'open' | 'closed' } | null
   head: PullRef
   base: PullRef
   commits: number

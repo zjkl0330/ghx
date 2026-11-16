@@ -80,7 +80,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 第三批（v0.5.4）：`AccountSheet` 账号切换面板 + 多设备响应式（内容居中、safe-area、横屏矮屏）
 
-第四批（v0.5.5）：磨砂玻璃底栏（悬浮胶囊 + 厚底色 + 砂面噪点 + 实心选中态图标）· 热门/星标接入简介机翻 · 应用图标与启动图重绘（`assets/icon/*.svg` + `scripts/make-icons.py`）· `scripts/shots.py` 用 mock API 出 README 截图
+第四批（v0.5.5）：磨砂玻璃底栏（悬浮胶囊 + 厚底色 + 砂面噪点 + 实心选中态图标）· 热门/星标接入简介机翻 · 应用图标与启动图重绘（`assets/icon/*.svg` + `scripts/make-icons.py`）· `scripts/shots.py` 用 mock API 出 README 截图（含主页自述与看板，图片也在本地造） · `scripts/probe-webkit.py` 比对 Chromium / WebKit 渲染
 
 第六批（v0.6.4）：`SettingsPage` 的外观面板（色板 / 六组分段控件）· 首屏遮罩改为 `index.html` 内联，不经 React
 
@@ -255,4 +255,85 @@ user / notifications / search / profile / settings / tokens / audit
 - **v0.6.6**：安装包下载改成多候选 + 探活（当前镜像 → gh-proxy.com → ghfast.top → 官方直连），只有 2xx 才算通；此前单条地址直交浏览器，自建站资产偶发 522 时用户只看到白页。`headReachable` 判定由 `< 400` 收紧到 `< 300`。单测 682 → 686。
 - **v0.6.5**：浅色底栏真正透出来 —— 根因是镜面环和半透明底色挤在同一组 `background` 里，`border-box` 的 conic 从 padding-box 底下透出来把整块垫成白板；改成 `::after` 蒙版只留 1px 边，浅色 0.20 底色 + `blur(6px)`。仓库详情「复制克隆地址」改为「复制仓库地址」（网页地址，不带 `.git`）。简介机翻新增名字识别（`isNameLike` / `looksLikePinyin`），拼音不再被音译成汉字。`shots.py` 截图前先把整行挪到底栏正中。单测 678 → 682。
 - **v0.6.4**：启动动画重做 —— 旧系统改用 `windowBackground` + layer-list（`android:background` 对窗口不生效，之前开屏会先闪一下默认底色）；Android 12+ 换专用矢量启动图标（正圆白底 + 深色猫，不再复用自适应图标前景层）；新增 `values-night` 深色启动屏；`index.html` 内联首屏遮罩与系统 splash 同构图同尺寸，保险库就绪后淡出，中间不再有白屏。外观新增六组选项（强调色六选一、底栏悬浮/通栏、底栏文字图文/仅图标、背景纯色/氛围光、玻璃三档、动效两档），全部存 localStorage 并在首屏内联脚本里先应用一遍。新增 `appearance.ts` 与 `boot.ts`，单测 657 → 678。
+- **v0.6.8**：修「顶栏钻进状态栏」。根因是 insets 竞态 —— 启动那次 `evaluateJavascript` 落在 `about:blank`，变量随导航丢失，而 400/1600ms 的补推被 `lastTop` 去重直接 return，`--inset-top` 永久为空。现在补推 force，覆盖 300/900/2000/4000ms，`onResume` 再补一次，React 就绪后由 `Immersive.syncInsets` 主动要一次；换算抽成 `InsetsBridge`。设置页外观卡片加实时预览（真的 `.tabbar` 改绝对定位，跟随全部 `data-*`）。单测仍 709。
+- **v0.6.9**：三个东西。
+  - **主页自述**：`UserPage` 之前只拉 user + repos，GitHub 个人主页那份 README（在 `{login}/{login}` 同名仓库里）从来没请求过，所以一直是空的。新增 `ProfileReadme`，内联渲染 + 300px 折叠 + 图片加速，自己账号能编辑。`ReadmeFile` 补了 `sha`（编辑不带 sha 会被 GitHub 当新建，回 422）；`branchFromBlobUrl` 从 `html_url` 反推分支，省一次 `GET /repos`。
+  - **数据看板**：`stats.ts` 纯函数 + `DashboardPage`。底栏页签 `dashboard`（默认收起，`TAB_DEFS` 里加）。只有一张 SVG 柱状图，其余是 div 拼的条 —— 不引图表库。口径：语言按仓库数不按 star、提交按 `distinct_size`、日均的分母是事件覆盖天数而不是窗口。
+  - **错误边界**：`Boundary.tsx` 包住页面区、留在底栏之外。起因是真实白屏 —— `/users/{o}/r` 返回 `{}` 时 `[...list]` 抛 TypeError，React 卸掉整棵树，连底栏都没了。现在崩的是那一页，导航还在，`resetKey`（路由键 / 页签）变化自动清错。
+  - 顺手：`MarkdownView` 支持 `mirror`（Issue/PR 正文图片也能加速）；`<h1 align=center>` 识别成标题；`--text-dim-rgb` / `--chart-issue-rgb` / `--chart-pull-rgb` 三个新变量。
+  - **踩过的坑**：代理或镜像忽略 `page` 参数时会把同一页回三遍，事件数直接翻三倍还误判成「已取到 300 条上限」→ `mergeEvents` 按 id 去重；跨域下 `x-ratelimit-*` 读不到是因为没 expose（截图 mock 已补）。
+  - 单测 709 → 759。
+- **v0.7.0**：修真机上刷出 `Failed to fetch` 的红条。根因不在 GitHub —— 断网 / 切基站 / 代理抖一下时，`fetch` 直接 reject 一个原生 `TypeError`，文案按内核不同（Chromium `Failed to fetch`、老 WebKit `Load failed`、Firefox `NetworkError…`），而 `api.ts` 没接住，`(err as Error).message` 原样进了红条。
+  - 新增 `NetworkError`（`status = 0`，和 GitHub 的 4xx/5xx 区分开）+ `isNetworkError`；`request` / `rawText` 统一走 `send()` 包住网络层失败，`navigator.onLine === false` 时说「设备已离线」。
+  - `send()` 对 **GET 重试一次**（默认 400ms，`retryDelayMs` 可注入）—— 手机上的失败多半是瞬时的；写操作不重试，重发可能建出重复仓库 / 重复评论；`AbortError`（切页、卸载）原样抛出。
+  - 列表错误条：已有数据时改成「刷新失败：…。下面是上次拿到的列表」，右侧加 `.warn-retry` 重试按钮。
+  - `translate.ts` 四个通道全挂时不再拼四遍 `Failed to fetch`，统一成「翻译服务连不上」。
+  - 实测（390×844，Playwright 把 `/user/repos` 改成 `route.abort('failed')`）：请求 2 次、列表 20 行不丢、文案中文、重试按钮 1 个、网络恢复后错误条消失。单测 759 → 766。
+- **v0.7.1**：文件页补动作能力。原先只有「编辑」一个按钮，复制、查找、下载、字号全没有。
+  - 新增 `lib/code-view.ts`：阅读偏好（字号 12/13/15 + 折行）的解析与序列化、`findHits` / `splitHighlight` / `groupHitsByLine` / `stepHit`、`blobUrl`、`fileStats`。全部纯函数，29 条单测。
+  - 文件信息栏改成一排：路径 + 查找 + ⋯ + 编辑。查找栏独立一条（`filebar` 塞不下输入框），计数用 `cur/total`，当前命中 `scrollIntoView({block:'center'})`。
+  - 「⋯」面板：复制内容 / 复制链接 / 复制路径 / 在浏览器打开 / 下载原文件 / 提交历史，加字号与折行；复制带 `execCommand` 兜底，WebView 拒绝 Promise 时仍能成。
+  - 面板抽成公共块，图片与二进制复用（原来这两类只能看）；图片预览抽 `FileImage`，加速地址失败自动回退原图。
+  - 默认字号 10.5 → 13（真机上偏小）；`.code-no` 改 `min-width` 自适应，三位数行号不再被裁。
+  - 实测（390×844）：199 行文件、查找 `1/39 → 2/39`、39 处高亮、关闭后 0 残留、剪贴板 3664 字符与原文件逐字一致、字号 13→15、折行 `white-space: pre-wrap`、偏好落盘 `{"size":15,"wrap":true}`；图片面板 5 个动作（无文本专属项）。单测 766 → 795。
+- **v0.7.2**：按 `ROADMAP.md` 的功能池推荐接了三件 —— Gist、Issue 模板、仓库内搜索。
+  - `lib/gists.ts`：`gistFiles`（README 优先）、`gistTitle` / `gistLanguage` / `gistBytes`、`draftFromGist`、`validateDraft`（空名 / 重名 / 带斜杠）、`filesPatch`（只发改动项；删给 `null`；改名 = 旧名 `null` + 新名内容）、`filesCreate`。19 条单测。
+  - `lib/templates.ts`：手写 YAML 子集解析（`key: value` / `- ` 列表 / 两层嵌套 / `|` `>` 块标量 / 引号内 `#` 不当注释）；frontmatter 与 Issue form 都转成 `IssueTemplate`；`renderIssueForm` 把字段拼成 `### 标题` + `- [ ]` 清单 + placeholder 注释。22 条单测。
+  - `GistsPage` / `GistPage`：列表带私有徽标，详情可 star / 复制全部 / 复制链接 / 浏览器打开 / 删除（二次点击确认），编辑态多文件增删改名。新建用空 id 直接进编辑态，保存后 `replaceTopTo` 换成详情，返回不会回到空表单。
+  - `ComposeSheet`：Issue 顶部加模板 chips（`config.yml` 排除、大写/小写目录都试、坏模板跳过不阻断）；PR 模板自动预填并显示用了哪个文件。模板带的标签随创建提交，GitHub 回 422 时去掉标签重试一次。
+  - 搜索：`Route.search` 加 `repo?`，从仓库页放大镜进入后锁定 `repo:o/r`，类别收窄为代码 / Issue / PR / 提交；代码结果 `onOpenCode` 直接开文件，提交结果 `onOpenCommit` 直接开提交（原来都只回仓库根）。
+  - `lib/clipboard.ts`：从 `CodePage` 抽出 `copyText`，Gist 复用。
+  - 实测（390×844，Playwright + 真构建产物）：Gist 列表 2 行 → 详情 208 B / 2 评论 → 编辑只发 `ci.yml` 且描述更新 → 新建 POST `hello.txt`（私有）→ 删除二次确认后 DELETE 发出；模板 chips `空白 / Bug report / 功能建议`，套用后标题 `[Bug] `、正文含 `### 复现步骤` 与 `- [ ]`；限定搜索请求带 `repo%3Azjkl0330%2Fghx`、结果 2 行、点击进文件页显示行号内容。单测 795 → 841。
+- **v0.7.3**：按 `ROADMAP.md` 的功能池推荐接了三件 —— Issue/PR 高级筛选、贡献日历、里程碑。
+  - `lib/issue-filter.ts`：`IssueFilter`（作者 / 指派 / 里程碑 / 标签 / 近 N 天）、`buildIssueParams` 拼服务端 query（**作者要传 `creator` 不是 `author`**，后者是搜索 API 的限定符，写错会静默失效）、`matchesFilter` 客户端兜底（PR 端点不支持这些参数）、`activeCount` / `filterSummary` / `sinceLabel`。29 条单测。
+  - `lib/milestones.ts`：`milestoneProgress`（空里程碑返回 0 而非 NaN）、`dueInfo`（7 天内 `soon`、过期 `over`、已关闭不标红）、`setMilestone` 走 `PATCH /issues/{n}`（无专用端点，传 `null` 移出）。18 条单测。
+  - `stats.ts`：`contributionGrid`（13 周 × 7 天，列从周日起，`future` 标今天之后；用 `Date.UTC` 的日历坐标推算避免时区挪一天）+ `gridLevel`（固定阈值 1 / 2-3 / 4-6 / 7+，不用分位数 —— 分位数会让整体很闲时也出深格子）。12 条单测。
+  - `IssueFilterSheet`：作者 / 指派（我·无人·已指派）/ 里程碑（带百分比）/ 时间四段；Issue 与 PR 共用，PR 侧写明「只能在这一页里筛」。
+  - `IssuesPage` / `PullsPage`：状态分段右侧加漏斗按钮（有条件是「筛选 N」），下方一行摘要 + 清除；标签 chips 并入 `adv.label`，与弹层同一份状态。
+  - `IssuePage`：加「里程碑」按钮与选择区，pill 用新的 `.detail-pills`（`.pill` 自带 `margin-left:auto`，多个会各占两端）。
+  - `DashboardPage`：`ContributionGrid` 用 SVG（正方形格子，`viewBox` 等比缩放），`fill` 走 `--grid-0..4` 五个 CSS 变量；下方给总数 / 活跃天数 / 单日最高与口径说明。
+  - 实测（390×844，Playwright + 真构建产物）：日历 91 格 / 5 个未来虚线格 / 共 158 次 / 活跃 51 天；Issue 4 行 →「无人指派」2 行且请求带 `assignee=none` → 叠加「近 7 天」1 行且带 `since` → 清除回 4 行无摘要；里程碑 PATCH `{milestone:2}`，pill 从「v0.7 收尾」变「v0.8 计划」且旧的消失；PR 2 行 → 作者我 1 行。单测 841 → 900。
+- **v0.7.4**：功能池里的三个小成本项 —— 提交列表分页、README 目录、仓库置顶。
+  - `code.ts`：`listCommitsPage` 返回 `{ items, next }`，`next` 走 `paging.nextPage`（有 `Link` 按 `Link`，没有就按「本页满 30 条」推断）；`mergeCommits` 按 sha 去重 —— force push 后分页边界会吐重复项，不去重会出现重复行与虚高条数。`listCommits` 保留为包装，调用方不需要改。11 条单测。
+  - `lib/toc.ts`：`buildToc` 只收 1–3 级标题、按**最小级别**归一化 `depth`（很多 README 从 `##` 起，照 level 硬编码会让整排缩进一格）、少于 3 个标题直接返回空、最多 40 条；`tocAnchor(index)` 用块下标当锚点（同名标题很常见，slug 会撞）；`activeHeading(offsets, scrollTop, slack)` 返回已越过顶部留白的最后一节。17 条单测。
+  - `lib/pins.ts`：`parsePins` 只认 `owner/repo` 形态、去重、上限 60，脏数据一律丢；`togglePin` 大小写不敏感；`applyPins` 把置顶项按**添加顺序**提到最前，其余保持当前排序；`pinKey(accountId)` 按账号分片。21 条单测。
+  - `CommitsPage`：底部换成分页按钮，累积合并；刷新一律回第 1 页（用户点刷新是要最新的，不是接着翻）；翻页失败单独一条错误条 + 重试。
+  - `ReadmeSheet`：目录按钮只在标题 ≥3 时出现。**目录必须是覆盖层**：先做成 `.sheet` 里的 sticky 面板，它占高度会把正文整体下移，跳转位置按「有目录」的布局算，一收起就偏一屏（实测 scrollTop 从 1804 变 0）。现在 `.toc-mask` 是 `position:fixed`，不参与布局。
+  - `RepoList`：行尾 `.pin-btn` 放在 `.row-main` **之外**（放在里面长仓库名会把钉子挤出屏幕），`e.stopPropagation()` 防止顺手打开仓库；置顶行加 `pinned` 类画左侧竖线，不用 `:has()`（minSdk 23 的旧 WebView 不认，会静默丢整条规则）。
+  - 置顶不写审计：一天能点十几次，会把真正的写操作淹掉。
+  - 实测（390×844，Playwright + 真构建产物）：置顶 `esp32-wol` → 排首、有 `pinned` 类、toast 正确；钉第二个后 `[esp32-wol, niuma, ...]`（按添加顺序）；**刷新页面后仍是这个顺序**（落盘生效）；取消后回到原位；提交历史 30 → 60 → 72 条，末页显示「已到最早一条，共 72 条」；目录 9 条、点「常见问题」滚动 0 → 1804、重开目录高亮「常见问题」、面板自动收起；console 零报错。单测 900 → 941。
+- **v0.7.5**：功能池里的另外三项 —— 通知直读、搜索命中高亮、批量操作扩展。
+  - `notifications.ts`：`threadComments`（Issue 与 PR 共用 `/issues/{n}/comments`，取最近 8 条）；`threadNumber` 解析 `/issues/12` 与 `/pulls/7` 两种 URL；评论**显式按 `created_at` 排序**而不是 `reverse()` —— 镜像偶尔忽略 `direction=desc`，靠 reverse 会把顺序弄反；`isFreshComment` 标 24 小时内。
+  - **修了一个存量 bug**：`subjectTarget` 原来只匹配 `/issues/(\d+)`，而 PR 的 `subject.url` 是 `/pulls/7`，于是 PR 通知点进去落到仓库首页。现在两种都认，`PullPage` 能正常打开。
+  - `search-ext.ts`：`highlightTerm` 从查询串里剔掉 `key:value` 与 `key:"a b"`，取剩下的第一个词。整串丢给查找栏一条都匹配不上（文件里没有 `repo:` 这种字面量）。
+  - `routes.ts`：`Route.code` 加 `find?`，`routeKey` 带上它；`CodePage` 加 `initialFind`，**等文件加载完再开查找栏**（提前开会拿到空行数组，计数显示 0/0），用 `seeded` ref 防止重渲染时反复重置。
+  - `repos.ts`：`BatchAction` 封闭枚举（visibility / archive / unarchive / topics）+ `planBatch`（纯函数，先算出 label / destructive / blocked / skip）+ `runBatchActions`（串行 + gap，逐条回执）。`runBatch` 保留为可见度专用包装，行为不变。
+  - 加话题必须先 GET 再合并：`PUT /repos/{o}/{r}/topics` 是**整体替换**，直接写会把仓库原有话题全冲掉。`mergeTopics` 做归一化 + 去重 + 20 个上限。
+  - `BatchSheet`（三态：确认 / 执行 / 结果）取代 `VisibilitySheet`（已删）；`BatchPickSheet` 放归档、取消归档与话题输入。警告文案按动作区分：转私有说「失去 star」，归档说「变只读」。
+  - `IssuePage` 对缺失 `labels` 兜底（`issue.labels?.length ?? 0`）：mock 数据缺字段时整页会白屏，真实环境虽有但畸形响应同样会炸。
+  - 实测（390×844，Playwright + 真构建产物）：通知 2 条 → 面板 2 条评论（Markdown 标题块与引用块都渲染、24 小时内标绿）→ 标记完成后列表剩 1 条且 DELETE 真的发出 → 第二条（PR）「打开完整页面」到 `#7` 且标题正确；搜索 `useState` → 1 条结果 → 文件页查找栏自动打开 `1/41`、41 行高亮、当前命中 1 行；批量选 2 个 → 更多 → 归档（黄色只读警告、红色确认按钮）→ 两条「已完成」→ 归档后列表只剩未归档的；话题输入 `React, 工具` 解析出 `react`（中文按 GitHub 规则丢弃）。console 零报错。单测 941 → 975。
+- **v0.7.6**：功能池最后一项 —— 多账号并行工作区。
+  - `lib/workspace.ts`：`Workspace`（路由栈 / 列表 / 快照时间 / 搜索词 / 可见度 / 排序 / 未读 / 置顶）+ `saveWorkspace` / `restoreWorkspace` / `dropWorkspace` / `patchWorkspace` / `hasContent`。全是不可变表操作，不碰 React。13 条单测。
+  - `saveWorkspace` 对数组字段逐层复制：`{...ws}` 只拷引用，外面继续 `pins.push()` 会把「历史现场」也改掉（第一版就是这么挂的，测试逮到）。
+  - `App.activate`：切走前 `saveWorkspace(liveRef.current)`，切换后 `restoreWorkspace(id)` 恢复；`liveRef` 每次渲染同步一次，避免把七八个 state 塞进 useCallback 依赖。
+  - `clientsRef`：按账号缓存 `GitHubClient`，请求缓存挂在实例上，切回来第一屏直接吃缓存（实测每账号列表请求只发 1 次）。
+  - `loadSeq`：列表拉取领序号，切账号或连点刷新让旧请求作废，`setRepos` / `setRepoError` / `setLoadingRepos` 全部按序号判断 —— 否则 A 的 6 页回来会覆盖 B 的列表。
+  - `wipeWorkspaces()`：锁定保险库与删号都要清客户端实例（里面存着解密后的令牌），锁定路径顺带 `loadSeq += 1` 让在飞请求失败。
+  - 实测（390×844，Playwright + 真构建产物，两个 mock 账号）：A 搜 `main` 剩 1 行 → 进个人页 → 从个人页切 B（B 回主界面、列表是 B 的、搜索框为空）→ B 进个人页 → 切回 A（回到 A 的个人页、账号 `@zjkl0330`）→ 返回主界面搜索框仍是 `main`、仍 1 行 → 再切 B 回到 B 的个人页。列表请求 `{a:1,b:1}`。console 零报错。单测 975 → 988。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
+
+## AI（方案已定，未开工）
+
+`docs/ai-plan.md`。一句话：**默认走本地执行器** —— AI 只输出封闭枚举里的「动作」，客户端校验 + 确认 + 用自己的令牌执行，令牌一步都不离开设备。破坏性动作（删仓库、改可见度、force push、合并 PR）压根不进枚举。
+
+用户提的「环境变量代理」在 Worker 上成立，但有两个前提：工具必须是**有语义的白名单**（不能是 `gh_api(method, path, body)` 万能代理，那等于把令牌整个交出去）；并且要接受「令牌从本机搬到 Cloudflare」这个安全模型的改变，所以只能默认关闭。
+
+## 跨平台（方案已定，未开工）
+
+方案在 `docs/cross-platform.md`，三条结论先记住，别重复调研：
+
+1. **iOS 用 Capacitor 7 iOS，桌面用 Tauri 2**。Capacitor 官方没有桌面平台，`@capacitor-community/electron` 停在 Cap 5/6。
+2. **最低版本 iOS 15.4 / macOS 12**，正好卡在 `mask-composite` 进 Safari 的版本（MDN BCD：Safari 15.4）。低于它镜面环要么写 `-webkit-mask-composite: xor` 旁路，要么整条不画。
+3. **玻璃不需要为 iOS 另调参数**。实测 Chromium 145 与 WebKit 26 在底栏上的区域均值差 ≤6.6，环的像素差 ≤2；唯一可见差异是 WebKit 文字抗锯齿更粗（单像素能差 70），所以判定用区域均值，别用单像素。
+
+复跑对比：`pnpm build` → `npx vite preview --port 4199` → `xvfb-run -a python3 scripts/probe-webkit.py`。

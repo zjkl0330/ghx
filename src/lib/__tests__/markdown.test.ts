@@ -218,3 +218,32 @@ describe('同行多图与高度', () => {
     expect(shot).toMatchObject({ inline: false })
   })
 })
+
+
+describe('HTML 标题', () => {
+  it('独占一行的 <h1> 识别成一级标题', () => {
+    const blocks = parseMarkdown('<h1 align="center">Hi, I\'m zjkl</h1>')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatchObject({ kind: 'h', level: 1, text: "Hi, I'm zjkl" })
+  })
+
+  it('h2 / h3 也认，层级照原样保留', () => {
+    expect(parseMarkdown('<h2 id="x">小节</h2>')[0]).toMatchObject({ kind: 'h', level: 2, text: '小节' })
+    expect(parseMarkdown('  <h3>深层</h3>')[0]).toMatchObject({ kind: 'h', level: 3, text: '深层' })
+  })
+
+  it('标题里夹着链接时保留文字', () => {
+    const blocks = parseMarkdown('<h1><a href="https://x">点我</a></h1>')
+    expect(blocks[0]).toMatchObject({ kind: 'h', level: 1, text: '点我' })
+  })
+
+  it('开闭标签不配对时不硬当标题，留给段落', () => {
+    const blocks = parseMarkdown('<h1>没闭合')
+    expect(blocks.every((b) => b.kind !== 'h')).toBe(true)
+  })
+
+  it('一行里除了标题还有别的内容就不当标题', () => {
+    const blocks = parseMarkdown('<h1>标题</h1> 后面还有字')
+    expect(blocks.every((b) => b.kind !== 'h')).toBe(true)
+  })
+})

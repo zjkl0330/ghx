@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { mirrorImage } from '../lib/images'
 import type { Block } from '../lib/markdown'
 
 /**
@@ -8,8 +9,39 @@ import type { Block } from '../lib/markdown'
  * 避免把翻译状态塞进一个通用组件里。
  */
 
-function MdImage({ b }: { b: Extract<Block, { kind: 'img' }> }) {
+/**
+ * 正文里的图片。
+ *
+ * 传了 mirror 就优先走加速前缀：raw.githubusercontent.com 在国内经常
+ * 连不上，而 <img> 在「还在等」的时候不会触发 onerror，界面就是一块空白。
+ * 所以加速失败或超时都要能退回原图，两边都不行才显示占位。
+ */
+function MdImage({ b, mirror }: { b: Extract<Block, { kind: 'img' }>; mirror?: string }) {
+  const accelerated = mirror ? mirrorImage(b.src, mirror) : null
+  const primary = accelerated ?? b.src
+  const fallback = accelerated ? b.src : null
+
+  const [src, setSrc] = useState(primary)
   const [failed, setFailed] = useState(false)
+  const tried = useRef(false)
+
+  // 换了一张图（列表复用组件）要重置，否则会沿用上一张的失败状态
+  useEffect(() => {
+    setSrc(primary)
+    setFailed(false)
+    tried.current = false
+  }, [primary])
+
+  useEffect(() => {
+    if (failed || !fallback || tried.current) return
+    const t = window.setTimeout(() => {
+      if (tried.current) return
+      tried.current = true
+      setSrc(fallback)
+    }, 12_000)
+    return () => window.clearTimeout(t)
+  }, [failed, fallback, src])
+
   if (failed) {
     return (
       <span className="md-img-fail" title={b.alt || b.src}>
@@ -20,14 +52,21 @@ function MdImage({ b }: { b: Extract<Block, { kind: 'img' }> }) {
   return (
     <img
       className={`md-img${b.badge ? ' badge' : ''}${b.inline ? ' inline' : ''}`}
-      src={b.src}
+      src={src}
       alt={b.alt}
       loading="lazy"
       style={{
         ...(b.width ? { width: b.width } : {}),
         ...(b.height ? { height: b.height } : {}),
       }}
-      onError={() => setFailed(true)}
+      onError={() => {
+        if (!tried.current && fallback && fallback !== src) {
+          tried.current = true
+          setSrc(fallback)
+          return
+        }
+        setFailed(true)
+      }}
     />
   )
 }
@@ -64,7 +103,7 @@ function Table({ b }: { b: Extract<Block, { kind: 'table' }> }) {
   )
 }
 
-export function MarkdownView({ blocks }: { blocks: Block[] }) {
+export function MarkdownView({ blocks, mirror }: { blocks: Block[]; mirror?: string }) {
   return (
     <div className="md">
       {blocks.map((b, i) => {
@@ -103,7 +142,7 @@ export function MarkdownView({ blocks }: { blocks: Block[] }) {
           case 'hr':
             return <div className="md-hr" key={i} />
           case 'img':
-            return <MdImage key={i} b={b} />
+            return <MdImage key={i} b={b} mirror={mirror} />
           case 'table':
             return <Table key={i} b={b} />
           default:

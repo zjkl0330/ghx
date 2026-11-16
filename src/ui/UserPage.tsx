@@ -17,6 +17,7 @@ import {
 import { repoPageUrl } from '../lib/mirrors'
 import { openExternal } from '../lib/update'
 import { PageHeader, PageState } from './PageHeader'
+import { ProfileReadme } from './ProfileReadme'
 import { Icon } from './icons'
 import { UserListSheet } from './UserListSheet'
 
@@ -60,6 +61,10 @@ export function UserPage(p: {
   onBack: () => void
   onOpenRepo: (full: string) => void
   onOpenUser: (login: string) => void
+  /** 编辑个人主页自述；sha 为空表示这个文件还不存在，走新建 */
+  onEditReadme: (sha?: string) => void
+  /** 看这个人的公开 Gist */
+  onOpenGists: () => void
   onToast: (s: string) => void
 }) {
   const [user, setUser] = useState<UserProfile | null>(null)
@@ -197,6 +202,9 @@ export function UserPage(p: {
                 </div>
                 <div className="uhead-login ellipsis">@{user.login}</div>
               </div>
+              <button className="icon-btn" onClick={p.onOpenGists} aria-label="这个人的 Gist">
+                <Icon name="file" size={16} />
+              </button>
               <button className="icon-btn" onClick={openHomepage} aria-label="在浏览器打开主页">
                 <Icon name="external" size={16} />
               </button>
@@ -259,6 +267,14 @@ export function UserPage(p: {
                 打开主页
               </button>
             </div>
+
+            <ProfileReadme
+              client={p.client}
+              login={user.login}
+              mirror={p.mirror}
+              canEdit={isSelf}
+              onEdit={p.onEditReadme}
+            />
 
             <div className="usec">
               <div className="usec-head">

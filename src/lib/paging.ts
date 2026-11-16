@@ -44,15 +44,20 @@ export function pageFromLink(url: string | null): number | null {
 }
 
 /** 下一页的页码：优先读 Link，读不到就靠「本页是否满页」推断 */
-export function nextPage(link: LinkPages, page: number, count: number, perPage: number): number | null {
-  if (link.next) return pageFromLink(link.next) ?? page + 1
+export function nextPage(
+  link: LinkPages | undefined | null,
+  page: number,
+  count: number,
+  perPage: number,
+): number | null {
+  if (link?.next) return pageFromLink(link.next) ?? page + 1
   return count >= perPage ? page + 1 : null
 }
 
 /** 有没有下一页：同上，两个信号任一成立即可 */
-export function hasNext(link: LinkPages, count: number, perPage: number): boolean {
-  if (link.next) return true
-  if (link.last) return true
+export function hasNext(link: LinkPages | undefined | null, count: number, perPage: number): boolean {
+  if (link?.next) return true
+  if (link?.last) return true
   return count >= perPage
 }
 

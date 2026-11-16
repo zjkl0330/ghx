@@ -7,9 +7,11 @@
 
 产物：docs/screenshots/*.png
 """
+import base64
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 
 from playwright.sync_api import sync_playwright
 
@@ -131,6 +133,89 @@ for _i, _r in enumerate(HOT):
     # 热门是「最近创建」，创建时间得压在几天内，否则同比涨星看着不合理
     _r['created_at'] = f'2026-10-{30 + _HOT_AGE[_i]:02d}T06:00:00Z' if _HOT_AGE[_i] < 5 else f'2026-11-0{_HOT_AGE[_i] - 4}T06:00:00Z'
 
+PROFILE_MD = """<h1 align="center">指尖可乐 <sub>/ zjkl</sub></h1>
+
+<p align="center">
+  <img src="docs/banner.svg" width="640" alt="banner">
+</p>
+
+### 在做什么
+
+- 写 [ghx](https://github.com/zjkl0330/ghx)：直连 REST 的 Android GitHub 控制台
+- 折腾 niuma-studio，把 Job / Mini-Job 收进同一个后端
+- 用 ESP32 + Cloudflare Tunnel 给家里那台 X550CC 做远程唤醒
+
+| 项目 | 状态 | 一句话 |
+|---|---|---|
+| ghx | 活跃 | github.com 打不开时也能管仓库 |
+| niuma-studio | 开发中 | 自托管流水线 |
+| wol | 跑着 | 局域网唤醒 + 内网穿透 |
+
+```bash
+pnpm install && pnpm build && pnpm cap:sync
+```
+
+> 所有令牌只存在本机加密保险库，请求时在内存里解密。
+"""
+
+PROFILE_README = {
+    'name': 'README.md',
+    'path': 'README.md',
+    'size': len(PROFILE_MD.encode()),
+    'content': base64.b64encode(PROFILE_MD.encode()).decode(),
+    'encoding': 'base64',
+    'sha': 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678',
+    'html_url': f'https://github.com/{OWNER}/{OWNER}/blob/main/README.md',
+}
+
+
+def build_events():
+    """近 90 天的事件流。造得有点节奏：工作日多、周末少，偶尔有 PR 与 Issue。"""
+    now = datetime.now(timezone.utc)
+    out = []
+    for back in range(90):
+        day = now - timedelta(days=back)
+        # 周末少干一点，看起来才像真的
+        if day.weekday() >= 5 and back % 3 != 0:
+            continue
+        for k in range(1 + (back * 7) % 3):
+            t = day.replace(hour=9 + k * 3, minute=12, second=0, microsecond=0)
+            out.append({
+                'id': f'push-{back}-{k}',
+                'type': 'PushEvent',
+                'created_at': t.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'repo': {'name': f'{OWNER}/ghx'},
+                'payload': {'distinct_size': 1 + (back + k) % 4, 'size': 2 + (back + k) % 5},
+            })
+        if back % 4 == 1:
+            out.append({
+                'id': f'pr-{back}',
+                'type': 'PullRequestEvent',
+                'created_at': day.replace(hour=16, minute=40).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'repo': {'name': f'{OWNER}/ghx'},
+                'payload': {'action': 'opened'},
+            })
+        if back % 7 == 3:
+            out.append({
+                'id': f'issue-{back}',
+                'type': 'IssuesEvent',
+                'created_at': day.replace(hour=20, minute=5).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'repo': {'name': f'{OWNER}/niuma-studio'},
+                'payload': {'action': 'opened'},
+            })
+        if back % 11 == 5:
+            out.append({
+                'id': f'release-{back}',
+                'type': 'ReleaseEvent',
+                'created_at': day.replace(hour=21, minute=0).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'repo': {'name': f'{OWNER}/ghx'},
+                'payload': {'action': 'published'},
+            })
+    return out
+
+
+EVENTS = build_events()
+
 TRANSLATIONS = {}
 for _group in (REPOS, STARS, HOT):
     for _r in _group:
@@ -198,6 +283,15 @@ def main():
             body = public(STARS)
         elif path.startswith('/user/starred/'):
             body = {}
+        elif path == f'/repos/{OWNER}/{OWNER}/readme':
+            body = PROFILE_README
+        elif path == f'/users/{OWNER}/events':
+            # 真分页：看板靠「本页是否满 100 条」判断要不要继续翻
+            m_page = re.search(r'[?&]page=(\d+)', url)
+            m_per = re.search(r'[?&]per_page=(\d+)', url)
+            pg_no = int(m_page.group(1)) if m_page else 1
+            per = int(m_per.group(1)) if m_per else 30
+            body = EVENTS[(pg_no - 1) * per: pg_no * per]
         elif path == '/notifications':
             body = []
         elif path == '/rate_limit':
@@ -226,7 +320,22 @@ def main():
             body = next((r for r in public(REPOS + STARS + HOT) if r['full_name'] == full), {})
         else:
             body = {}
-        route.fulfill(status=200, content_type='application/json', body=json.dumps(body))
+        route.fulfill(
+            status=200,
+            content_type='application/json',
+            headers={
+                'x-ratelimit-limit': '5000',
+                'x-ratelimit-remaining': str(4871 - len(EVENTS) % 40),
+                'x-ratelimit-reset': '1793800000',
+                'x-oauth-scopes': 'repo, read:user, workflow, notifications',
+                # 跨域下自定义响应头默认读不到，必须显式 expose，否则界面上的配额条永远是空的
+                'access-control-expose-headers': (
+                    'x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset, '
+                    'x-oauth-scopes, link, etag'
+                ),
+            },
+            body=json.dumps(body),
+        )
 
     def handle_translate(route):
         try:
@@ -256,6 +365,35 @@ def main():
         pg.route('**/api.github.com/**', handle)
         pg.route('**/edge.microsoft.com/**', handle_translate)
         pg.route('**/api.cognitive.microsofttranslator.com/**', lambda r: r.abort())
+        # 图片全部本地造：自述里的 banner 走加速前缀后是外部域名，
+        # 截图不能依赖网络。这里给一张真横幅，其余图片给 1px 透明图。
+        BANNER = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="132">'
+            '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+            '<stop offset="0" stop-color="#1f6feb"/><stop offset="1" stop-color="#a371f7"/>'
+            '</linearGradient></defs>'
+            '<rect width="640" height="132" rx="14" fill="url(#g)"/>'
+            '<text x="34" y="62" font-family="Noto Sans CJK SC, sans-serif" font-size="34"'
+            ' font-weight="700" fill="#ffffff">ghx</text>'
+            '<text x="34" y="96" font-family="Noto Sans CJK SC, sans-serif" font-size="15"'
+            ' fill="#e3edff">Android GitHub 控制台 · 直连 REST，不套网页壳</text>'
+            '</svg>'
+        )
+        TINY = base64.b64decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+        )
+
+        def handle_image(route):
+            url = route.request.url
+            if 'banner' in url:
+                route.fulfill(status=200, content_type='image/svg+xml', body=BANNER.encode())
+            elif 'raw.githubusercontent.com' in url or '/raw/' in url:
+                route.fulfill(status=200, content_type='image/png', body=TINY)
+            else:
+                # 头像这类保持原样：原来就是走网络的，别顺手改掉
+                route.continue_()
+
+        pg.route(re.compile(r'.*\.(png|jpg|jpeg|svg|webp)(\?.*)?$'), handle_image)
         if os.environ.get('SHOT_DEBUG'):
             pg.on('request', lambda r: print('REQ', r.url[:110]))
 
@@ -332,6 +470,17 @@ def main():
         pg.click('text=我的主页')
         pg.wait_for_timeout(2500)
         pg.screenshot(path=f'{OUT}/10-user.png')
+
+        # 数据看板：从「我的」里点进去，会自动把看板页签放进底栏
+        pg.click('[aria-label="返回"]')
+        pg.wait_for_timeout(600)
+        pg.click('text=数据看板')
+        pg.wait_for_timeout(2600)
+        pg.screenshot(path=f'{OUT}/12-dashboard.png')
+        pg.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        pg.mouse.wheel(0, 2400)
+        pg.wait_for_timeout(900)
+        pg.screenshot(path=f'{OUT}/13-dashboard-detail.png')
 
         b.close()
     print('shots ok')

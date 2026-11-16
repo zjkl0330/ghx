@@ -33,6 +33,11 @@ export function NotificationsPage(p: {
   onToast: (s: string) => void
   /** 未读数变化时回传给底栏角标 */
   onUnread: (n: number) => void
+  /**
+   * 外部要求重拉的信号。
+   * 直读面板里「标记完成」是 App 侧发起的，本页不知道，靠这个计数变化触发重拉。
+   */
+  reloadKey?: number
 }) {
   const [items, setItems] = useState<NotificationThread[]>([])
   const [loading, setLoading] = useState(true)
@@ -72,6 +77,14 @@ export function NotificationsPage(p: {
   useEffect(() => {
     void load()
   }, [load])
+
+  // 直读面板标记完成后由 App 加一，这里静默重拉一次，列表立刻少一条
+  useEffect(() => {
+    if (p.reloadKey === undefined || p.reloadKey === 0) return
+    void load(true)
+    // 只在信号变化时跑
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.reloadKey])
 
   async function act(fn: () => Promise<unknown>, ok: string) {
     if (busy) return

@@ -6,15 +6,16 @@
  * 流水线默认收起、需要时再放到底栏。
  */
 
-export type TabKey = 'repos' | 'stars' | 'hot' | 'pipelines'
+export type TabKey = 'repos' | 'stars' | 'hot' | 'dashboard' | 'pipelines'
 
 /** 底栏页签图标：统一用实心版，选中只换颜色 —— 线条在玻璃上重量不够，远看只是一团雾 */
-type TabIcon = 'repoFill' | 'starOn' | 'flameOn' | 'pipelinesOn'
+type TabIcon = 'repoFill' | 'starOn' | 'flameOn' | 'trendOn' | 'pipelinesOn'
 
 export const TAB_DEFS: { key: TabKey; label: string; icon: TabIcon }[] = [
   { key: 'repos', label: '仓库', icon: 'repoFill' },
   { key: 'stars', label: '星标', icon: 'starOn' },
   { key: 'hot', label: '热门', icon: 'flameOn' },
+  { key: 'dashboard', label: '看板', icon: 'trendOn' },
   { key: 'pipelines', label: '流水线', icon: 'pipelinesOn' },
 ]
 
@@ -48,7 +49,7 @@ export function toggleTab(list: TabKey[], key: TabKey): TabKey[] {
 
 /**
  * 当前页签被隐藏时，退回到第一个可见的「内容页」。
- * 流水线是二级页面，不作为底栏页签内容渲染，所以不能选它当 tab。
+ * 流水线是二级页面（它的入口在仓库页里），不作为底栏页签内容渲染，所以不能选它当 tab。
  */
 export function fallbackTab(list: TabKey[], current: TabKey): TabKey {
   const content: TabKey[] = list.filter((k) => k !== 'pipelines')

@@ -14,6 +14,13 @@ import {
   type IssueLabel,
   type IssueUser,
 } from '../lib/issues'
+import {
+  dueInfo,
+  listMilestones,
+  milestoneProgress,
+  setMilestone,
+  type Milestone,
+} from '../lib/milestones'
 import { listCollaborators } from '../lib/repo-admin'
 import { parseMarkdown } from '../lib/markdown'
 import { relTime, shortDate } from '../lib/format'
@@ -48,6 +55,8 @@ export function IssuePage(p: {
   const [people, setPeople] = useState<IssueUser[] | null>(null)
   const [pickingPeople, setPickingPeople] = useState(false)
   const [pickingLock, setPickingLock] = useState(false)
+  const [milestones, setMilestones] = useState<Milestone[] | null>(null)
+  const [pickingMilestone, setPickingMilestone] = useState(false)
 
   const load = useCallback(
     async (silent = false) => {
@@ -147,6 +156,35 @@ export function IssuePage(p: {
     await guard(() => setAssignees(p.client!, p.owner, p.repo, p.number, next), '指派已更新')
   }
 
+  async function openMilestonePicker() {
+    if (!p.client) return
+    setPickingMilestone((v) => !v)
+    if (milestones) return
+    try {
+      setMilestones(await listMilestones(p.client, p.owner, p.repo))
+    } catch (err) {
+      setMilestones([])
+      p.onToast((err as Error).message)
+    }
+  }
+
+  /**
+   * 设置里程碑。
+   *
+   * 走 Issue 的 PATCH 而不是独立端点（GitHub 没有）；传 null 是移出。
+   * 成功后重拉——`updated_at` 会变，本地改一个字段会让「最后更新」显示成旧的。
+   */
+  async function applyMilestone(number: number | null) {
+    if (!p.client || !issue) return
+    const cur = issue.milestone?.number ?? null
+    const next = cur === number ? null : number
+    await guard(
+      () => setMilestone(p.client!, p.owner, p.repo, p.number, next),
+      next === null ? '已移出里程碑' : '里程碑已更新',
+    )
+    setPickingMilestone(false)
+  }
+
   /**
    * 锁定/解锁不走 `guard`。
    *
@@ -214,9 +252,9 @@ export function IssuePage(p: {
                 </span>
                 {issue.locked && <span className="pill">已锁定</span>}
               </div>
-              {issue.labels.length > 0 && (
+              {(issue.labels?.length ?? 0) > 0 && (
                 <div className="detail-labels">
-                  {issue.labels.map((l) => (
+                  {(issue.labels ?? []).map((l) => (
                     <span key={l.name} className="issue-label" style={{ background: `#${l.color}` }}>
                       {l.name}
                     </span>
@@ -246,19 +284,60 @@ export function IssuePage(p: {
                 <Icon name="user" size={14} />
                 指派
               </button>
+              <button
+                className="btn ghost"
+                disabled={busy}
+                onClick={() => void openMilestonePicker()}
+              >
+                <Icon name="tag" size={14} />
+                {issue.milestone ? '里程碑' : '加里程碑'}
+              </button>
               <button className="btn ghost" disabled={busy} onClick={() => setPickingLock((v) => !v)}>
                 <Icon name={issue.locked ? 'eye' : 'lock'} size={14} />
                 {issue.locked ? '解锁' : '锁定'}
               </button>
             </div>
 
-            {(issue.assignees?.length ?? 0) > 0 && (
-              <div className="detail-labels">
+            {((issue.assignees?.length ?? 0) > 0 || issue.milestone) && (
+              <div className="detail-pills">
+                {issue.milestone && <span className="pill">{issue.milestone.title}</span>}
                 {issue.assignees?.map((u) => (
                   <span key={u.login} className="pill">
                     @{u.login}
                   </span>
                 ))}
+              </div>
+            )}
+
+            {pickingMilestone && (
+              <div className="labelpick">
+                {milestones === null && <div className="muted">正在读取里程碑…</div>}
+                {milestones?.length === 0 && (
+                  <div className="muted">这个仓库还没有里程碑，去网页端建一个</div>
+                )}
+                <div className="chips" style={{ padding: '0' }}>
+                  {milestones?.map((m) => {
+                    const on = issue.milestone?.number === m.number
+                    const due = dueInfo(m)
+                    return (
+                      <button
+                        key={m.number}
+                        className={`chip${on ? ' on' : ''}`}
+                        disabled={busy}
+                        onClick={() => void applyMilestone(m.number)}
+                      >
+                        {m.title}
+                        <span className="chip-n">
+                          {milestoneProgress(m)}%
+                          {m.state === 'closed' ? ' 已关' : due.tone === 'over' ? ` ${due.text}` : ''}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="hint" style={{ marginTop: 6 }}>
+                  再点一次当前里程碑即可移出；没有推送权限时 GitHub 会静默忽略。
+                </div>
               </div>
             )}
 

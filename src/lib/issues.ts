@@ -35,6 +35,8 @@ export interface Issue {
   user: IssueUser | null
   labels: IssueLabel[]
   assignees: IssueUser[] | null
+  /** 里程碑。列表接口会带上，高级筛选与详情页都要用 */
+  milestone?: { number: number; title: string; state?: 'open' | 'closed' } | null
   comments: number
   created_at: string
   updated_at: string
@@ -129,7 +131,14 @@ export async function listIssues(
   client: ApiClient,
   owner: string,
   repo: string,
-  opts: { state?: 'open' | 'closed' | 'all'; page?: number; perPage?: number; fresh?: boolean } = {},
+  opts: {
+    state?: 'open' | 'closed' | 'all'
+    page?: number
+    perPage?: number
+    fresh?: boolean
+    /** 高级筛选拼出来的参数（labels / assignee / creator / milestone / since） */
+    extra?: Record<string, string>
+  } = {},
 ): Promise<{ items: Issue[]; openCount: number }> {
   const query = new URLSearchParams({
     state: opts.state ?? 'open',
@@ -138,6 +147,10 @@ export async function listIssues(
     sort: 'updated',
     direction: 'desc',
   })
+  // 只写非空值：GitHub 把空串当「筛出该字段为空」，不是「不过滤」
+  for (const [k, v] of Object.entries(opts.extra ?? {})) {
+    if (v) query.set(k, v)
+  }
   const { data } = await client.request<Issue[]>(
     `/repos/${enc(owner)}/${enc(repo)}/issues?${query.toString()}`,
     {},

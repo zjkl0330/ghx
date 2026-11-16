@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GitHubClient } from '../api'
-import { buildPlan, countBy, filterRepos, normalizeRepo, runBatch, validateRepoName } from '../repos'
+import {
+  buildPlan,
+  countBy,
+  filterRepos,
+  normalizeRepo,
+  planBatch,
+  runBatch,
+  runBatchActions,
+  validateRepoName,
+} from '../repos'
 import type { Repo, Visibility } from '../types'
 
 function repo(over: Partial<Repo> = {}): Repo {
@@ -198,5 +207,193 @@ describe('validateRepoName', () => {
   it('超过 100 字符拒绝', () => {
     expect(validateRepoName('a'.repeat(100))).toBeNull()
     expect(validateRepoName('a'.repeat(101))).not.toBeNull()
+  })
+})
+
+describe('批量动作计划', () => {
+  const repo = (over: Partial<Repo> = {}): Repo => ({
+    id: 1,
+    name: 'r',
+    full_name: 'o/r',
+    owner: 'o',
+    private: false,
+    visibility: 'public',
+    archived: false,
+    disabled: false,
+    description: null,
+    language: null,
+    stargazers_count: 0,
+    forks_count: 0,
+    pushed_at: '',
+    default_branch: 'main',
+    ...over,
+  })
+
+  it('可见度：公开转私有算破坏性', () => {
+    const [item] = planBatch([repo()], { kind: 'visibility', to: 'private' })
+    expect(item.destructive).toBe(true)
+    expect(item.skip).toBe(false)
+    expect(item.label).toBe('Public → Private')
+  })
+
+  it('可见度：已经是目标状态时 skip', () => {
+    const [item] = planBatch([repo({ visibility: 'private', private: true })], {
+      kind: 'visibility',
+      to: 'private',
+    })
+    expect(item.skip).toBe(true)
+  })
+
+  it('可见度：无 admin 权限标记 blocked', () => {
+    const [item] = planBatch([repo({ permissions: { admin: false, push: true, pull: true } })], {
+      kind: 'visibility',
+      to: 'private',
+    })
+    expect(item.blocked).toBe(true)
+    expect(item.reason).toContain('admin')
+  })
+
+  it('归档：已归档的 skip，未归档的算破坏性', () => {
+    const [a] = planBatch([repo({ archived: true })], { kind: 'archive' })
+    expect(a.skip).toBe(true)
+    const [b] = planBatch([repo()], { kind: 'archive' })
+    expect(b.skip).toBe(false)
+    expect(b.destructive).toBe(true)
+  })
+
+  it('取消归档：未归档的 skip', () => {
+    const [item] = planBatch([repo()], { kind: 'unarchive' })
+    expect(item.skip).toBe(true)
+    expect(item.destructive).toBe(false)
+  })
+
+  it('加话题：没有 push 权限时 blocked，空话题视为 skip', () => {
+    const [a] = planBatch([repo({ permissions: { admin: false, push: false, pull: true } })], {
+      kind: 'topics',
+      add: ['x'],
+    })
+    expect(a.blocked).toBe(true)
+    const [b] = planBatch([repo()], { kind: 'topics', add: [] })
+    expect(b.skip).toBe(true)
+  })
+
+  it('一次规划多个仓库', () => {
+    const list = planBatch([repo(), repo({ name: 'r2', full_name: 'o/r2' })], { kind: 'archive' })
+    expect(list).toHaveLength(2)
+    expect(list[1].repo.full_name).toBe('o/r2')
+  })
+})
+
+describe('执行批量动作', () => {
+  const repo = (over: Partial<Repo> = {}): Repo => ({
+    id: 1,
+    name: 'r',
+    full_name: 'o/r',
+    owner: 'o',
+    private: false,
+    visibility: 'public',
+    archived: false,
+    disabled: false,
+    description: null,
+    language: null,
+    stargazers_count: 0,
+    forks_count: 0,
+    pushed_at: '',
+    default_branch: 'main',
+    ...over,
+  })
+
+  function spy() {
+    const calls: { path: string; method: string; body?: string }[] = []
+    const client = {
+      setVisibility: async () => {
+        calls.push({ path: 'visibility', method: 'PATCH' })
+      },
+      setArchived: async (_o: string, _r: string, archived: boolean) => {
+        calls.push({ path: `archive:${archived}`, method: 'PATCH' })
+      },
+      request: async <T>(path: string, init?: RequestInit) => {
+        calls.push({ path, method: init?.method ?? 'GET', body: init?.body as string })
+        if (path.endsWith('/topics') && !init?.method) {
+          return { data: { names: ['old'] } as T, rate: null, scopes: [] as string[] }
+        }
+        return { data: {} as T, rate: null, scopes: [] as string[] }
+      },
+    }
+    return { client, calls }
+  }
+
+  it('归档调 setArchived(true)', async () => {
+    const { client, calls } = spy()
+    const res = await runBatchActions(client as never, planBatch([repo()], { kind: 'archive' }), {
+      gapMs: 0,
+    })
+    expect(res[0].status).toBe('ok')
+    expect(calls[0].path).toBe('archive:true')
+  })
+
+  it('取消归档调 setArchived(false)', async () => {
+    const { client, calls } = spy()
+    await runBatchActions(
+      client as never,
+      planBatch([repo({ archived: true })], { kind: 'unarchive' }),
+      { gapMs: 0 },
+    )
+    expect(calls[0].path).toBe('archive:false')
+  })
+
+  it('加话题先读现有再 PUT 合并结果', async () => {
+    const { client, calls } = spy()
+    const res = await runBatchActions(
+      client as never,
+      planBatch([repo()], { kind: 'topics', add: ['new'] }),
+      { gapMs: 0 },
+    )
+    expect(calls).toHaveLength(2)
+    expect(calls[1].method).toBe('PUT')
+    expect(JSON.parse(String(calls[1].body))).toEqual({ names: ['old', 'new'] })
+    expect(res[0].message).toContain('2 个话题')
+  })
+
+  it('skip 的不发请求，但仍算成功', async () => {
+    const { client, calls } = spy()
+    const res = await runBatchActions(
+      client as never,
+      planBatch([repo({ archived: true })], { kind: 'archive' }),
+      { gapMs: 0 },
+    )
+    expect(calls).toHaveLength(0)
+    expect(res[0]).toEqual({ repo: 'o/r', status: 'ok', message: '已是目标状态' })
+  })
+
+  it('blocked 的直接记失败，不发请求', async () => {
+    const { client, calls } = spy()
+    const res = await runBatchActions(
+      client as never,
+      planBatch([repo({ permissions: { admin: false, push: true, pull: true } })], {
+        kind: 'archive',
+      }),
+      { gapMs: 0 },
+    )
+    expect(calls).toHaveLength(0)
+    expect(res[0].status).toBe('failed')
+  })
+
+  it('单条失败不影响后面', async () => {
+    const calls: string[] = []
+    const client = {
+      setArchived: async (_o: string, r: string) => {
+        calls.push(r)
+        if (r === 'r') throw Object.assign(new Error('403'), { status: 403 })
+      },
+      request: async <T>() => ({ data: {} as T, rate: null, scopes: [] as string[] }),
+    }
+    const list = planBatch(
+      [repo(), repo({ id: 2, name: 'r2', full_name: 'o/r2' })],
+      { kind: 'archive' },
+    )
+    const res = await runBatchActions(client as never, list, { gapMs: 0 })
+    expect(res.map((r) => r.status)).toEqual(['failed', 'ok'])
+    expect(res[0].httpStatus).toBe(403)
   })
 })

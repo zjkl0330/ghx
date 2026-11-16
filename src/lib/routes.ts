@@ -19,16 +19,20 @@ export type Route =
   | { kind: 'tokens' }
   | { kind: 'audit' }
   | { kind: 'notifications' }
-  | { kind: 'search' }
+  | { kind: 'search'; repo?: string }
   | { kind: 'user'; login: string }
+  /** Gist 列表：不带 login 是自己的（含私有），带 login 是他人的公开片段 */
+  | { kind: 'gists'; login?: string }
+  /** 单个 Gist；id 为空表示新建 */
+  | { kind: 'gist'; id: string }
   /** 仓库主页，带一个当前页签；页签切换就地替换，不压栈 */
   | { kind: 'repo'; owner: string; repo: string; tab?: RepoTab }
   | { kind: 'issues'; owner: string; repo: string }
   | { kind: 'issue'; owner: string; repo: string; number: number }
   | { kind: 'pulls'; owner: string; repo: string }
   | { kind: 'pull'; owner: string; repo: string; number: number }
-  /** 代码浏览：目录与文件共用，path 为空表示仓库根 */
-  | { kind: 'code'; owner: string; repo: string; path: string; ref?: string }
+  /** 代码浏览：目录与文件共用，path 为空表示仓库根。find 是搜索跳进来时要高亮的词 */
+  | { kind: 'code'; owner: string; repo: string; path: string; ref?: string; find?: string }
   /** 编辑/新建文件。sha 是乐观锁，远端变过就会被 GitHub 409 拒掉 */
   | { kind: 'edit'; owner: string; repo: string; path: string; ref?: string; sha?: string }
   /** 提交历史。带 path 就是「这个文件的历史」 */
@@ -63,6 +67,12 @@ export function routeKey(r: Route): string {
   switch (r.kind) {
     case 'user':
       return `user:${r.login.toLowerCase()}`
+    case 'gists':
+      return `gists:${r.login ? r.login.toLowerCase() : 'me'}`
+    case 'gist':
+      return `gist:${r.id || 'new'}`
+    case 'search':
+      return r.repo ? `search:${r.repo.toLowerCase()}` : 'search'
     case 'repo':
       return `repo:${r.owner}/${r.repo}:${r.tab ?? 'code'}`
     case 'issues':
@@ -75,7 +85,7 @@ export function routeKey(r: Route): string {
     case 'pull':
       return `${r.kind}:${r.owner}/${r.repo}#${r.number}`
     case 'code':
-      return `code:${r.owner}/${r.repo}:${r.ref ?? ''}:${r.path}`
+      return `code:${r.owner}/${r.repo}:${r.ref ?? ''}:${r.path}:${r.find ?? ''}`
     case 'edit':
       return `edit:${r.owner}/${r.repo}:${r.ref ?? ''}:${r.path}`
     case 'commits':
@@ -107,9 +117,13 @@ export function routeLabel(r: Route): string {
     case 'notifications':
       return '通知'
     case 'search':
-      return '搜索'
+      return r.repo ? `搜 ${r.repo}` : '搜索'
     case 'user':
       return `@${r.login}`
+    case 'gists':
+      return r.login ? `@${r.login} 的 Gist` : 'Gist'
+    case 'gist':
+      return r.id ? 'Gist' : '新建 Gist'
     case 'repo':
       return `${r.owner}/${r.repo}`
     case 'issues':

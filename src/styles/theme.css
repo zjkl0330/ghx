@@ -18,6 +18,11 @@
   --text-3: #b6c2cf;
   --text-dim: #7d8590;
   --icon-dim: #8b949e;
+  /* 直方图与次要条形用的中性色，单独给一组 RGB 才能拼 rgba */
+  --text-dim-rgb: 125, 133, 144;
+  /* 看板的三色：提交跟随强调色，Issue / PR 各占一色，深浅主题分别调过对比度 */
+  --chart-issue-rgb: 210, 153, 34;
+  --chart-pull-rgb: 163, 113, 247;
 
   /* 强调色：六个色板只换 --accent-rgb / --accent-fg-rgb 两组 RGB，
      其余派生色全从这里算 —— 否则每加一个颜色就要抄六行 rgba，迟早漏一处。
@@ -124,6 +129,9 @@
   --text-3: #57606a;
   --text-dim: #656d76;
   --icon-dim: #6e7781;
+  --text-dim-rgb: 101, 109, 118;
+  --chart-issue-rgb: 154, 103, 0;
+  --chart-pull-rgb: 130, 80, 223;
 
   --accent-rgb: 9, 105, 218;
   --accent-fg-rgb: 9, 105, 218;
@@ -187,6 +195,54 @@
   --tab-fg: #3d444d;
   --tab-label-shadow: 0 1px 2px rgba(255, 255, 255, 0.7);
   --tab-active-base: rgba(15, 23, 42, 0.045);
+}
+
+/* ---- 外观预览 ----
+ * 设置页里那个缩略底栏。它用的就是真的 .tabbar，只把 fixed 换成绝对定位，
+ * 所以玻璃 / 镜面环 / 药丸 / 高度全部跟着 data-* 走，不存在两套样式漂移。
+ * 容器自带一层强调色光晕，一是给 backdrop-filter 提供可采样的背景，
+ * 二是让「氛围光」这一档在浅色主题下也能看出区别。
+ */
+.look-preview {
+  position: relative;
+  margin: 0 0 12px;
+  height: calc(var(--tabbar-h) + 30px);
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(88% 130% at 16% 0%, rgba(var(--accent-rgb), 0.22), transparent 62%),
+    linear-gradient(180deg, var(--surface), var(--bg));
+}
+
+.look-preview .tabbar {
+  position: absolute;
+  /* 悬浮形态两边各留 12px，和真机上的胶囊一致；通栏由下面的规则拉平 */
+  left: 12px;
+  right: 12px;
+  bottom: 8px;
+  width: auto;
+  margin-inline: 0;
+  pointer-events: none;
+}
+
+/* 通栏形态在预览里贴底、拉满，不留下那条 8px 缝 */
+html[data-tabbar='dock'] .look-preview .tabbar {
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.look-preview-tag {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  z-index: 25;
+  font-size: 9.5px;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  opacity: 0.75;
+  pointer-events: none;
 }
 
 /* ================= 外观选项 =================
@@ -3775,6 +3831,21 @@ button.ustat:active {
   padding: 8px 10px;
 }
 
+/* 错误条右侧的重试按钮：出错时别逼用户自己去右上角找刷新图标 */
+.warn-retry {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: center;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--red-line);
+  background: transparent;
+  color: var(--red-text);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .sheet-tall {
   max-height: 88vh;
   display: flex;
@@ -4312,4 +4383,1118 @@ button.ustat:active {
   html[data-tabbar='dock'] .glass-backdrop {
     height: calc(120px + var(--safe-bottom));
   }
+}
+
+/* ================= 数据看板 =================
+ * 只有一张柱状图是 SVG，其余全是 div 拼的条 —— 看板的数据量不值得引图表库。
+ * 所有颜色都从变量取，浅色主题下不用另写一套。
+ */
+.dash-kpi {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 4px 16px 0;
+}
+
+.dash-kpi-cell {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px 12px 10px;
+  min-width: 0;
+}
+
+.dash-kpi-cell b {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-kpi-cell span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.dash-kpi-cell i {
+  display: block;
+  margin-top: 5px;
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-panel {
+  padding: 14px 12px 10px;
+}
+
+/* 柱子只画形状，viewBox 会被横向拉伸，所以 rx 会变形 —— 干脆不要圆角 */
+.dash-chart {
+  display: block;
+  width: 100%;
+  height: 88px;
+  color: var(--text-dim);
+  overflow: visible;
+}
+
+.dash-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.dash-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dash-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.dash-langs {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.dash-lang {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.dash-lang-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 40%;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.dash-lang-track {
+  flex: 1;
+  height: 7px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.dash-lang-track > i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+
+/* 数量与百分比分列两端：挤在一起会读成「19%」这种假数字 */
+.dash-lang-num {
+  width: 62px;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-lang-num b {
+  font-weight: 600;
+}
+
+.dash-lang-num em {
+  font-style: normal;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  min-width: 26px;
+  text-align: right;
+}
+
+.dash-ranks {
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-rank {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 0;
+  background: none;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  border-bottom: 1px solid var(--line);
+}
+
+.dash-rank:last-child {
+  border-bottom: 0;
+}
+
+.dash-rank-no {
+  width: 16px;
+  flex: none;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-rank-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+}
+
+.dash-rank-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.dash-rank-track > i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(var(--accent-rgb), 0.75);
+}
+
+.dash-rank-num {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-recent {
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.dash-recent-row:last-child {
+  border-bottom: 0;
+}
+
+.dash-recent-row .ellipsis {
+  flex: 1;
+  min-width: 0;
+}
+
+.dash-recent-row i {
+  flex: none;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.dash-split {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dash-split-track {
+  display: flex;
+  height: 9px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--surface-2);
+  gap: 2px;
+}
+
+.dash-split-track > i {
+  display: block;
+  height: 100%;
+}
+
+.dash-split-legend {
+  display: flex;
+  gap: 14px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.dash-split-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.dash-facts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.dash-facts > div {
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.dash-facts b {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-facts span {
+  display: block;
+  margin-top: 1px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.dash-quota-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.dash-quota-head b {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-quota-head span {
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.dash-track {
+  margin-top: 8px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.dash-track-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: rgba(var(--accent-rgb), 0.8);
+}
+
+/* ================= 主页自述 =================
+ * 个人主页的 README 直接铺在资料下面，折叠时靠一个渐隐层提示「还有」。
+ * 高度上限按 300px 定：手机上正好露出两三屏内容，再多就把仓库列表挤下去了。
+ */
+.preadme-body {
+  max-height: 300px;
+  overflow: hidden;
+}
+
+.preadme-body.open {
+  max-height: none;
+  overflow: visible;
+}
+
+/* 折叠状态底部渐隐，颜色必须与 .panel 底色一致，否则会看到一条色带 */
+.preadme-fade {
+  height: 52px;
+  margin-top: -52px;
+  position: relative;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0), var(--surface) 82%);
+}
+
+.preadme-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 0 3px;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--blue);
+}
+
+/* chevron 本身尖朝下：折叠时保持原样，展开后翻过来 */
+.preadme-more svg {
+  transition: transform 0.16s ease;
+}
+
+.preadme-body.open ~ .preadme-more svg {
+  transform: rotate(180deg);
+}
+
+.preadme-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.preadme-foot .ellipsis {
+  min-width: 0;
+}
+
+.preadme-link {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--blue);
+}
+
+.preadme-empty {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 4px 0 2px;
+  color: var(--text-dim);
+}
+
+.preadme-empty b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.preadme-empty span {
+  display: block;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.preadme-empty code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.preadme-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.preadme-skel i {
+  display: block;
+  height: 10px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  animation: skel-pulse 1.4s ease-in-out infinite;
+}
+
+/* 页面级错误边界：占满内容区，垂直居中，与「无法打开保险库」那屏同一套排版 */
+.boundary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 56px 24px calc(40px + var(--safe-bottom));
+}
+
+.boundary .title {
+  margin: 10px 0 6px;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.boundary .muted {
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 300px;
+}
+
+.boundary-msg {
+  margin: 14px 0 0;
+  max-width: 100%;
+  max-height: 120px;
+  overflow: auto;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- 文件页：查找栏 ----
+ * 顶部 filebar 放不下输入框（390 宽还要塞路径、查找、更多、编辑），
+ * 所以查找做成「点图标展开一条独立横栏」，不挤占文件信息那一行。
+ */
+.findbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 16px 8px;
+  padding: 3px 4px 3px 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text-dim);
+}
+
+.findbar input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 0;
+}
+
+.find-count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  white-space: nowrap;
+  min-width: 36px;
+  text-align: right;
+}
+
+.find-count.none {
+  color: var(--red-text);
+}
+
+.findbar .icon-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+
+.findbar .icon-btn:disabled {
+  opacity: 0.35;
+}
+
+/* 命中行整行淡底，便于扫读；当前那一处再深一档 */
+.code-line.has-hit {
+  background: rgba(210, 153, 34, 0.1);
+}
+
+.code-line.cur-hit {
+  background: rgba(210, 153, 34, 0.3);
+  box-shadow: inset 2px 0 0 rgba(210, 153, 34, 0.9);
+}
+
+/* mark 默认是亮黄底黑字，深色主题下会把代码糊掉，这里只留一层薄底 */
+.code-text mark.hit {
+  background: rgba(210, 153, 34, 0.45);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* 折行只在开关打开时生效；默认仍是横向滚动，与 GitHub 网页一致 */
+.codeview.wrap .code-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.codeview.wrap .code-text {
+  min-width: 0;
+}
+
+/* 字号可调后行号列要能自己变宽，否则三位数行号会被裁 */
+.code-no {
+  width: auto;
+  min-width: 38px;
+}
+
+/* 操作面板的分组标题 */
+.sheet-sec {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.sheet-sec-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+/* 字号调节：两个按钮夹一个当前值，比三档分段更省一行且能看出具体像素 */
+.sizerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sizebtn {
+  width: 38px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.sizebtn:disabled {
+  opacity: 0.35;
+}
+
+.sizeval {
+  min-width: 22px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ================= Gist ================= */
+.gist-head {
+  padding: 12px 16px 0;
+}
+
+.gist-head b {
+  display: block;
+  font-size: 14.5px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.gist-head .hint {
+  margin-top: 6px;
+}
+
+.gist-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px 2px;
+}
+
+.btn.ghost.on {
+  color: rgb(var(--accent-rgb));
+  border-color: rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.gist-file {
+  margin: 10px 16px 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.gist-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.gist-file-head .mono {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+}
+
+.gist-file-head .row-meta {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.gist-pre {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 2;
+  color: var(--text);
+}
+
+.gist-form {
+  padding: 0 16px;
+}
+
+.gist-edit {
+  margin: 10px 0 0;
+}
+
+.gist-edit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gist-edit-head .input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.gist-edit-head .input:focus {
+  border-color: var(--blue);
+  outline: none;
+}
+
+.gist-ta {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  min-height: 150px;
+  resize: vertical;
+  padding: 9px 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+/* 搜索范围提示条 */
+.scopebar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 16px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
+  color: rgb(var(--accent-rgb));
+  font-size: 11.5px;
+}
+
+/* ================= 列表高级筛选 ================= */
+.flt-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 0;
+}
+
+/* .seg 自带 16px 的横向外边距，放进这一行会把筛选按钮挤出屏幕 */
+.flt-bar .seg {
+  margin: 0;
+}
+
+.flt-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.flt-btn.on {
+  color: rgb(var(--accent-rgb));
+  border-color: rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.flt-sum {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  color: rgb(var(--accent-rgb));
+  font-size: 11.5px;
+}
+
+.flt-sum > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.flt-sum .linkbtn {
+  flex: none;
+  color: rgb(var(--accent-rgb));
+  opacity: 0.8;
+}
+
+.flt-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.flt-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.flt-input:focus {
+  border-color: var(--blue);
+  outline: none;
+}
+
+/* 弹层内容区：和底部动作条分开，长内容自己滚 */
+.sheet-body {
+  padding: 0 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sheet-sec-note {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-dim);
+}
+
+/* ================= 贡献日历 ================= */
+.cgrid {
+  --grid-0: rgba(139, 148, 158, 0.16);
+  --grid-1: rgba(var(--accent-rgb), 0.26);
+  --grid-2: rgba(var(--accent-rgb), 0.46);
+  --grid-3: rgba(var(--accent-rgb), 0.7);
+  --grid-4: rgb(var(--accent-rgb));
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+  margin: 2px auto 0;
+  color: var(--text-dim);
+}
+
+.cgrid-foot {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.cgrid-foot b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 指派人与里程碑并排靠右：.pill 自带 margin-left:auto，多个会各自撑开把行拆散 */
+.detail-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+  justify-content: flex-end;
+}
+
+.detail-pills .pill {
+  margin-left: 0;
+}
+
+/* ---------- 自述目录（v0.7.4） ---------- */
+
+/*
+ * 目录浮层。
+ * 早先做成 sheet 里的 sticky 面板，结果它占高度：打开时正文整体下移，
+ * 跳转位置是按「有目录」的布局算的，一收起就偏一屏。改成覆盖层，不参与布局。
+ */
+.toc-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(1, 4, 9, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: calc(10vh + var(--safe-top)) 14px 0;
+}
+
+.toc-panel {
+  width: 100%;
+  max-width: var(--content-max, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 10px 8px;
+  box-shadow: 0 18px 44px var(--shadow);
+}
+
+.toc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 0 2px 6px;
+}
+
+.toc-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.toc-item {
+  text-align: left;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 10px;
+  /* 长标题一行放不下就省略，目录本身不该有横向滚动 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toc-item.on {
+  color: var(--blue);
+  background: var(--blue-soft-2);
+  font-weight: 600;
+}
+
+/* 提交历史底部分页 */
+.more-wrap {
+  padding: 10px 16px calc(24px + var(--safe-bottom));
+}
+
+.more-wrap .btn {
+  width: 100%;
+}
+
+/*
+ * 行尾置顶按钮。
+ * 放在 .row-main 之外（不是里面），否则长仓库名会把钉子挤出屏幕。
+ * 未置顶时压到很淡，避免每行都亮一个图标抢注意力。
+ */
+.pin-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-top: -2px;
+  border-radius: 7px;
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.pin-btn.on {
+  color: var(--blue);
+  opacity: 1;
+  background: var(--blue-soft);
+}
+
+/* 置顶项左侧给一条竖线，扫一眼就知道哪几个是被钉住的。
+   不用 :has() —— minSdk 23 的旧 WebView 不认，会静默丢整条规则 */
+.row.pinned {
+  box-shadow: inset 2px 0 0 var(--blue);
+}
+
+/* ---------- 通知直读（v0.7.5） ---------- */
+
+.thread-sheet {
+  padding-bottom: calc(16px + var(--safe-bottom));
+}
+
+/*
+ * 评论卡片。
+ * 用左侧一条竖线而不是整块底色：评论正文里已经有引用块（.md-quote）自带底色，
+ * 两层底色叠在一起会糊成一片。
+ */
+.thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.thread-comment {
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+}
+
+.thread-who {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  margin-bottom: 4px;
+}
+
+.thread-who b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.thread-comment .md {
+  font-size: 12.5px;
+}
+
+/* 24 小时内的评论标一下，扫一眼就知道哪条是新动静 */
+.pill.fresh {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-bg);
+  margin-left: auto;
+}
+
+/* ---------- 批量动作选择（v0.7.5） ---------- */
+
+.picklist {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.pickrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.pickrow:last-child {
+  border-bottom: 0;
+}
+
+.pickrow > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.pickrow em {
+  font-style: normal;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.pickrow > svg:first-child {
+  color: var(--text-dim);
+  flex: none;
+}
+
+.pickrow > svg:last-child {
+  color: var(--text-dim);
+  flex: none;
+  transform: rotate(-90deg);
+}
+
+/* 静态 chip：只展示已解析出来的话题，不可点 */
+.chip.static {
+  cursor: default;
+  color: var(--text-dim);
+}
+
+/* 主按钮禁用时换灰底：只降透明度的绿色看着还是「能点」，容易误以为没反应 */
+.btn.primary:disabled {
+  background: var(--surface-3);
+  color: var(--text-dim);
+  opacity: 1;
 }

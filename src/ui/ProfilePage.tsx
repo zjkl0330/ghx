@@ -23,6 +23,9 @@ interface Props {
   unreadCount: number
   onOpenSearch: () => void
   onOpenMe: () => void
+  /** 数据看板在底栏，是个主界面页签 */
+  onOpenDashboard: () => void
+  onOpenGists: () => void
   onCheckUpdate: () => void
   onLock: () => void
 }
@@ -119,7 +122,27 @@ export function ProfilePage(p: Props) {
             </span>
             <span className="linkrow-main">
               <b>我的主页</b>
-              <i>资料、公开仓库、关注关系</i>
+              <i>资料、主页自述、公开仓库、关注关系</i>
+            </span>
+            <Icon name="chevron" size={13} className="linkrow-arrow" />
+          </button>
+          <button className="linkrow" onClick={p.onOpenDashboard}>
+            <span className="act-ic">
+              <Icon name="trend" size={15} />
+            </span>
+            <span className="linkrow-main">
+              <b>数据看板</b>
+              <i>Star 总量、近 14 天活跃、语言分布、配额</i>
+            </span>
+            <Icon name="chevron" size={13} className="linkrow-arrow" />
+          </button>
+          <button className="linkrow" onClick={p.onOpenGists}>
+            <span className="act-ic">
+              <Icon name="file" size={15} />
+            </span>
+            <span className="linkrow-main">
+              <b>Gist 片段</b>
+              <i>零散代码与笔记 · 可多文件、可私有</i>
             </span>
             <Icon name="chevron" size={13} className="linkrow-arrow" />
           </button>

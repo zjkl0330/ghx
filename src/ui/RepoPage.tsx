@@ -32,6 +32,10 @@ export function RepoPage(p: {
   onBack: () => void
   onTab: (tab: RepoTab) => void
   onOpenIssue: (n: number) => void
+  /** 只在这个仓库里搜代码 / Issue / 提交 */
+  onSearch: () => void
+  /** 当前账号登录名，Issue / PR 筛选里的「我」用它 */
+  me?: string | null
   onOpenPull: (n: number) => void
   onOpenDir: (path: string) => void
   onOpenFile: (path: string) => void
@@ -109,9 +113,14 @@ export function RepoPage(p: {
         }
         onBack={p.onBack}
         right={
-          <button className="icon-btn" onClick={() => void load(true)} aria-label="刷新">
-            <Icon name="refresh" size={17} />
-          </button>
+          <>
+            <button className="icon-btn" onClick={p.onSearch} aria-label="在这个仓库里搜索">
+              <Icon name="search" size={16} />
+            </button>
+            <button className="icon-btn" onClick={() => void load(true)} aria-label="刷新">
+              <Icon name="refresh" size={17} />
+            </button>
+          </>
         }
         action={
           p.tab === 'issues' || p.tab === 'pulls'
@@ -226,11 +235,11 @@ export function RepoPage(p: {
         )}
 
         {p.tab === 'issues' && (
-          <IssuesPage key={`issues-${p.reloadKey}`} client={p.client} owner={p.owner} repo={p.repo} onOpen={p.onOpenIssue} />
+          <IssuesPage key={`issues-${p.reloadKey}`} client={p.client} owner={p.owner} repo={p.repo} me={p.me} onOpen={p.onOpenIssue} />
         )}
 
         {p.tab === 'pulls' && (
-          <PullsPage key={`pulls-${p.reloadKey}`} client={p.client} owner={p.owner} repo={p.repo} onOpen={p.onOpenPull} />
+          <PullsPage key={`pulls-${p.reloadKey}`} client={p.client} owner={p.owner} repo={p.repo} me={p.me} onOpen={p.onOpenPull} />
         )}
       </div>
     </>

@@ -107,3 +107,32 @@ describe('提交路由', () => {
     expect(routeLabel({ kind: 'commits', owner: 'o', repo: 'r' })).toBe('提交历史')
   })
 })
+
+describe('Gist 与限定搜索', () => {
+  it('自己的 Gist 与某人的 Gist 是两个键', () => {
+    expect(routeKey({ kind: 'gists' })).toBe('gists:me')
+    expect(routeKey({ kind: 'gists', login: 'Zjkl0330' })).toBe('gists:zjkl0330')
+  })
+
+  it('新建的 Gist 与已有 Gist 不共用一个键', () => {
+    expect(routeKey({ kind: 'gist', id: '' })).toBe('gist:new')
+    expect(routeKey({ kind: 'gist', id: 'g1aa' })).toBe('gist:g1aa')
+  })
+
+  it('限定仓库的搜索与全区搜索不共用一个键', () => {
+    expect(routeKey({ kind: 'search' })).toBe('search')
+    expect(routeKey({ kind: 'search', repo: 'A/B' })).toBe('search:a/b')
+  })
+
+  it('副标题写明范围', () => {
+    expect(routeLabel({ kind: 'search' })).toBe('搜索')
+    expect(routeLabel({ kind: 'search', repo: 'a/b' })).toBe('搜 a/b')
+    expect(routeLabel({ kind: 'gists', login: 'zjkl' })).toBe('@zjkl 的 Gist')
+    expect(routeLabel({ kind: 'gist', id: '' })).toBe('新建 Gist')
+  })
+
+  it('Gist 路由不算仓库路由（避免误当成仓库去请求）', () => {
+    expect(repoOf({ kind: 'gists' })).toBe(null)
+    expect(repoOf({ kind: 'gist', id: 'x' })).toBe(null)
+  })
+})

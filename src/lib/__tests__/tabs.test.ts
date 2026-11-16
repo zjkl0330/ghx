@@ -35,7 +35,7 @@ describe('勾选与取消', () => {
   })
 
   it('选项覆盖所有底栏入口', () => {
-    expect(TAB_DEFS.map((t) => t.key)).toEqual(['repos', 'stars', 'hot', 'pipelines'])
+    expect(TAB_DEFS.map((t) => t.key)).toEqual(['repos', 'stars', 'hot', 'dashboard', 'pipelines'])
   })
 })
 

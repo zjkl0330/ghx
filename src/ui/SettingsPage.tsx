@@ -133,6 +133,26 @@ export function SettingsPage(p: Props) {
         <div style={{ padding: '4px 16px 0' }}>
           <div className="section-title">外观</div>
           <div className="panel">
+            {/*
+              外观预览：这里渲染的是一个真的 .tabbar，只是位置从 fixed 改成绝对定位。
+              玻璃底色、镜面环、圆角、选中药丸、只留图标时的高度，全部继承同一套 CSS 变量 ——
+              所以它不会有「预览和真机不一样」的漂移，改了哪一项当场就能看见。
+            */}
+            <div className="look-preview" aria-hidden="true">
+              <nav className="tabbar">
+                {p.tabs.slice(0, 4).map((key, i) => {
+                  const def = TAB_DEFS.find((t) => t.key === key)
+                  if (!def) return null
+                  return (
+                    <button key={key} className={i === 0 ? 'on' : ''}>
+                      <Icon name={def.icon} size={22} />
+                      <span className="tab-label">{def.label}</span>
+                    </button>
+                  )
+                })}
+              </nav>
+              <span className="look-preview-tag">实时预览</span>
+            </div>
             <div className="seg" style={{ margin: 0 }}>
               <button
                 className={p.themePref === 'system' ? 'on' : ''}

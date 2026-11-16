@@ -1,5 +1,98 @@
 import type { GitHubClient } from './api'
+import { mergeTopics } from './topics'
 import type { BatchResult, Repo, Visibility, VisibilityPlan } from './types'
+
+/**
+ * 批量动作。
+ *
+ * 早先只有「改可见度」，用户一次选十个仓库想归档还得一个个点。
+ * 这里把可见度扩成一个封闭枚举 —— 加动作只加一个分支，不用再写一套循环。
+ */
+export type BatchAction =
+  | { kind: 'visibility'; to: Visibility }
+  | { kind: 'archive' }
+  | { kind: 'unarchive' }
+  | { kind: 'topics'; add: string[] }
+
+export interface BatchPlanItem {
+  repo: Repo
+  action: BatchAction
+  /** 界面上这一行显示的动作描述 */
+  label: string
+  /** 需要二次确认（公开转私有、归档会让仓库变只读） */
+  destructive: boolean
+  /** 权限不够，预计会被拒 */
+  blocked: boolean
+  reason?: string
+  /** 已经是目标状态，不用发请求 */
+  skip: boolean
+}
+
+function actionLabel(repo: Repo, action: BatchAction): string {
+  switch (action.kind) {
+    case 'visibility':
+      return `${repo.visibility === 'private' ? 'Private' : 'Public'} → ${
+        action.to === 'private' ? 'Private' : 'Public'
+      }`
+    case 'archive':
+      return '归档'
+    case 'unarchive':
+      return '取消归档'
+    case 'topics':
+      return action.add.length ? `加 ${action.add.join(' ')}` : '不加话题'
+  }
+}
+
+/**
+ * 把选中的仓库 + 一个动作翻译成逐条计划。
+ * 纯函数，不发请求，所以可以先在确认面板里把结果完整列出来。
+ */
+export function planBatch(repos: Repo[], action: BatchAction): BatchPlanItem[] {
+  return repos.map((repo) => {
+    const admin = repo.permissions?.admin
+    const push = repo.permissions?.push
+
+    if (action.kind === 'visibility') {
+      const destructive = repo.visibility === 'public' && action.to === 'private'
+      const blocked = admin === false
+      return {
+        repo,
+        action,
+        label: actionLabel(repo, action),
+        destructive,
+        blocked,
+        reason: blocked ? '无 admin 权限，组织策略通常会拒绝' : undefined,
+        skip: repo.visibility === action.to,
+      }
+    }
+
+    if (action.kind === 'archive' || action.kind === 'unarchive') {
+      const blocked = admin === false
+      return {
+        repo,
+        action,
+        label: actionLabel(repo, action),
+        // 归档后仓库变只读：不能提交、不能开 issue、不能发版
+        destructive: action.kind === 'archive',
+        blocked,
+        reason: blocked ? '无 admin 权限，归档需要管理权限' : undefined,
+        skip: action.kind === 'archive' ? repo.archived : !repo.archived,
+      }
+    }
+
+    const blocked = push === false
+    return {
+      repo,
+      action,
+      label: actionLabel(repo, action),
+      destructive: false,
+      blocked,
+      reason: blocked ? '无写入权限' : undefined,
+      skip: action.add.length === 0,
+    }
+  })
+}
+
 
 export interface RepoFilter {
   query?: string
@@ -78,9 +171,58 @@ export interface BatchOptions {
  * 串行而非并发是刻意的：GitHub 对并发写操作有 secondary limit，
  * 并发 10 条比串行 10 条更容易被 403。
  */
-export async function runBatch(
+export function runBatch(
   client: GitHubClient,
   plan: VisibilityPlan[],
+  opts: BatchOptions = {},
+): Promise<BatchResult[]> {
+  return runBatchActions(
+    client,
+    plan.map((item) => ({
+      repo: item.repo,
+      action: { kind: 'visibility' as const, to: item.to },
+      label: '',
+      destructive: item.destructive,
+      blocked: item.blocked,
+      reason: item.reason,
+      skip: item.from === item.to,
+    })),
+    opts,
+  )
+}
+
+/** 执行一条动作。失败往上抛，由 runBatchActions 统一记成 failed */
+async function applyAction(client: GitHubClient, item: BatchPlanItem): Promise<string | undefined> {
+  const { repo, action } = item
+  if (action.kind === 'visibility') {
+    await client.setVisibility(repo.owner, repo.name, action.to)
+    return undefined
+  }
+  if (action.kind === 'archive') {
+    await client.setArchived(repo.owner, repo.name, true)
+    return undefined
+  }
+  if (action.kind === 'unarchive') {
+    await client.setArchived(repo.owner, repo.name, false)
+    return undefined
+  }
+  // topics 是整体替换，必须先读再合并，否则会把仓库原有话题冲掉
+  const cur = await client.request<{ names?: string[] }>(
+    `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/topics`,
+    {},
+    { fresh: true },
+  )
+  const next = mergeTopics(cur.data?.names ?? [], action.add)
+  await client.request<{ names?: string[] }>(
+    `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/topics`,
+    { method: 'PUT', body: JSON.stringify({ names: next }) },
+  )
+  return next.length ? `共 ${next.length} 个话题` : undefined
+}
+
+export async function runBatchActions(
+  client: GitHubClient,
+  plan: BatchPlanItem[],
   opts: BatchOptions = {},
 ): Promise<BatchResult[]> {
   const gap = opts.gapMs ?? 350
@@ -102,7 +244,7 @@ export async function runBatch(
       continue
     }
 
-    if (item.from === item.to) {
+    if (item.skip) {
       const r: BatchResult = { repo: item.repo.full_name, status: 'ok', message: '已是目标状态' }
       results.push(r)
       done += 1
@@ -111,8 +253,8 @@ export async function runBatch(
     }
 
     try {
-      await client.setVisibility(item.repo.owner, item.repo.name, item.to)
-      const r: BatchResult = { repo: item.repo.full_name, status: 'ok' }
+      const msg = await applyAction(client, item)
+      const r: BatchResult = { repo: item.repo.full_name, status: 'ok', message: msg }
       results.push(r)
       done += 1
       opts.onProgress?.(done, plan.length, r)

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { isPinned } from '../lib/pins'
 import { snapshotAge } from '../lib/snapshot'
 import type { RepoSort } from '../lib/sort'
 import type { Repo } from '../lib/types'
@@ -84,6 +85,9 @@ interface Props {
   onOpenSort: () => void
   /** 有值表示当前列表来自本地快照，网络刷新还在后面跑 */
   snapshotAt: number | null
+  /** 本地置顶的仓库（full_name），排在最前面 */
+  pins: string[]
+  onTogglePin: (repo: Repo) => void
 }
 
 export function RepoList(p: Props) {
@@ -199,7 +203,14 @@ export function RepoList(p: Props) {
         {p.error && (
           <div className="warnbox" style={{ margin: '12px 16px 0' }}>
             <Icon name="warn" size={14} />
-            <span>{p.error}</span>
+            <span>
+              {p.repos.length > 0
+                ? `刷新失败：${p.error}。下面是上次拿到的列表`
+                : p.error}
+            </span>
+            <button className="warn-retry" onClick={p.onRefresh}>
+              重试
+            </button>
           </div>
         )}
 
@@ -221,7 +232,7 @@ export function RepoList(p: Props) {
               return (
                 <button
                   key={r.id}
-                  className={`row${on ? ' selected' : ''}`}
+                  className={`row${on ? ' selected' : ''}${isPinned(p.pins, r.full_name) ? ' pinned' : ''}`}
                   onClick={() => {
                     if (p.selectMode) p.onToggleSelect(r)
                     else p.onOpenRepo(r)
@@ -264,6 +275,19 @@ export function RepoList(p: Props) {
                       <span>⑂ {r.forks_count}</span>
                       <span>{relTime(r.pushed_at)}</span>
                     </span>
+                  </span>
+                  <span
+                    className={`pin-btn${isPinned(p.pins, r.full_name) ? ' on' : ''}`}
+                    role="button"
+                    tabIndex={-1}
+                    aria-label={isPinned(p.pins, r.full_name) ? '取消置顶' : '置顶'}
+                    onClick={(e) => {
+                      // 行本身是 button，不拦住冒泡就会顺手打开仓库
+                      e.stopPropagation()
+                      p.onTogglePin(r)
+                    }}
+                  >
+                    <Icon name="pin" size={13} />
                   </span>
                 </button>
               )

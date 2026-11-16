@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
-import { GitHubClient } from './lib/api'
+import { GitHubClient, GitHubError } from './lib/api'
 import { appendAudit, clearAudit, readAudit } from './lib/audit'
 import { pickDescItems } from './lib/desc'
 import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
@@ -26,15 +26,38 @@ import {
   type MirrorStore,
   type ProbeResult,
 } from './lib/mirrors'
-import { buildPlan, countBy, filterRepos, runBatch } from './lib/repos'
-import { popRoute, pushRoute, replaceTop, repoOf, type Route } from './lib/routes'
+import {
+  planBatch,
+  runBatchActions,
+  countBy,
+  filterRepos,
+  type BatchAction,
+  type BatchPlanItem,
+} from './lib/repos'
+import { popRoute, pushRoute, replaceTop, repoOf, routeKey, type Route } from './lib/routes'
 import { listBranches } from './lib/refs'
+import { findPrTemplate, listIssueTemplates, type IssueTemplate } from './lib/templates'
 import { createIssue } from './lib/issues'
 import { createPull } from './lib/pulls'
-import { canUseNotifications, listNotifications, unreadCount } from './lib/notifications'
+import {
+  canUseNotifications,
+  listNotifications,
+  markThreadDone,
+  unreadCount,
+  type NotificationThread,
+} from './lib/notifications'
 import { loadSnapshot, saveSnapshot, type Snapshot } from './lib/snapshot'
 import { clearHotCache } from './lib/hotCache'
 import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
+import { applyPins, isPinned, parsePins, pinKey, serializePins, togglePin } from './lib/pins'
+import {
+  dropWorkspace,
+  emptyWorkspace,
+  restoreWorkspace,
+  saveWorkspace,
+  type Workspace,
+  type WorkspaceTable,
+} from './lib/workspace'
 import { createKV, type KV } from './lib/storage'
 import {
   applyTheme,
@@ -51,7 +74,7 @@ import {
 import { probeToken } from './lib/tokens'
 import { dismissBoot } from './lib/boot'
 import { applyAppearance, readAppearance, writeAppearance, type Appearance } from './lib/appearance'
-import { setImmersive } from './lib/immersive'
+import { setImmersive, syncInsets } from './lib/immersive'
 import { DEFAULT_TABS, TAB_DEFS, fallbackTab, normalizeTabs, toggleTab, type TabKey } from './lib/tabs'
 import {
   DEFAULT_CHANNEL,
@@ -73,8 +96,6 @@ import type {
   BatchResult,
   Repo,
   TokenRecord,
-  Visibility,
-  VisibilityPlan,
   Workflow,
   WorkflowRun,
 } from './lib/types'
@@ -85,10 +106,14 @@ import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
 import { CodePage, FileEditor } from './ui/CodePage'
 import { CommitPage, CommitsPage } from './ui/CommitsPage'
-import { ComposeSheet, type ComposeMode } from './ui/ComposeSheet'
+import { ComposeSheet, type ComposeMode, type ComposeSubmit } from './ui/ComposeSheet'
 import { CreateRepoSheet } from './ui/CreateRepoSheet'
 import { ForksSheet } from './ui/ForksSheet'
 import { GuardSheet, type GuardMode } from './ui/GuardSheet'
+import { Boundary } from './ui/Boundary'
+import { DashboardPage } from './ui/DashboardPage'
+import { GistPage } from './ui/GistPage'
+import { GistsPage } from './ui/GistsPage'
 import { HotPage } from './ui/HotPage'
 import { IssuePage } from './ui/IssuePage'
 import { LockedScreen } from './ui/LockedScreen'
@@ -96,6 +121,7 @@ import { LogSheet } from './ui/LogSheet'
 import { MirrorSheet, type MirrorProbeState } from './ui/MirrorSheet'
 import { PipelinesPage } from './ui/PipelinesPage'
 import { NotificationsPage, targetRoute } from './ui/NotificationsPage'
+import { ThreadSheet } from './ui/ThreadSheet'
 import { ProfilePage } from './ui/ProfilePage'
 import { PullPage } from './ui/PullsPage'
 import { RefsPage } from './ui/RefsPage'
@@ -115,7 +141,8 @@ import { StarsPage } from './ui/StarsPage'
 import { TokenVault } from './ui/TokenVault'
 import { UnlockScreen } from './ui/UnlockScreen'
 import { UpdateSheet, type UpdatePhase } from './ui/UpdateSheet'
-import { VisibilitySheet } from './ui/VisibilitySheet'
+import { BatchSheet } from './ui/BatchSheet'
+import { BatchPickSheet } from './ui/BatchPickSheet'
 import { WorkflowSheet } from './ui/WorkflowSheet'
 import { useDescTranslation, type DescOptions } from './ui/useDescTranslation'
 import { Icon } from './ui/icons'
@@ -125,6 +152,7 @@ import './styles/theme.css'
 type Tab = TabKey
 /** 弹层类型与返回栈共用一套定义，避免两边漏改 */
 type Sheet = SheetName
+
 
 const MIRROR_KEY = 'ghx.mirror'
 const MIRROR_AUTO_KEY = 'ghx.mirror.auto'
@@ -162,6 +190,14 @@ function makeRepo(owner: string, name: string): Repo {
 export default function App() {
   const kvRef = useRef<KV | null>(null)
   const vaultRef = useRef<Vault | null>(null)
+  /** 按账号缓存客户端实例：请求缓存跟着实例走，切回来第一屏立刻有数据 */
+  const clientsRef = useRef<Record<string, GitHubClient>>({})
+  /** 按账号缓存的界面现场 */
+  const wsRef = useRef<WorkspaceTable>({})
+  /** 当前账号 id 的即时值，给异步回调判断「有没有切走」用 */
+  const activeIdRef = useRef<string | null>(null)
+  /** 列表请求序号：切账号或连点刷新时丢弃过期响应，避免旧列表覆盖新账号 */
+  const loadSeq = useRef(0)
   const toastTimer = useRef<number | null>(null)
 
   const [ready, setReady] = useState(false)
@@ -214,6 +250,8 @@ export default function App() {
   const [visibility, setVisibility] = useState<'all' | 'public' | 'private'>('all')
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  /** 本地置顶的仓库，按账号分开存 */
+  const [pins, setPins] = useState<string[]>([])
 
   const [sheet, setSheet] = useState<Sheet>('none')
   const [addBusy, setAddBusy] = useState(false)
@@ -226,6 +264,10 @@ export default function App() {
   const [pipelineReload, setPipelineReload] = useState(0)
   /** 未读通知数，给底栏/个人页角标用 */
   const [unread, setUnread] = useState(0)
+  /** 正在直读的通知线程；null 表示没开面板 */
+  const [thread, setThread] = useState<NotificationThread | null>(null)
+  /** 通知页重拉信号：面板里标记完成后加一 */
+  const [notifTick, setNotifTick] = useState(0)
   /** 新建 Issue / PR 的表单状态；null 表示没在填 */
   const [compose, setCompose] = useState<{
     mode: ComposeMode
@@ -233,6 +275,9 @@ export default function App() {
     repo: string
     branches: string[]
     base: string
+    templates: IssueTemplate[]
+    templatesLoading: boolean
+    prTemplate: { path: string; body: string } | null
   } | null>(null)
   const [composeBusy, setComposeBusy] = useState(false)
   const [composeError, setComposeError] = useState<string | null>(null)
@@ -276,7 +321,9 @@ export default function App() {
   const speedCacheRef = useRef<string | null>(null)
   const speedTried = useRef(false)
 
-  const [plan, setPlan] = useState<VisibilityPlan[]>([])
+  const [plan, setPlan] = useState<BatchPlanItem[]>([])
+  /** 批量面板标题（「修改可见度」/「归档」/「加话题」…），由动作决定 */
+  const [batchTitle, setBatchTitle] = useState('批量操作')
   const [phase, setPhase] = useState<'confirm' | 'running' | 'done'>('confirm')
   const [results, setResults] = useState<BatchResult[]>([])
   const [done, setDone] = useState(0)
@@ -445,6 +492,16 @@ export default function App() {
     return () => clearTimeout(t)
   }, [ready])
 
+  /*
+   * 就绪后主动要一次 insets。
+   * 原生侧启动时推了四次，但页面挂载完成的时刻不受它控制；这里补的是「最后一次」，
+   * 保证已加载的文档里一定有 --inset-*，顶栏不会被状态栏压住。
+   */
+  useEffect(() => {
+    if (!ready) return
+    void syncInsets()
+  }, [ready])
+
   useEffect(() => {
     const t = setTimeout(() => dismissBoot(), 4000)
     return () => clearTimeout(t)
@@ -500,6 +557,9 @@ export default function App() {
 
   /** fresh=true 用于刷新按钮：其余情况直接吃缓存，切换页签不再重新拉一遍 */
   const loadRepos = useCallback(async (c: GitHubClient, tokenId: string | null, fresh = false) => {
+    // 每次拉取领一个号：切账号、连点刷新都会让旧的那次作废，
+    // 否则 A 的 6 页回来时会把 B 的列表覆盖掉
+    const seq = ++loadSeq.current
     setLoadingRepos(true)
     setRepoError(null)
     try {
@@ -516,6 +576,7 @@ export default function App() {
         }
         if (data.length < PER_PAGE) break
       }
+      if (seq !== loadSeq.current) return
       setRepos(acc)
       setSnapshotAt(null)
       setRepoError(null)
@@ -523,9 +584,10 @@ export default function App() {
         void saveSnapshot(kvRef.current, 'repos', tokenId, acc)
       }
     } catch (err) {
+      if (seq !== loadSeq.current) return
       setRepoError((err as Error).message)
     } finally {
-      setLoadingRepos(false)
+      if (seq === loadSeq.current) setLoadingRepos(false)
     }
   }, [])
 
@@ -536,34 +598,57 @@ export default function App() {
       const source = list ?? records
       const rec = source.find((r) => r.id === id)
       if (!rec) return
+      // 切走之前先把当前账号的现场存下来
+      const prevId = activeIdRef.current
+      if (prevId && prevId !== id) {
+        wsRef.current = saveWorkspace(wsRef.current, prevId, liveRef.current)
+      }
+
       const secret = await v.secret(id)
-      const c = new GitHubClient({ token: secret, baseUrl: rec.baseUrl || baseUrl })
+      // 同一账号复用同一个客户端：请求缓存挂在实例上，切回来不用重新打网络
+      let c = clientsRef.current[id]
+      if (!c) {
+        c = new GitHubClient({ token: secret, baseUrl: rec.baseUrl || baseUrl })
+        clientsRef.current[id] = c
+      }
       setClient(c)
       setActiveId(id)
+      activeIdRef.current = id
+      // 选择态、子面板这些是「当前这一刻的操作」，不跟着账号走
       setSelected(new Set())
       setSelectMode(false)
       setPipelineRepo(null)
       setDetailRepo(null)
       setSheet('none')
-      // 换账号时先把上一个账号的痕迹擦干净，再按新账号重新填：
-      // 路由栈压着旧 Issue/文件页会 404，仓库列表与未读数留着旧值就是串号。
-      setRouteStack([])
-      setQuery('')
-      setRepos([])
-      setSnapshotAt(null)
       setRepoError(null)
-      setUnread(0)
 
-      // 冷启动时先拿本地快照顶上，界面立刻有内容；网络请求放后台跑，
-      // 否则要等 6 页全部回来才能看到第一屏
+      // 恢复目标账号的现场；从没进过就按空的来
+      const saved = restoreWorkspace(wsRef.current, id)
+      setRouteStack(saved?.routeStack ?? [])
+      setQuery(saved?.query ?? '')
+      setVisibility(saved?.visibility ?? 'all')
+      setSort(saved?.sort ?? DEFAULT_SORT)
+      setUnread(saved?.unread ?? 0)
+
       const kv = kvRef.current
-      const snap: Snapshot<Repo[]> | null = kv
-        ? ((await loadSnapshot<Repo[]>(kv, 'repos', id)) as Snapshot<Repo[]> | null)
-        : null
-      if (snap) {
-        setRepos(snap.data)
-        setSnapshotAt(snap.at)
-        setLoadingRepos(true)
+      if (saved) {
+        setPins(saved.pins)
+        setRepos(saved.repos)
+        setSnapshotAt(saved.snapshotAt)
+      } else {
+        setRepos([])
+        setSnapshotAt(null)
+        setPins(kv ? parsePins(await kv.get(pinKey(id))) : [])
+        // 冷启动时先拿本地快照顶上，界面立刻有内容；网络请求放后台跑，
+        // 否则要等全部页回来才能看到第一屏
+        const snap: Snapshot<Repo[]> | null = kv
+          ? ((await loadSnapshot<Repo[]>(kv, 'repos', id)) as Snapshot<Repo[]> | null)
+          : null
+        if (snap) {
+          setRepos(snap.data)
+          setSnapshotAt(snap.at)
+          setLoadingRepos(true)
+        }
       }
       void loadRepos(c, id)
 
@@ -615,7 +700,7 @@ export default function App() {
         })
         await refreshAudit()
       }
-      showToast(rec ? switchMessage(buildAccounts([rec], id)[0]) : '已切换账号')
+      showToast(rec ? `${switchMessage(buildAccounts([rec], id)[0])} · 上次的位置还在` : '已切换账号')
     } catch (err) {
       showToast((err as Error).message)
     } finally {
@@ -904,6 +989,24 @@ export default function App() {
     }
   }
 
+  /**
+   * 把内存里的多账号现场全部丢掉。
+   * 锁定与删号都要走这里 —— 承诺过「锁定后数据从内存清除」，
+   * 客户端实例里存着解密后的令牌，留着就等于没清。
+   */
+  function wipeWorkspaces(only?: string) {
+    if (only) {
+      delete clientsRef.current[only]
+      wsRef.current = dropWorkspace(wsRef.current, only)
+      return
+    }
+    clientsRef.current = {}
+    wsRef.current = dropWorkspace(wsRef.current)
+    activeIdRef.current = null
+    // 让在飞的列表请求作废，避免锁定后又把数据写回内存
+    loadSeq.current += 1
+  }
+
   async function removeToken(id: string) {
     const v = vaultRef.current
     if (!v) return
@@ -922,10 +1025,13 @@ export default function App() {
       })
       await refreshAudit()
     }
+    wipeWorkspaces(id)
     if (activeId === id) {
       setActiveId(null)
       setClient(null)
       setRepos([])
+      setRouteStack([])
+      setPins([])
       if (list[0]) await activate(list[0].id, list)
     }
   }
@@ -986,10 +1092,21 @@ export default function App() {
     })
   }
 
-  function startBatch(target: Visibility) {
+  function startBatchAction(action: BatchAction) {
     const chosen = repos.filter((r) => selected.has(r.full_name))
     if (chosen.length === 0) return
-    setPlan(buildPlan(chosen, target))
+    const items = planBatch(chosen, action)
+    if (items.length === 0) return
+    const title =
+      action.kind === 'visibility'
+        ? `修改可见度 · ${action.to === 'private' ? '转私有' : '转公开'}`
+        : action.kind === 'archive'
+          ? '归档仓库'
+          : action.kind === 'unarchive'
+            ? '取消归档'
+            : '加话题'
+    setBatchTitle(title)
+    setPlan(items)
     setResults([])
     setDone(0)
     setCurrent(null)
@@ -1000,7 +1117,8 @@ export default function App() {
   async function confirmBatch() {
     if (!client) return
     setPhase('running')
-    const res = await runBatch(client, plan, {
+    const action = plan[0]?.action
+    const res = await runBatchActions(client, plan, {
       gapMs: 400,
       onProgress: (d, _total, last) => {
         setDone(d)
@@ -1012,23 +1130,35 @@ export default function App() {
 
     const kv = kvRef.current
     if (kv) {
+      const auditAction =
+        action?.kind === 'archive' || action?.kind === 'unarchive'
+          ? 'repo-archive'
+          : action?.kind === 'topics'
+            ? 'repo-edit'
+            : 'visibility'
       for (const r of res) {
         await appendAudit(kv, {
-          action: 'visibility',
+          action: auditAction,
           target: r.repo,
           result: r.status === 'ok' ? 'ok' : 'failed',
-          detail: r.message ?? `切换为 ${plan[0]?.to ?? ''}`,
+          detail: r.message ?? batchTitle,
         })
       }
       await refreshAudit()
     }
 
+    // 本地只改能确定的那几个字段；话题不回写（列表接口本来也不返回 topics）
     setRepos((prev) =>
       prev.map((r) => {
-        const hit = plan.find((p) => p.repo.full_name === r.full_name)
+        const hit = plan.find((it) => it.repo.full_name === r.full_name)
         const ok = res.find((x) => x.repo === r.full_name && x.status === 'ok')
-        if (!hit || !ok) return r
-        return { ...r, private: hit.to === 'private', visibility: hit.to }
+        if (!hit || !ok || hit.skip) return r
+        if (hit.action.kind === 'visibility') {
+          return { ...r, private: hit.action.to === 'private', visibility: hit.action.to }
+        }
+        if (hit.action.kind === 'archive') return { ...r, archived: true }
+        if (hit.action.kind === 'unarchive') return { ...r, archived: false }
+        return r
       }),
     )
     setSelected(new Set())
@@ -1140,9 +1270,31 @@ export default function App() {
   const openCompose = useCallback(
     async (mode: ComposeMode, owner: string, repo: string, base: string) => {
       setComposeError(null)
-      setCompose({ mode, owner, repo, branches: [base], base })
+      setCompose({
+        mode,
+        owner,
+        repo,
+        branches: [base],
+        base,
+        templates: [],
+        templatesLoading: mode === 'issue',
+        prTemplate: null,
+      })
       setSheet('compose')
       if (!client) return
+
+      // 模板单独读：目录不存在、没权限、单个文件写坏，都不该影响「新建」本身
+      const stillOpen = (cur: typeof compose) => !!cur && cur.owner === owner && cur.repo === repo
+      if (mode === 'issue') {
+        void listIssueTemplates(client, owner, repo).then(({ templates }) => {
+          setCompose((cur) => (stillOpen(cur) ? { ...cur!, templates, templatesLoading: false } : cur))
+        })
+      } else {
+        void findPrTemplate(client, owner, repo).then((tpl) => {
+          setCompose((cur) => (stillOpen(cur) ? { ...cur!, prTemplate: tpl } : cur))
+        })
+      }
+
       try {
         const list = await listBranches(client, owner, repo)
         if (list.length === 0) return
@@ -1158,16 +1310,33 @@ export default function App() {
     [client],
   )
 
-  async function submitCompose(input: { title: string; body: string; head?: string; base?: string }) {
+  async function submitCompose(input: ComposeSubmit) {
     if (!compose || !client) return
     setComposeBusy(true)
     setComposeError(null)
     try {
       if (compose.mode === 'issue') {
-        const issue = await createIssue(client, compose.owner, compose.repo, {
-          title: input.title,
-          body: input.body,
-        })
+        const labels = input.labels ?? []
+        let issue
+        try {
+          issue = await createIssue(client, compose.owner, compose.repo, {
+            title: input.title,
+            body: input.body,
+            ...(labels.length > 0 ? { labels } : {}),
+          })
+        } catch (err) {
+          // 模板里的标签在仓库里不存在时 GitHub 回 422，去掉标签再建一次，
+          // 不要因为「标签没对上」让人白写一篇。
+          if (labels.length > 0 && err instanceof GitHubError && err.status === 422) {
+            issue = await createIssue(client, compose.owner, compose.repo, {
+              title: input.title,
+              body: input.body,
+            })
+            showToast('模板标签在这个仓库不存在，已按无标签创建')
+          } else {
+            throw err
+          }
+        }
         setSheet('none')
         setCompose(null)
         setPageTick((n) => n + 1)
@@ -1348,6 +1517,7 @@ export default function App() {
 
   function lockVault() {
     const v = vaultRef.current
+    wipeWorkspaces()
     const needsPassword = (v?.guarded ?? false) || secureMode === 'passphrase'
     v?.lock()
     setUnlocked(false)
@@ -1370,15 +1540,64 @@ export default function App() {
     showToast(needsPassword ? '已锁定，需要口令解锁' : '已锁定，数据已从内存清除')
   }
 
+  /**
+   * 当前现场的快照，每次渲染同步一次。
+   * activate 是 useCallback，直接依赖这七八个 state 会让它每改一个字就重建，
+   * 用 ref 读即时值更省事，也不会拿到过期闭包。
+   */
+  const liveRef = useRef<Workspace>(emptyWorkspace(DEFAULT_SORT))
+  liveRef.current = { routeStack, repos, snapshotAt, query, visibility, sort, unread, pins }
+
   const counts = useMemo(() => {
     const c = countBy(repos)
     return { total: c.total, public: c.public, private: c.private }
   }, [repos])
 
   const filtered = useMemo(
-    () => sortRepos(filterRepos(repos, { query, visibility, includeArchived: false }), sort),
-    [repos, query, visibility, sort],
+    () =>
+      applyPins(
+        sortRepos(filterRepos(repos, { query, visibility, includeArchived: false }), sort),
+        pins,
+      ),
+    [repos, query, visibility, sort, pins],
   )
+
+  /** 钉/取消钉。纯本地，不碰接口，所以立即生效、失败也没得失败 */
+  const toggleRepoPin = useCallback(
+    async (full: string) => {
+      const next = togglePin(pins, full)
+      if (next === pins) {
+        showToast(`最多置顶 60 个仓库，先取消几个再钉`)
+        return
+      }
+      setPins(next)
+      const kv = kvRef.current
+      // 置顶是纯本地的界面偏好，不写审计：它一天能点十几次，会把真正的写操作淹掉
+      if (kv && activeId) await kv.set(pinKey(activeId), serializePins(next))
+      showToast(isPinned(next, full) ? `已置顶 ${full}` : `已取消置顶 ${full}`)
+    },
+    [pins, activeId],
+  )
+
+  /**
+   * 打开数据看板。
+   *
+   * 看板是底栏页签，不是路由 —— 这样它和仓库/星标/热门是同一层，
+   * 侧滑返回与底栏高亮都不用另写一套。从个人页进来时先弹掉路由栈那一层。
+   */
+  const openDashboard = useCallback(() => {
+    setTabs((prev) => {
+      if (prev.includes('dashboard')) return prev
+      const next = TAB_DEFS.map((t) => t.key).filter(
+        (k) => k === 'dashboard' || prev.includes(k),
+      ) as TabKey[]
+      if (kvRef.current) void kvRef.current.set(TABS_KEY, JSON.stringify(next))
+      return next
+    })
+    setRouteStack([])
+    setSheet('none')
+    setTab('dashboard')
+  }, [])
 
   const activeRecord = records.find((r) => r.id === activeId) ?? null
 
@@ -1469,6 +1688,15 @@ export default function App() {
 
   return (
     <div className={route ? 'app' : 'app with-tabs'}>
+      {/*
+        页面区套一层错误边界，底栏留在外面：某个页面因为脏数据崩掉时，
+        导航还在，用户能退出去，而不是整屏白掉只能杀进程。
+        切路由或切页签都会换 resetKey，错误状态自动清空。
+      */}
+      <Boundary
+        resetKey={route ? routeKey(route) : `tab:${tab}`}
+        onBack={route ? popTo : undefined}
+      >
       {!route && tab === 'repos' && (
         <RepoList
           repos={filtered}
@@ -1508,6 +1736,8 @@ export default function App() {
           sort={sort}
           onOpenSort={() => setSheet('sort')}
           snapshotAt={snapshotAt}
+          pins={pins}
+          onTogglePin={(r) => void toggleRepoPin(r.full_name)}
           onCreate={() => {
             setCreateError(null)
             setSheet('create')
@@ -1539,6 +1769,19 @@ export default function App() {
                 ? { ...cur, stargazers_count: Math.max(0, cur.stargazers_count - 1) }
                 : cur,
             )
+          }}
+        />
+      )}
+
+      {!route && tab === 'dashboard' && (
+        <DashboardPage
+          client={client}
+          login={activeRecord?.login ?? null}
+          isSelf
+          onOpenRepo={(full) => {
+            const [owner, repo] = full.split('/')
+            if (!owner || !repo) return
+            pushTo({ kind: 'repo', owner, repo, tab: 'code' })
           }}
         />
       )}
@@ -1581,6 +1824,8 @@ export default function App() {
             if (activeRecord?.login) pushTo({ kind: 'user', login: activeRecord.login })
             else showToast('还没有读到登录名')
           }}
+          onOpenDashboard={openDashboard}
+          onOpenGists={() => pushTo({ kind: 'gists' })}
           onCheckUpdate={() => void runCheck(true)}
           onLock={lockVault}
         />
@@ -1735,6 +1980,8 @@ export default function App() {
           }}
           onOpenIssue={(n) => pushTo({ kind: 'issue', owner: route.owner, repo: route.repo, number: n })}
           onOpenPull={(n) => pushTo({ kind: 'pull', owner: route.owner, repo: route.repo, number: n })}
+          onSearch={() => pushTo({ kind: 'search', repo: `${route.owner}/${route.repo}` })}
+          me={activeRecord?.login ?? null}
           onOpenDir={(path) => pushTo({ kind: 'code', owner: route.owner, repo: route.repo, path })}
           onOpenFile={(path) => pushTo({ kind: 'code', owner: route.owner, repo: route.repo, path })}
           onOpenRefs={() => pushTo({ kind: 'refs', owner: route.owner, repo: route.repo })}
@@ -1817,6 +2064,7 @@ export default function App() {
           repo={route.repo}
           path={route.path}
           ref={route.ref}
+          initialFind={route.find}
           mirror={mirror}
           onBack={popTo}
           onToast={showToast}
@@ -1892,9 +2140,34 @@ export default function App() {
           onBack={popTo}
           onToast={showToast}
           onUnread={setUnread}
-          onOpen={(t) => {
-            const next = targetRoute(t)
+          reloadKey={notifTick}
+          onOpen={(t) => setThread(t)}
+        />
+      )}
+
+      {thread && (
+        <ThreadSheet
+          client={client}
+          thread={thread}
+          mirror={mirror}
+          onClose={() => setThread(null)}
+          onToast={showToast}
+          onOpenFull={() => {
+            const next = targetRoute(thread)
+            setThread(null)
             if (next) pushTo(next)
+          }}
+          onDone={() => {
+            const t = thread
+            setThread(null)
+            if (!client) return
+            void markThreadDone(client, t.id)
+              .then(() => {
+                showToast('已移出收件箱')
+                setUnread((n) => Math.max(0, n - (t.unread ? 1 : 0)))
+                setNotifTick((v) => v + 1)
+              })
+              .catch((err: Error) => showToast(err.message))
           }}
         />
       )}
@@ -1902,14 +2175,46 @@ export default function App() {
       {route?.kind === 'search' && (
         <SearchPage
           client={client}
+          scope={route.repo}
           onBack={popTo}
           onToast={showToast}
+          onOpenCode={(owner, repo, path, find) => pushTo({ kind: 'code', owner, repo, path, find })}
+          onOpenCommit={(owner, repo, sha) => pushTo({ kind: 'commit', owner, repo, sha })}
           onOpenRepo={(full) => {
             const [owner, repo] = full.split('/')
             if (owner && repo) pushTo({ kind: 'repo', owner, repo, tab: 'code' })
           }}
           onOpenUser={(login) => pushTo({ kind: 'user', login })}
           onOpenIssue={(owner, repo, n) => pushTo({ kind: 'issue', owner, repo, number: n })}
+        />
+      )}
+
+      {route?.kind === 'gists' && (
+        <GistsPage
+          client={client}
+          login={route.login ?? null}
+          onBack={popTo}
+          onToast={showToast}
+          onOpen={(id) => pushTo({ kind: 'gist', id })}
+          onCreate={() => pushTo({ kind: 'gist', id: '' })}
+        />
+      )}
+
+      {route?.kind === 'gist' && (
+        <GistPage
+          client={client}
+          id={route.id}
+          onBack={popTo}
+          onToast={showToast}
+          onSaved={(id) => {
+            setPageTick((n) => n + 1)
+            // 新建成功后把「新建」那条路由换成详情，返回时不会又回到空表单
+            if (route.id !== id) replaceTopTo({ kind: 'gist', id })
+          }}
+          onDeleted={() => {
+            setPageTick((n) => n + 1)
+            popTo()
+          }}
         />
       )}
 
@@ -1925,6 +2230,17 @@ export default function App() {
           onOpenRepo={(full) => {
             const [owner, repo] = full.split('/')
             if (owner && repo) pushTo({ kind: 'repo', owner, repo, tab: 'code' })
+          }}
+          onOpenGists={() => pushTo({ kind: 'gists', login: route.login })}
+          onEditReadme={(sha) => {
+            // 没有 sha 说明 README 还不存在，交给编辑器走「新建」分支
+            pushTo({
+              kind: 'edit',
+              owner: route.login,
+              repo: route.login,
+              path: 'README.md',
+              ...(sha ? { sha } : {}),
+            })
           }}
         />
       )}
@@ -1953,14 +2269,31 @@ export default function App() {
         <div className="actionbar">
           <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>已选 {selected.size}</span>
           <div className="spacer" />
-          <button className="btn ghost" style={{ height: 32, fontSize: 11.5 }} onClick={() => startBatch('private')}>
+          <button
+            className="btn ghost"
+            style={{ height: 32, fontSize: 11.5 }}
+            onClick={() => startBatchAction({ kind: 'visibility', to: 'private' })}
+          >
             转私有
           </button>
-          <button className="btn ghost" style={{ height: 32, fontSize: 11.5 }} onClick={() => startBatch('public')}>
+          <button
+            className="btn ghost"
+            style={{ height: 32, fontSize: 11.5 }}
+            onClick={() => startBatchAction({ kind: 'visibility', to: 'public' })}
+          >
             转公开
+          </button>
+          <button
+            className="btn ghost"
+            style={{ height: 32, fontSize: 11.5 }}
+            onClick={() => setSheet('batchpick')}
+          >
+            更多
           </button>
         </div>
       )}
+
+      </Boundary>
 
       {!route && (
         <>
@@ -2014,8 +2347,21 @@ export default function App() {
         />
       )}
 
+      {sheet === 'batchpick' && (
+        <BatchPickSheet
+          count={selected.size}
+          archivedCount={repos.filter((r) => selected.has(r.full_name) && r.archived).length}
+          onClose={() => setSheet('none')}
+          onPick={(action) => {
+            setSheet('none')
+            startBatchAction(action)
+          }}
+        />
+      )}
+
       {sheet === 'visibility' && (
-        <VisibilitySheet
+        <BatchSheet
+          title={batchTitle}
           plan={plan}
           phase={phase}
           results={results}
@@ -2232,6 +2578,9 @@ export default function App() {
           defaultBranch={compose.base}
           busy={composeBusy}
           error={composeError}
+          templates={compose.templates}
+          templatesLoading={compose.templatesLoading}
+          prTemplate={compose.prTemplate}
           onSubmit={(input) => void submitCompose(input)}
           onCancel={() => {
             setSheet('none')

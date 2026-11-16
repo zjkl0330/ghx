@@ -136,6 +136,12 @@ const P: Record<string, ReactNode> = {
       <path d="M5 15V5a2 2 0 012-2h8" />
     </>
   ),
+  link: (
+    <>
+      <path d="M10 13.5a4 4 0 006 .4l2.2-2.2a4 4 0 10-5.7-5.7L11 7.5" />
+      <path d="M14 10.5a4 4 0 00-6-.4l-2.2 2.2a4 4 0 105.7 5.7L13 16.5" />
+    </>
+  ),
   tag: (
     <>
       <path d="M3 12V5a2 2 0 012-2h7l9 9-9 9z" />
@@ -174,6 +180,14 @@ const P: Record<string, ReactNode> = {
       <path d="M17 19.5v-15M17 4.5l-3 3M17 4.5l3 3" />
     </>
   ),
+  /** 漏斗：三条递减的横线，比「排序双箭头」更能表达「筛掉一部分」 */
+  filter: (
+    <>
+      <path d="M4 6h16" />
+      <path d="M7 12h10" />
+      <path d="M10 18h4" />
+    </>
+  ),
   book: (
     <>
       <path d="M4 5.5A1.5 1.5 0 015.5 4H11v16H5.5A1.5 1.5 0 014 18.5z" />
@@ -199,6 +213,17 @@ const P: Record<string, ReactNode> = {
     <>
       <path d="M3 17l6-6 4 4 7-7" />
       <path d="M14 8h6v6" />
+    </>
+  ),
+  /**
+   * 数据看板：三根等宽竖条。
+   * 实心版给底栏用，描边版（trend）留给列表里的小图标。
+   */
+  trendOn: (
+    <>
+      <rect fill="currentColor" stroke="none" x="3.2" y="13" width="4.2" height="8" rx="1.2" />
+      <rect fill="currentColor" stroke="none" x="9.9" y="8.5" width="4.2" height="12.5" rx="1.2" />
+      <rect fill="currentColor" stroke="none" x="16.6" y="3.5" width="4.2" height="17.5" rx="1.2" />
     </>
   ),
   /** 热门：火苗比折线箭头更像「正在涨」 */
@@ -278,6 +303,13 @@ const P: Record<string, ReactNode> = {
       <circle cx="17.5" cy="18" r="2.2" />
       <path d="M6.5 8.2v7.6M17.5 15.8V9a3 3 0 00-3-3h-4" />
       <path d="M12.5 4l-2 2 2 2" />
+    </>
+  ),
+  /* 图钉：置顶用。竖针压在帽檐中间，缩小到 13px 也认得出 */
+  pin: (
+    <>
+      <path d="M9 3.5h6l-.9 5.6 3.4 2.9H6.5l3.4-2.9z" />
+      <path d="M12 12v8.5" />
     </>
   ),
 }

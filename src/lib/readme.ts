@@ -14,6 +14,11 @@ export interface ReadmeFile {
   html: string | null
   /** 文件大小（字节） */
   size: number
+  /**
+   * 内容 sha。编辑时必须带上，否则 GitHub 会把「更新」当成「新建」并回 422。
+   * contents 接口一直会返回它，以前归一化时丢了 —— 现在留着给编辑器用。
+   */
+  sha?: string
 }
 
 export interface RawReadme {
@@ -23,6 +28,7 @@ export interface RawReadme {
   content: string
   encoding: string
   html_url?: string | null
+  sha?: string
 }
 
 /** 标准 base64（含换行）转 UTF-8 字符串 */
@@ -69,6 +75,7 @@ export function normalizeReadme(raw: RawReadme | null): ReadmeFile | null {
     text,
     html: raw.html_url ?? null,
     size: raw.size,
+    ...(raw.sha ? { sha: raw.sha } : {}),
   }
 }
 
@@ -181,4 +188,36 @@ export function pickChineseReadmeFile(entries: ContentEntry[], readmePath: strin
     (f) => /readme/i.test(f.name) && /(zh|cn|chinese|hans|中文)/i.test(f.name),
   )
   return loose?.path ?? null
+}
+
+/**
+ * 从 `html_url` 里反推分支名。
+ *
+ * 形如 `https://github.com/zjkl0330/zjkl0330/blob/main/README.md`。
+ * 分支名本身可能带 `/`（`feat/docs`），所以不能按固定段数切：
+ * 先把路径尾巴剥掉，剩下的最后一段就是分支。
+ *
+ * 这样做是为了省掉一次 `GET /repos/{o}/{r}` —— 个人主页自述的图片
+ * 需要知道分支才能拼 raw 地址，而 readme 接口的响应里没有 default_branch。
+ * 解不出来时返回 null，调用方退回 `main`。
+ */
+export function branchFromBlobUrl(
+  htmlUrl: string | null | undefined,
+  path: string,
+): string | null {
+  if (!htmlUrl || !path) return null
+  const tail = `/${path}`
+  const i = htmlUrl.lastIndexOf(tail)
+  if (i < 0) return null
+  const head = htmlUrl.slice(0, i)
+  const marker = head.lastIndexOf('/blob/')
+  if (marker < 0) return null
+  const branch = head.slice(marker + '/blob/'.length)
+  if (!branch) return null
+  // 解码一下，中文分支名在 html_url 里是百分号编码的
+  try {
+    return decodeURIComponent(branch)
+  } catch {
+    return branch
+  }
 }

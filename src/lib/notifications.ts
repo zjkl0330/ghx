@@ -89,11 +89,13 @@ export function subjectTarget(t: NotificationThread): { kind: 'issue' | 'pull' |
   const full = t.repository?.full_name
   if (!full || !full.includes('/')) return null
   const [owner, repo] = full.split('/')
+  // PR 的 subject.url 是 `/pulls/7` 而不是 `/issues/7`。
+  // 早先只匹配 issues，导致 PR 通知点进去落到仓库首页 —— 这里两种都认。
   const url = t.subject.url ?? ''
-  const m = /\/issues\/(\d+)$/.exec(url)
+  const m = /\/(issues|pulls)\/(\d+)$/.exec(url)
   if (m) {
-    const number = Number(m[1])
-    if (t.subject.type === 'PullRequest') return { kind: 'pull', owner, repo, number }
+    const number = Number(m[2])
+    if (t.subject.type === 'PullRequest' || m[1] === 'pulls') return { kind: 'pull', owner, repo, number }
     return { kind: 'issue', owner, repo, number }
   }
   return { kind: 'repo', owner, repo }
@@ -174,4 +176,70 @@ export function canUseNotifications(scopes: string[], kind?: 'classic' | 'fine-g
 
 export function notificationsUnsupportedHint(): string {
   return '通知与关注订阅只支持 classic 令牌；fine-grained 令牌调这些接口一律 403。可以在 GitHub 上另建一个带 notifications 权限的 classic 令牌。'
+}
+
+/* ---------------- 线程直读 ---------------- */
+
+/**
+ * 线程里的评论。
+ *
+ * Issue 与 PR 共用 `/issues/{n}/comments`（GitHub 里 PR 就是带 `pull_request`
+ * 字段的 issue），所以这一个函数能覆盖两类通知。
+ *
+ * 为什么只取最近几条：通知是「有新动静」的提醒，用户想看的是刚才发生了什么，
+ * 不是把 300 条评论从头读一遍；要读全文有「打开完整页面」。
+ */
+export interface ThreadComment {
+  id: number
+  user: { login: string; avatar_url?: string } | null
+  body: string
+  created_at: string
+  html_url?: string
+}
+
+/** 线程指向的编号。subject.url 形如 `.../repos/o/r/issues/12` 或 `.../pulls/12` */
+export function threadNumber(t: NotificationThread): number | null {
+  const url = t.subject.url ?? ''
+  const m = /\/(?:issues|pulls)\/(\d+)$/.exec(url)
+  return m ? Number(m[1]) : null
+}
+
+export async function threadComments(
+  client: ApiClient,
+  thread: NotificationThread,
+  opts: { perPage?: number; fresh?: boolean } = {},
+): Promise<{ items: ThreadComment[]; hasMore: boolean }> {
+  const target = subjectTarget(thread)
+  const number = threadNumber(thread)
+  if (!target || !number || target.kind === 'repo') return { items: [], hasMore: false }
+
+  const perPage = opts.perPage ?? 8
+  const query = new URLSearchParams({
+    per_page: String(perPage),
+    sort: 'created',
+    direction: 'desc',
+  })
+  const res = await client.request<ThreadComment[]>(
+    `/repos/${target.owner}/${target.repo}/issues/${number}/comments?${query.toString()}`,
+    {},
+    { fresh: opts.fresh ?? true },
+  )
+  const rows = res.data ?? []
+  // 服务端按「最新在前」给，展示要按时间正序。
+  // 这里显式按 created_at 排而不是简单 reverse：镜像或代理偶尔会忽略
+  // direction=desc，靠 reverse 就会把顺序弄反，排序不依赖服务端的排序承诺。
+  const items = [...rows].sort((a, b) => {
+    const ta = Date.parse(a.created_at) || 0
+    const tb = Date.parse(b.created_at) || 0
+    return ta - tb
+  })
+  return { items, hasMore: rows.length >= perPage }
+}
+
+/** 通知里那条评论是不是「刚发的」—— 用来在面板里标一句提示 */
+export function isFreshComment(c: ThreadComment, now: number = Date.now()): boolean {
+  const t = Date.parse(c.created_at)
+  if (Number.isNaN(t)) return false
+  const age = now - t
+  return age >= 0 && age < 24 * 3600 * 1000
 }

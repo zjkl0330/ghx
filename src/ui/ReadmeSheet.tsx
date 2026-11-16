@@ -4,6 +4,7 @@ import type { GitHubClient } from '../lib/api'
 import { mirrorImage, rawBase } from '../lib/images'
 import { parseMarkdown, type Block } from '../lib/markdown'
 import { looksChinese, type ReadmeFile } from '../lib/readme'
+import { activeHeading, buildToc, tocAnchor, tocIndent } from '../lib/toc'
 import { openExternal } from '../lib/update'
 import {
   TARGET_LANGS,
@@ -105,7 +106,7 @@ function renderBlock(
   switch (b.kind) {
     case 'h':
       return (
-        <div className={`md-h md-h${Math.min(b.level, 4)}`} key={key}>
+        <div className={`md-h md-h${Math.min(b.level, 4)}`} key={key} id={tocAnchor(key)}>
           {b.text}
         </div>
       )
@@ -285,9 +286,54 @@ export function ReadmeSheet(p: Props) {
 
   const shown = view === 'zh' ? (zhFile ? zhBlocks : (translated ?? blocks)) : blocks
 
+  /** 目录跟着当前显示的这份走：切到原文就是原文的标题结构 */
+  const toc = useMemo(() => buildToc(shown), [shown])
+  const [tocOpen, setTocOpen] = useState(false)
+  const [tocActive, setTocActive] = useState(0)
+  const boxRef = useRef<HTMLDivElement>(null)
+
+  /** 标题相对滚动容器的 y 坐标；拿不到的排到最后，不参与高亮 */
+  const headingOffsets = useCallback(() => {
+    const box = boxRef.current
+    if (!box) return []
+    const base = box.getBoundingClientRect().top - box.scrollTop
+    return toc.map((t) => {
+      const el = document.getElementById(tocAnchor(t.index))
+      return el ? el.getBoundingClientRect().top - base : Number.MAX_SAFE_INTEGER
+    })
+  }, [toc])
+
+  const jumpTo = useCallback((index: number) => {
+    const el = document.getElementById(tocAnchor(index))
+    const box = boxRef.current
+    setTocOpen(false)
+    if (!el || !box) return
+    // 自己算偏移而不是用 scrollIntoView：后者会连带滚动外层，
+    // 弹层场景下表现为「点一下整页跳走」，很难受
+    const top =
+      el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - 8
+    box.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+  }, [])
+
+  // 目录打开时才监听滚动：关着的时候没必要每帧算一次位置
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box || !tocOpen || toc.length === 0) return
+    const onScroll = () => setTocActive(activeHeading(headingOffsets(), box.scrollTop))
+    onScroll()
+    box.addEventListener('scroll', onScroll, { passive: true })
+    return () => box.removeEventListener('scroll', onScroll)
+  }, [tocOpen, toc.length, headingOffsets])
+
   return (
+    <>
     <div className="mask" onClick={p.onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '88vh' }}>
+      <div
+        className="sheet"
+        ref={boxRef}
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxHeight: '88vh' }}
+      >
         <div className="grab" />
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
           <div style={{ minWidth: 0 }}>
@@ -298,6 +344,17 @@ export function ReadmeSheet(p: Props) {
             </div>
           </div>
           <div className="spacer" />
+          {toc.length > 0 && (
+            <button
+              className="icon-btn"
+              onClick={() => setTocOpen((v) => !v)}
+              aria-label="目录"
+              aria-expanded={tocOpen}
+              style={tocOpen ? { color: 'var(--blue)' } : undefined}
+            >
+              <Icon name="sort" size={15} />
+            </button>
+          )}
           <button className="icon-btn" onClick={() => void load(true)} aria-label="重新拉取">
             <Icon name="refresh" size={15} />
           </button>
@@ -305,6 +362,7 @@ export function ReadmeSheet(p: Props) {
             <Icon name="close" size={16} />
           </button>
         </div>
+
 
         {file && blocks.length > 0 && (
           <div className="seg" style={{ margin: '4px 0 8px' }}>
@@ -458,5 +516,33 @@ export function ReadmeSheet(p: Props) {
         </div>
       </div>
     </div>
+
+      {/*
+        目录做成浮层而不是流内面板：流内会把正文整体推下去，
+        跳转位置算在「有目录」的布局上，一收起就偏。
+      */}
+      {tocOpen && toc.length > 0 && (
+        <div className="toc-mask" onClick={() => setTocOpen(false)}>
+          <div className="toc-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="toc-head">
+              <span>目录</span>
+              <span className="toc-count">{toc.length} 节</span>
+            </div>
+            <div className="toc-list">
+              {toc.map((t, i) => (
+                <button
+                  key={t.index}
+                  className={`toc-item${i === tocActive ? ' on' : ''}`}
+                  style={{ paddingLeft: 10 + tocIndent(t.depth) }}
+                  onClick={() => jumpTo(t.index)}
+                >
+                  {t.text}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
