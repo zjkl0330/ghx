@@ -320,6 +320,16 @@ user / notifications / search / profile / settings / tokens / audit
   - `loadSeq`：列表拉取领序号，切账号或连点刷新让旧请求作废，`setRepos` / `setRepoError` / `setLoadingRepos` 全部按序号判断 —— 否则 A 的 6 页回来会覆盖 B 的列表。
   - `wipeWorkspaces()`：锁定保险库与删号都要清客户端实例（里面存着解密后的令牌），锁定路径顺带 `loadSeq += 1` 让在飞请求失败。
   - 实测（390×844，Playwright + 真构建产物，两个 mock 账号）：A 搜 `main` 剩 1 行 → 进个人页 → 从个人页切 B（B 回主界面、列表是 B 的、搜索框为空）→ B 进个人页 → 切回 A（回到 A 的个人页、账号 `@zjkl0330`）→ 返回主界面搜索框仍是 `main`、仍 1 行 → 再切 B 回到 B 的个人页。列表请求 `{a:1,b:1}`。console 零报错。单测 975 → 988。
+- **v0.7.7**：多账号不再只是「切换」，一条动作可以同时作用到多个账号。
+  - `lib/multi.ts`：`planMultiTasks`（先算每个账号是做还是跳过：已 star / 本来没 star / 已有复刻）+ `defaultSelection` + `toggleSelection` / `toggleAllSelection` + `runMultiTasks`（串行 + `onDone` 逐条回调）+ `summarize`。17 条单测。
+  - 串行而不是并发：同一枚令牌连敲 GitHub 会撞二级限流，六七个账号串行也就多花一秒，换来一条能看懂的回执。
+  - 跳过规则按动作分开：「已 star 过」「本来就没 star」「已有复刻」。**已有状态的账号在面板里不可勾**（勾上却不执行比不许勾更让人困惑）。
+  - `MultiAccountSheet`：勾选框 / 头像 / 账号名 / 状态标签 / 逐条结果。跑起来后那一行立刻从「待执行」变「已完成」，不做转圈等全部跑完。
+  - `RepoDetailSheet` 加 `onMultiStar`：多账号时 Star 行改成进面板（只有一个账号时不传，保持点一下直接生效的老手感）；`starTick` 让批量结束后详情页重查一次状态。
+  - `ForksSheet` 同理加 `onMultiFork` / `forkTick`；当前账号已复刻时，「打开我的复刻」旁边多一个「让其他账号也复刻」。
+  - `backnav`：`SheetName` 加 `multi`，`sheetBackTarget` 加第五个参数 `multiReturn` — 面板可能从详情进来也可能从复刻页进来，返回要各回各的。
+  - **修了一个存量 bug**：`activate` 里的归属探测引用了重构时删掉的 `v`（`vaultRef.current`），异常被 `.catch(() => {})` 吞掉，导致首个导入的账号永远「未校验」，`@login`、复刻归属、「你」标记全部退化。发现方式：`tsc --noEmit` 读的是 solution 配置等于空跑，改 `tsc -b` 才暴露。
+  - 实测（390×844，Playwright + 真构建产物，两个 mock 账号）：详情页 Star 行提示「2 个账号可同时操作」→ 面板两行都是「将 star 这个仓库」且默认全选 → 执行 → 两行「已完成」、toast「2 个账号已 star」、服务端两个令牌都置为已 star、关面板后详情页变「取消 Star」；复刻页「让其他账号也复刻」→ 面板里 A「已有复刻，不用动」不可勾、B 可选 → 执行 → toast「1 个账号已提交复刻」、只有 B 发了 POST；关面板回到复刻页。请求轨迹 `PUT starred [a] → PUT starred [b] → POST fork [b]`，console 零报错。单测 988 → 1006。
 - 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）

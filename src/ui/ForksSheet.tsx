@@ -12,6 +12,11 @@ interface Props {
   onToast: (msg: string) => void
   onAudit: (detail: string) => void
   onOpenRepo: (repo: Repo) => void
+  /** 有多个账号时，复刻改成先选账号；只有一个账号时不传 */
+  onMultiFork?: () => void
+  accountCount?: number
+  /** 批量复刻之后重新拉一次列表 */
+  forkTick?: number
 }
 
 function relTime(iso: string): string {
@@ -42,7 +47,7 @@ export function ForksSheet(p: Props) {
     } finally {
       setLoading(false)
     }
-  }, [p.client, p.repo.owner, p.repo.name])
+  }, [p.client, p.repo.owner, p.repo.name, p.forkTick])
 
   useEffect(() => {
     void load()
@@ -95,13 +100,30 @@ export function ForksSheet(p: Props) {
             {forkHint(forks, p.login)}
           </div>
           {mine ? (
-            <button
-              className="btn blue block"
-              style={{ marginTop: 9 }}
-              onClick={() => p.onOpenRepo(mine)}
-            >
+            <>
+              <button
+                className="btn blue block"
+                style={{ marginTop: 9 }}
+                onClick={() => p.onOpenRepo(mine)}
+              >
+                <Icon name="fork" size={14} />
+                打开我的复刻
+              </button>
+              {p.onMultiFork && (
+                <button
+                  className="btn block ghost"
+                  style={{ marginTop: 8 }}
+                  onClick={p.onMultiFork}
+                >
+                  <Icon name="select" size={14} />
+                  让其他账号也复刻（{p.accountCount ?? 2} 个账号可选）
+                </button>
+              )}
+            </>
+          ) : p.onMultiFork ? (
+            <button className="btn blue block" style={{ marginTop: 9 }} onClick={p.onMultiFork}>
               <Icon name="fork" size={14} />
-              打开我的复刻
+              复刻到多个账号（{p.accountCount ?? 2} 个可选）
             </button>
           ) : (
             <button className="btn blue block" style={{ marginTop: 9 }} disabled={busy} onClick={() => void fork()}>

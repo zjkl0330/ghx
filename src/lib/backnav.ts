@@ -28,6 +28,8 @@ export type SheetName =
   | 'logs'
   /** 账号切换（多账号） */
   | 'accounts'
+  /** 多账号批量动作（同时 star / 同时复刻） */
+  | 'multi'
 
 /** 首页页签：底栏第一项就是「首页」，返回时回到它 */
 export const HOME_TAB = 'repos'
@@ -54,6 +56,8 @@ export interface BackState {
   mirrorReturn?: SheetName
   /** 自述/发行版/复刻从哪进来的：仓库详情弹层还是仓库主页 */
   subReturn?: SheetName
+  /** 多账号面板从哪进来的：详情页还是复刻页 */
+  multiReturn?: SheetName
 }
 
 export type BackAction =
@@ -71,16 +75,20 @@ export function sheetBackTarget(
   hasWorkflow: boolean,
   mirrorReturn: SheetName = 'none',
   subReturn: SheetName = 'detail',
+  multiReturn: SheetName = 'detail',
 ): SheetName {
   switch (sheet) {
     // 加速站是从更新弹层点进来的，退回去继续看更新说明，而不是整屏收起
     case 'mirrors':
       return mirrorReturn
-    // 这两个是仓库详情的子页，关掉后回到详情，而不是整屏收起
+    // 这几个是仓库详情的子页，关掉后回到详情，而不是整屏收起
     case 'releases':
     case 'forks':
     case 'readme':
       return subReturn
+    // 多账号面板可能从详情进来，也可能从复刻页进来，各回各的
+    case 'multi':
+      return multiReturn
     case 'run':
       return hasWorkflow ? 'workflow' : 'none'
     case 'logs':
@@ -105,7 +113,13 @@ export function resolveBack(state: BackState): BackAction {
     if (state.sheetLocked) return { kind: 'blocked' }
     return {
       kind: 'sheet',
-      to: sheetBackTarget(state.sheet, state.hasWorkflow, state.mirrorReturn, state.subReturn),
+      to: sheetBackTarget(
+        state.sheet,
+        state.hasWorkflow,
+        state.mirrorReturn,
+        state.subReturn,
+        state.multiReturn,
+      ),
     }
   }
 

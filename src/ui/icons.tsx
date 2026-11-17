@@ -52,6 +52,7 @@ const P: Record<string, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
   chevron: <path d="M6 9l6 6 6-6" />,
   check: <path d="M4 12.5l5 5L20 6.5" />,
+  minus: <path d="M5 12h14" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
   warn: (
     <>

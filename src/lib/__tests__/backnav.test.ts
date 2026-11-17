@@ -44,6 +44,11 @@ describe('sheetBackTarget', () => {
     expect(sheetBackTarget('mirrors', false, 'none')).toBe('none')
   })
 
+  it('多账号面板按来时的层级退回：详情页或复刻页', () => {
+    expect(sheetBackTarget('multi', false, 'none', 'detail', 'detail')).toBe('detail')
+    expect(sheetBackTarget('multi', false, 'none', 'detail', 'forks')).toBe('forks')
+  })
+
   it('其余弹层一律收起', () => {
     const others: SheetName[] = [
       'add',

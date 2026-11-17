@@ -5498,3 +5498,186 @@ button.ustat:active {
   color: var(--text-dim);
   opacity: 1;
 }
+
+/* ── 多账号批量动作面板 ───────────────────────────────────────────
+   勾几个账号就同时对几个账号动手。行内左侧是勾选框、中间是账号，
+   右侧平时显示「已 star / 未 star」，跑起来之后换成一格结果。 */
+.multi-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+}
+
+.multi-count {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.multi-all {
+  font-size: 12px;
+  color: var(--blue-text);
+  background: none;
+  border: 0;
+  padding: 4px 2px 4px 10px;
+  cursor: pointer;
+}
+
+.multi-all:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.multi-list {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.multi-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.multi-row:last-child {
+  border-bottom: 0;
+}
+
+.multi-row.on {
+  background: var(--blue-soft);
+}
+
+.multi-row:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.multi-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: #fff;
+}
+
+.multi-box.on {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.multi-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  background: var(--surface-3);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.multi-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.multi-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.multi-main b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.multi-main i {
+  font-size: 11.5px;
+  font-style: normal;
+  color: var(--text-dim);
+}
+
+.multi-tag {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  flex: none;
+}
+
+.multi-tag.on {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-bg);
+}
+
+.multi-res {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+.multi-res.ok {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.multi-res.skip {
+  color: var(--text-dim);
+  background: var(--surface-3);
+}
+
+.multi-res.bad {
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.multi-bar {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.multi-bar span {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  transition: width 0.18s ease;
+}
+
+/* 已经有状态、这次不用动的账号：灰掉，勾选框换成短横线 */
+.multi-row.locked {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.multi-box.locked {
+  border-style: dashed;
+  color: var(--text-dim);
+}

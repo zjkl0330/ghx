@@ -101,6 +101,19 @@ import type {
 } from './lib/types'
 import { Vault } from './lib/vault'
 import { buildAccounts, switchMessage } from './lib/accounts'
+import {
+  defaultSelection,
+  forkOwners,
+  planMultiTasks,
+  runMultiTasks,
+  summarize,
+  toggleAllSelection,
+  toggleSelection,
+  type AccountState,
+  type MultiAccount,
+  type MultiKind,
+  type MultiResult,
+} from './lib/multi'
 import { AccountSheet } from './ui/AccountSheet'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
@@ -109,6 +122,7 @@ import { CommitPage, CommitsPage } from './ui/CommitsPage'
 import { ComposeSheet, type ComposeMode, type ComposeSubmit } from './ui/ComposeSheet'
 import { CreateRepoSheet } from './ui/CreateRepoSheet'
 import { ForksSheet } from './ui/ForksSheet'
+import { MultiAccountSheet } from './ui/MultiAccountSheet'
 import { GuardSheet, type GuardMode } from './ui/GuardSheet'
 import { Boundary } from './ui/Boundary'
 import { DashboardPage } from './ui/DashboardPage'
@@ -339,6 +353,19 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2600)
   }, [])
 
+  // ── 多账号批量动作：同时 star / 同时复刻 ─────────────────────────
+  const [multiKind, setMultiKind] = useState<MultiKind | null>(null)
+  const [multiStates, setMultiStates] = useState<Record<string, AccountState>>({})
+  const [multiSel, setMultiSel] = useState<Set<string>>(new Set())
+  const [multiLoading, setMultiLoading] = useState(false)
+  const [multiRunning, setMultiRunning] = useState(false)
+  const [multiResults, setMultiResults] = useState<MultiResult[] | null>(null)
+  /** 面板关掉之后要回到哪一层：详情页或复刻页 */
+  const [multiReturn, setMultiReturn] = useState<SheetName>('detail')
+  /** 批量改完之后让详情页重新查一次 star 状态 */
+  const [starTick, setStarTick] = useState(0)
+  const [forkTick, setForkTick] = useState(0)
+
   /* ---------------- 返回键 ---------------- */
 
   const exitAtRef = useRef(0)
@@ -366,6 +393,7 @@ export default function App() {
     homeTab: tabs[0] ?? 'repos',
     mirrorReturn,
     subReturn,
+    multiReturn,
     sheetLocked: sheet === 'visibility' && phase === 'running',
   }
 
@@ -591,6 +619,30 @@ export default function App() {
     }
   }, [])
 
+  /**
+   * 按账号 id 拿客户端，没有就现建。
+   *
+   * 切账号那条路径只会用到「当前账号」，多账号批量动作却要在不切换的前提下
+   * 借别的账号的令牌，所以把这段抽出来共用。
+   */
+  const ensureClient = useCallback(
+    async (id: string, list?: TokenRecord[]): Promise<GitHubClient | null> => {
+      const v = vaultRef.current
+      if (!v) return null
+      const rec = (list ?? records).find((r) => r.id === id)
+      if (!rec) return null
+      // 同一账号复用同一个客户端：请求缓存挂在实例上，切回来不用重新打网络
+      let c = clientsRef.current[id]
+      if (!c) {
+        const secret = await v.secret(id)
+        c = new GitHubClient({ token: secret, baseUrl: rec.baseUrl || baseUrl })
+        clientsRef.current[id] = c
+      }
+      return c
+    },
+    [records, baseUrl],
+  )
+
   const activate = useCallback(
     async (id: string, list?: TokenRecord[]) => {
       const v = vaultRef.current
@@ -604,13 +656,8 @@ export default function App() {
         wsRef.current = saveWorkspace(wsRef.current, prevId, liveRef.current)
       }
 
-      const secret = await v.secret(id)
-      // 同一账号复用同一个客户端：请求缓存挂在实例上，切回来不用重新打网络
-      let c = clientsRef.current[id]
-      if (!c) {
-        c = new GitHubClient({ token: secret, baseUrl: rec.baseUrl || baseUrl })
-        clientsRef.current[id] = c
-      }
+      const c = await ensureClient(id, source)
+      if (!c) return
       setClient(c)
       setActiveId(id)
       activeIdRef.current = id
@@ -673,7 +720,7 @@ export default function App() {
 
       await refreshAudit()
     },
-    [records, baseUrl, loadRepos, refreshAudit],
+    [records, baseUrl, loadRepos, refreshAudit, ensureClient],
   )
 
   /**
@@ -1492,6 +1539,123 @@ export default function App() {
     },
     [refreshAudit],
   )
+
+  // ── 多账号批量动作（状态声明在返回键快照之前，见顶部） ───────────
+  const multiAccounts = useMemo<MultiAccount[]>(
+    () =>
+      buildAccounts(records, activeId).map((a) => ({
+        id: a.id,
+        label: a.label,
+        login: a.login,
+        avatarUrl: a.avatarUrl,
+      })),
+    [records, activeId],
+  )
+
+  const multiTasks = useMemo(
+    () => (multiKind ? planMultiTasks(multiAccounts, multiKind, multiStates) : []),
+    [multiKind, multiAccounts, multiStates],
+  )
+
+  const openMulti = useCallback(
+    async (kind: MultiKind) => {
+      const repo = detailRepo
+      if (!repo || multiAccounts.length < 2) return
+      setMultiReturn(sheet === 'forks' ? 'forks' : 'detail')
+      setMultiKind(kind)
+      setMultiResults(null)
+      setMultiSel(new Set())
+      setMultiStates({})
+      setMultiLoading(true)
+      setSheet('multi')
+      try {
+        const states: Record<string, AccountState> = {}
+        if (kind === 'fork') {
+          // 复刻列表是公共数据，用当前账号取一次就够，不必每个账号各查一遍
+          let owners = new Set<string>()
+          if (client) {
+            try {
+              const { data } = await client.listForks(repo.owner, repo.name, 1, 100, true)
+              owners = forkOwners(data)
+            } catch {
+              /* 取不到就按「都没复刻」处理；真重复了 GitHub 会返回已有仓库，不会出错 */
+            }
+          }
+          for (const a of multiAccounts) {
+            states[a.id] = { forked: a.login ? owners.has(a.login.toLowerCase()) : null }
+          }
+        } else {
+          // star 状态是「按账号」的，只能逐个查；一个账号失败不影响其它账号
+          const settled = await Promise.allSettled(
+            multiAccounts.map(async (a) => {
+              const c = await ensureClient(a.id)
+              if (!c) return { id: a.id, starred: null as boolean | null }
+              return { id: a.id, starred: await c.isStarred(repo.owner, repo.name) }
+            }),
+          )
+          for (const s of settled) {
+            if (s.status === 'fulfilled') states[s.value.id] = { starred: s.value.starred }
+          }
+        }
+        setMultiStates(states)
+        setMultiSel(defaultSelection(planMultiTasks(multiAccounts, kind, states)))
+      } finally {
+        setMultiLoading(false)
+      }
+    },
+    [detailRepo, multiAccounts, client, ensureClient, sheet],
+  )
+
+  const runMulti = useCallback(async () => {
+    const kind = multiKind
+    const repo = detailRepo
+    if (!kind || !repo || multiRunning) return
+    const picked = multiAccounts.filter((a) => multiSel.has(a.id))
+    if (picked.length === 0) return
+
+    const tasks = planMultiTasks(picked, kind, multiStates)
+    setMultiRunning(true)
+    setMultiResults([])
+    const collected: MultiResult[] = []
+    const results = await runMultiTasks(
+      tasks,
+      async (t) => {
+        const c = await ensureClient(t.id)
+        if (!c) throw new Error('令牌不可用')
+        if (t.kind === 'fork') await c.createFork(repo.owner, repo.name)
+        else await c.setStarred(repo.owner, repo.name, t.kind === 'star')
+      },
+      {
+        onDone: (r) => {
+          collected.push(r)
+          setMultiResults([...collected])
+        },
+      },
+    )
+    setMultiRunning(false)
+
+    const done = results.filter((r) => r.ok && !r.skipped)
+    if (done.length > 0) {
+      await logAudit(
+        kind === 'fork' ? 'fork' : 'repo-star',
+        repo.full_name,
+        `${summarize(results, kind)}（${done.map((r) => r.label).join('、')}）`,
+      )
+    }
+    showToast(summarize(results, kind))
+    if (kind === 'fork') setForkTick((v) => v + 1)
+    else setStarTick((v) => v + 1)
+  }, [
+    multiKind,
+    detailRepo,
+    multiRunning,
+    multiAccounts,
+    multiSel,
+    multiStates,
+    ensureClient,
+    logAudit,
+    showToast,
+  ])
 
   async function doCreateRepo(input: {
     name: string
@@ -2411,6 +2575,9 @@ export default function App() {
             setSubReturn('detail')
             setSheet('forks')
           }}
+          onMultiStar={multiAccounts.length > 1 ? (kind) => void openMulti(kind) : undefined}
+          accountCount={multiAccounts.length}
+          starTick={starTick}
           onOpenReadme={() => {
             setSubReturn('detail')
             setSheet('readme')
@@ -2446,6 +2613,31 @@ export default function App() {
           onOpenRepo={(r) => {
             setDetailRepo(r)
             setSheet('detail')
+          }}
+          onMultiFork={multiAccounts.length > 1 ? () => void openMulti('fork') : undefined}
+          accountCount={multiAccounts.length}
+          forkTick={forkTick}
+        />
+      )}
+
+      {sheet === 'multi' && detailRepo && multiKind && (
+        <MultiAccountSheet
+          kind={multiKind}
+          title={multiKind === 'fork' ? '同时复刻' : multiKind === 'unstar' ? '同时取消 Star' : '同时 Star'}
+          subtitle={`${detailRepo.full_name} · ${multiAccounts.length} 个账号`}
+          accounts={multiAccounts}
+          tasks={multiTasks}
+          states={multiStates}
+          selected={multiSel}
+          loading={multiLoading}
+          running={multiRunning}
+          results={multiResults}
+          onToggle={(id) => setMultiSel((prev) => toggleSelection(prev, id))}
+          onToggleAll={() => setMultiSel((prev) => toggleAllSelection(prev, multiTasks))}
+          onRun={() => void runMulti()}
+          onClose={() => {
+            setSheet(multiReturn)
+            setMultiKind(null)
           }}
         />
       )}

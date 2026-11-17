@@ -25,6 +25,15 @@ interface Props {
   onOpenWorkflows: () => void
   onOpenReleases: () => void
   onOpenForks: () => void
+  /**
+   * 有多个账号时点 Star 走这里：先选账号再动手。
+   * 只有一个账号时不传，保持「点一下直接 star」的老手感。
+   */
+  onMultiStar?: (kind: 'star' | 'unstar') => void
+  /** 令牌里一共有几个账号，用来写那一行的副标题 */
+  accountCount?: number
+  /** 外部（多账号批量 star 之后）要重新查一次 star 状态时递增 */
+  starTick?: number
   /** 点头像/账号名进入这个 owner 的主页；组织同样适用 */
   onOpenOwner?: () => void
 }
@@ -98,7 +107,7 @@ export function RepoDetailSheet(p: Props) {
     return () => {
       alive = false
     }
-  }, [p.client, owner, name])
+  }, [p.client, owner, name, p.starTick])
 
   async function run(key: string, fn: () => Promise<void>) {
     if (busy) return
@@ -297,10 +306,21 @@ export function RepoDetailSheet(p: Props) {
             'star',
             'star',
             starred ? '取消 Star' : 'Star 该仓库',
-            starred === null ? '状态未知，操作前会先查询' : starred ? '当前已 star' : '当前未 star',
+            p.onMultiStar
+              ? `${p.accountCount ?? 2} 个账号可同时操作 · 当前${starred ? '已' : '未'} star`
+              : starred === null
+                ? '状态未知，操作前会先查询'
+                : starred
+                  ? '当前已 star'
+                  : '当前未 star',
             async () => {
               if (!p.client) throw new Error('未连接令牌')
               const next = !starred
+              // 多账号模式下不在这一层动手，交给选择面板统一执行
+              if (p.onMultiStar) {
+                p.onMultiStar(next ? 'star' : 'unstar')
+                return
+              }
               await p.client.setStarred(owner, name, next)
               setStarred(next)
               p.onAudit('repo-star', { target: p.repo.full_name, text: next ? '已 star' : '已取消 star' })
