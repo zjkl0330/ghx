@@ -50,6 +50,8 @@ export function RepoPage(p: {
   onCompose: () => void
   /** 点 owner 进主页；组织同样适用 */
   onOpenOwner?: () => void
+  /** 开统一下载面板下载源码 ZIP；不传则退回旧的「探活后交给浏览器」 */
+  onDownloadArchive?: (ref: string) => void
 }) {
   const [meta, setMeta] = useState<Repo | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -83,6 +85,11 @@ export function RepoPage(p: {
 
   async function downloadZip() {
     if (!meta || zipBusy) return
+    // 走统一下载面板：和安装包、发行版附件共用同一套测速与选线
+    if (p.onDownloadArchive) {
+      p.onDownloadArchive(meta.default_branch)
+      return
+    }
     setZipBusy(true)
     try {
       await openArchive(archiveCandidates(p.mirror, p.owner, p.repo, meta.default_branch))

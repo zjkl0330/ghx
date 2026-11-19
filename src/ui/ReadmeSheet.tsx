@@ -3,8 +3,9 @@ import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { mirrorImage, rawBase } from '../lib/images'
 import { parseMarkdown, type Block } from '../lib/markdown'
+import type { LinkContext } from '../lib/mdlink'
 import { looksChinese, type ReadmeFile } from '../lib/readme'
-import { activeHeading, buildToc, tocAnchor, tocIndent } from '../lib/toc'
+import { activeHeading, anchorIndexOf, buildToc, tocAnchor, tocIndent } from '../lib/toc'
 import { openExternal } from '../lib/update'
 import {
   TARGET_LANGS,
@@ -15,6 +16,8 @@ import {
 } from '../lib/translate'
 import type { Repo } from '../lib/types'
 import { Icon } from './icons'
+import { Table } from './MarkdownView'
+import { SpanText } from './SpanText'
 
 interface Props {
   repo: Repo
@@ -102,31 +105,37 @@ function renderBlock(
   key: number,
   showCode: boolean,
   mirror: string,
+  ctx: LinkContext,
+  onAnchor: (id: string) => void,
 ) {
+  const rich = (x: Extract<Block, { kind: 'h' | 'p' | 'li' | 'quote' }>) => (
+    <SpanText text={x.text} spans={x.spans} spansFor={x.spansFor} ctx={ctx} onAnchor={onAnchor} />
+  )
+
   switch (b.kind) {
     case 'h':
       return (
         <div className={`md-h md-h${Math.min(b.level, 4)}`} key={key} id={tocAnchor(key)}>
-          {b.text}
+          {rich(b)}
         </div>
       )
     case 'p':
       return (
         <p className="md-p" key={key}>
-          {b.text}
+          {rich(b)}
         </p>
       )
     case 'li':
       return (
         <div className={`md-li d${b.depth}`} key={key}>
           <span className="md-bullet">{b.ordered ? '·' : '•'}</span>
-          <span>{b.text}</span>
+          <span>{b.text ? rich(b) : '\u00a0'}</span>
         </div>
       )
     case 'quote':
       return (
         <div className="md-quote" key={key}>
-          {b.text}
+          {rich(b)}
         </div>
       )
     case 'code':
@@ -139,6 +148,8 @@ function renderBlock(
       return <div className="md-hr" key={key} />
     case 'img':
       return <MdImage key={key} b={b} mirror={mirror} />
+    case 'table':
+      return <Table key={key} b={b} ctx={ctx} onAnchor={onAnchor} />
     default:
       return null
   }
@@ -325,6 +336,35 @@ export function ReadmeSheet(p: Props) {
     return () => box.removeEventListener('scroll', onScroll)
   }, [tocOpen, toc.length, headingOffsets])
 
+  /**
+   * 链接的基准目录跟着「当前显示的那份」走。
+   * 中文版可能叫 `README.zh-CN.md` 躺在别的目录里，用英文版的路径算相对链接会指错。
+   */
+  const shownPath = view === 'zh' && zhFile ? zhFile.path : (file?.path ?? '')
+  const linkCtx = useMemo<LinkContext>(
+    () => ({
+      owner,
+      repo: name,
+      branch: p.repo.default_branch || 'main',
+      basePath: shownPath,
+      mirror: p.mirror,
+    }),
+    [owner, name, p.repo.default_branch, shownPath, p.mirror],
+  )
+
+  /** `#某个小节` → 块下标 → 滚动。对不上就说清楚，别装作点了没反应 */
+  const jumpAnchor = useCallback(
+    (id: string) => {
+      const idx = anchorIndexOf(shown, id)
+      if (idx === null) {
+        p.onToast(`自述里没有「${id}」这一节，可能指到别的文件去了`)
+        return
+      }
+      jumpTo(idx)
+    },
+    [shown, jumpTo, p],
+  )
+
   return (
     <>
     <div className="mask" onClick={p.onClose}>
@@ -440,7 +480,7 @@ export function ReadmeSheet(p: Props) {
 
         {!loading && shown.length > 0 && (
           <div className="md">
-            {shown.map((b, i) => renderBlock(b, i, view === 'source', p.mirror))}
+            {shown.map((b, i) => renderBlock(b, i, view === 'source', p.mirror, linkCtx, jumpAnchor))}
           </div>
         )}
 

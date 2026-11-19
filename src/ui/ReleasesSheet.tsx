@@ -6,7 +6,6 @@ import { deleteAsset, publishRelease, updateRelease } from '../lib/release-ext'
 import {
   assetKind,
   excerpt,
-  mirrorDownloadUrl,
   pickAsset,
   releaseDate,
   releaseTitle,
@@ -25,6 +24,8 @@ interface Props {
   onClose: () => void
   onToast: (msg: string) => void
   onAudit: (detail: string) => void
+  /** 打开统一下载面板：和「检查更新」的安装包共用一套测速与选线 */
+  onDownloadAsset: (release: Release, asset: ReleaseAsset) => void
 }
 
 /** 附件上限给个软提醒：超过这个体积在手机上走内存缓冲容易失败 */
@@ -358,14 +359,9 @@ export function ReleasesSheet(p: Props) {
                         {formatBytes(primary.size)} · 下载 {primary.download_count}
                       </span>
                     </span>
-                    <a
-                      className="btn ghost tiny"
-                      href={mirrorDownloadUrl(primary.browser_download_url, p.mirror)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
+                    <button className="btn ghost tiny" onClick={() => p.onDownloadAsset(r, primary)}>
                       下载
-                    </a>
+                    </button>
                   </div>
                 )}
 
@@ -435,16 +431,11 @@ export function ReleasesSheet(p: Props) {
                           <div className="asset-list">
                             {r.assets.map((a) => (
                               <div className="asset-line" key={a.id}>
-                                <a
-                                  className="asset-link"
-                                  href={mirrorDownloadUrl(a.browser_download_url, p.mirror)}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
+                                <button className="asset-link" onClick={() => p.onDownloadAsset(r, a)}>
                                   <Icon name="download" size={12} />
                                   <span className="mono ellipsis">{a.name}</span>
                                   <span className="asset-size">{formatBytes(a.size)}</span>
-                                </a>
+                                </button>
                                 {confirmAsset === a.id ? (
                                   <button
                                     className="asset-del on"

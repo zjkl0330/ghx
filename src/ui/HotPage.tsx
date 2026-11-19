@@ -42,6 +42,11 @@ interface Props {
   descOpts: DescOptions
   onOpenRepo: (repo: Repo) => void
   onToast: (msg: string) => void
+  /**
+   * 匿名浏览：没导入令牌也能看公开榜单，但 star 这类写操作要登录。
+   * 匿名配额只有 10 次/分钟（搜索接口），所以连预取都要停掉。
+   */
+  readOnly?: boolean
 }
 
 function relTime(iso: string | undefined): string {
@@ -292,7 +297,7 @@ export function HotPage(p: Props) {
   useEffect(() => {
     const client = p.client
     const tokenId = p.tokenId
-    if (!client || !tokenId || searchMode || repos.length === 0) return
+    if (!client || !tokenId || p.readOnly || searchMode || repos.length === 0) return
 
     const timer = window.setTimeout(() => {
       for (const r of TRENDING_RANGES) {
@@ -308,9 +313,13 @@ export function HotPage(p: Props) {
       }
     }, 1500)
     return () => window.clearTimeout(timer)
-  }, [p.client, p.kv, p.tokenId, range, lang, searchMode, repos.length])
+  }, [p.client, p.kv, p.tokenId, p.readOnly, range, lang, searchMode, repos.length])
 
   async function toggleStar(repo: Repo) {
+    if (p.readOnly) {
+      p.onToast('导入令牌后才能 star')
+      return
+    }
     if (!p.client || busy) return
     const next = !starred.has(repo.full_name)
     setBusy(repo.full_name)
@@ -407,6 +416,12 @@ export function HotPage(p: Props) {
       <div className="page" style={{ marginTop: 0 }}>
         {refreshing && <div className="refresh-bar" />}
 
+        {p.readOnly && (
+          <div className="page-sub guest-tip" style={{ padding: '2px 16px 6px' }}>
+            游客模式 · 只读公开榜单，导入令牌后可 star
+          </div>
+        )}
+
         {error && (
           <div className="warnbox" style={{ margin: '12px 16px 0' }}>
             <Icon name="warn" size={14} />
@@ -468,7 +483,7 @@ export function HotPage(p: Props) {
                     className="icon-btn star-on"
                     aria-label={`${on ? '取消 star' : 'star'} ${r.full_name}`}
                     disabled={busy === r.full_name}
-                    style={on ? undefined : { color: 'var(--text-dim)' }}
+                    style={p.readOnly ? { display: 'none' } : on ? undefined : { color: 'var(--text-dim)' }}
                     onClick={() => void toggleStar(r)}
                   >
                     {busy === r.full_name ? (

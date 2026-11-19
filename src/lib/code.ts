@@ -78,6 +78,8 @@ export function isBinaryPath(path: string): boolean {
 
 /** 语言名，用于代码块标题与着色提示 */
 export function languageOf(path: string): string {
+  // 路径缺失时不要抛：调用点在渲染里，抛一次就是整页白屏
+  if (!path) return '文本'
   const ext = (path.split('.').pop() ?? '').toLowerCase()
   const map: Record<string, string> = {
     ts: 'TypeScript',

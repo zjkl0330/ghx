@@ -70,6 +70,48 @@ export function tocAnchor(index: number): string {
 }
 
 /**
+ * 标题转 slug，尽量贴近 GitHub 的规则：小写、去掉标点、空白变连字符。
+ * 中文原样保留（GitHub 也不音译）。
+ */
+export function slugOf(heading: string): string {
+  return heading
+    .toLowerCase()
+    .trim()
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/\s+/g, '-')
+}
+
+/**
+ * 把 `#某个小节` 映射回块下标。
+ *
+ * 同名标题在 README 里很常见（每版都有「修复」），GitHub 会给第二个加
+ * `-1` 后缀，这里照同一套编号，保证 `#修复-1` 也能落到正确那一段。
+ */
+export function anchorIndexOf(blocks: Block[], hash: string): number | null {
+  let want = hash.replace(/^#/, '')
+  try {
+    want = decodeURIComponent(want)
+  } catch {
+    // 非法百分号编码就按原样比对
+  }
+  want = want.toLowerCase().trim()
+  if (!want) return null
+
+  const seen = new Map<string, number>()
+  for (let i = 0; i < blocks.length; i += 1) {
+    const b = blocks[i]
+    if (b.kind !== 'h') continue
+    const base = slugOf(b.text)
+    if (!base) continue
+    const n = seen.get(base) ?? 0
+    seen.set(base, n + 1)
+    const slug = n === 0 ? base : `${base}-${n}`
+    if (slug === want) return i
+  }
+  return null
+}
+
+/**
  * 当前读到哪一节。
  *
  * `offsets` 是各标题相对滚动容器的偏移（升序）。返回最后一个「已经越过顶部留白」

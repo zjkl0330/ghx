@@ -133,7 +133,19 @@ export function ProfileReadme(p: {
       <div className="section-title">主页自述</div>
       <div className="panel">
         <div className={`preadme-body${expanded ? ' open' : ''}`} ref={bodyRef}>
-          <MarkdownView blocks={blocks} mirror={p.mirror} />
+          <MarkdownView
+            blocks={blocks}
+            mirror={p.mirror}
+            // 主页自述就是 {login}/{login} 这个仓库的 README。分支写 HEAD：
+            // 它由 GitHub 解析到默认分支，不用去猜是 main 还是 master
+            ctx={{
+              owner: p.login,
+              repo: p.login,
+              branch: 'HEAD',
+              basePath: 'README.md',
+              mirror: p.mirror,
+            }}
+          />
         </div>
         {overflowing && !expanded && <div className="preadme-fade" />}
         {overflowing && (

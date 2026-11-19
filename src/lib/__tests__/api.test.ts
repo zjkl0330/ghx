@@ -420,6 +420,34 @@ describe('网络层失败', () => {
     expect(n).toBe(1)
   })
 
+  it('空令牌按匿名请求发，不带 Authorization', async () => {
+    const fn = mockFetch(200, { items: [], total_count: 0 })
+    const client = new GitHubClient({ token: '', fetchImpl: fn })
+    expect(client.anonymous).toBe(true)
+    await client.searchRepos('stars:>=1')
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    const headers = call[1].headers as Record<string, string>
+    // 曾经这里发的是 `Bearer `（空格后什么都没有），GitHub 直接 401 Bad credentials，
+    // 于是没导入令牌时热门页一片空白。匿名必须彻底不带头。
+    expect(headers.Authorization).toBeUndefined()
+    expect(headers.Accept).toBe('application/vnd.github+json')
+  })
+
+  it('空白令牌同样按匿名处理', () => {
+    const client = new GitHubClient({ token: '   ' })
+    expect(client.anonymous).toBe(true)
+    expect(client.authToken).toBe('')
+  })
+
+  it('有令牌时照常带上 Bearer', async () => {
+    const fn = mockFetch(200, { login: 'x' })
+    const client = new GitHubClient({ token: 't', fetchImpl: fn })
+    expect(client.anonymous).toBe(false)
+    await client.whoami()
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect((call[1].headers as Record<string, string>).Authorization).toBe('Bearer t')
+  })
+
   it('isNetworkError 认得各内核与 Node 的文案', () => {
     expect(isNetworkError(new TypeError('Failed to fetch'))).toBe(true)
     expect(isNetworkError(new TypeError('Load failed'))).toBe(true)

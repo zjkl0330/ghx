@@ -330,7 +330,57 @@ user / notifications / search / profile / settings / tokens / audit
   - `backnav`：`SheetName` 加 `multi`，`sheetBackTarget` 加第五个参数 `multiReturn` — 面板可能从详情进来也可能从复刻页进来，返回要各回各的。
   - **修了一个存量 bug**：`activate` 里的归属探测引用了重构时删掉的 `v`（`vaultRef.current`），异常被 `.catch(() => {})` 吞掉，导致首个导入的账号永远「未校验」，`@login`、复刻归属、「你」标记全部退化。发现方式：`tsc --noEmit` 读的是 solution 配置等于空跑，改 `tsc -b` 才暴露。
   - 实测（390×844，Playwright + 真构建产物，两个 mock 账号）：详情页 Star 行提示「2 个账号可同时操作」→ 面板两行都是「将 star 这个仓库」且默认全选 → 执行 → 两行「已完成」、toast「2 个账号已 star」、服务端两个令牌都置为已 star、关面板后详情页变「取消 Star」；复刻页「让其他账号也复刻」→ 面板里 A「已有复刻，不用动」不可勾、B 可选 → 执行 → toast「1 个账号已提交复刻」、只有 B 发了 POST；关面板回到复刻页。请求轨迹 `PUT starred [a] → PUT starred [b] → POST fork [b]`，console 零报错。单测 988 → 1006。
-- 已知边界：发行版附件只能网页上传（CORS）；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
+- **v0.7.8**：下载统一到一处，并支持应用内安装。
+  - `lib/download.ts`：`DownloadTarget`（apk / asset / archive）+ `mirrorOfUrl`（按 base 前缀最长匹配反查站点，避免 `github.com` 抢走自建站）+ `measureRoutes` / `rankRoutes` / `fastestRoute` + 进度与文件名工具。候选顺序**不在新模块里重排**，直接沿用 `releaseCandidates` / `archiveCandidates` —— 那里的顺序是实测出来的（自建站对 release 资产 302 到 522 等），挪一次等于把坑再踩一遍。
+  - `native-download.ts` + `DownloadPlugin.java`：`HttpURLConnection` 流式写 `getExternalFilesDir(DIRECTORY_DOWNLOADS)`，每 200ms 推 `progress` 事件（含瞬时 KB/s）；完成后 `FileProvider` + `ACTION_VIEW` 拉起安装器。`canRequestPackageInstalls()` 为 false 时跳 `ACTION_MANAGE_UNKNOWN_APP_SOURCES` 并回 `needPermission`。
+  - **不用 CapacitorHttp 整包返回**：4 MB 一次性进 JS 内存既慢又容易被系统回收；也不用 `getContentLengthLong()`（API 24，本项目 minSdk 23），改成手动解析 `Content-Length`。
+  - **应用内只对 `.apk` 开放**：其它附件落在 App 私有目录，文件管理器看不到，选了应用内反而更难找到 —— 此时面板强制「交给浏览器」，设置说明里写清这个边界。
+  - `DownloadSheet`：线路表复用 `.multi-row` 骨架；打开即逐条测速（4 条 × 256 KB），结果按 `${kind}:${首个候选 URL}` 缓存 6 小时；应用内失败自动换下一条，最多试三条。
+  - `backnav`：`SheetName` 加 `download`，`sheetBackTarget` 加第六个参数 `downloadReturn` —— 面板可能从更新弹层、发行版面板、仓库详情或仓库主页进来，各回各的。
+  - 接入点：`UpdateSheet` 主按钮改为打开面板；`ReleasesSheet` 的资产 `<a>` 改成按钮回调；`RepoPage` / `RepoDetailSheet` 的源码 ZIP 走 `onDownloadArchive`（保留旧 `openArchive` 作为调用方未接线时的兜底）。
+  - 实测（390×844，Playwright + mock 三条线路）：设置页「下载方式」在、网页版「应用内下载」禁用且说明写「一律交给浏览器」；更新面板 → 面板标题 `ghx v0.7.8 安装包`、副标题带 4.2 MB、三条线路 `2.5 MB/s / 451 KB/s / 17 KB/s`、最快标 gh-proxy；点「用浏览器下载」后 `window.open` 恰好 1 次且拿到的是**最快那条**；关面板回到更新面板。发行版附件 → 标题 `ghx-0.7.8-debug.apk`；源码 ZIP → `ghx-main.zip`、三条线路分别标「codeload 直取 / 经 github 302 / codeload.github.com」、说明改为「完成后可直接打开」。console 零报错，单测 1006 → 1042。
+  - APK 校验：指纹 `fd6a8ea4…b2de` 不变、versionCode 708 / versionName 0.7.8、`REQUEST_INSTALL_PACKAGES` 在包内、`file_paths.xml` 含 `external-files-path name="downloads"`、dex 里 `DownloadPlugin` 与 `download/install/cancel` 三个方法都在。
+  - **未验证**：沙箱没有 adb / 模拟器 / `/dev/kvm`，真机上「下载 → 安装器 → 覆盖安装」这一段没跑过；JS 与 Java 的字段名做了逐项比对（插件名、方法名、`url` / `fileName` / `expectBytes` / `path`、`progress` 事件、`path` / `bytes` / `ms` / `opened` / `needPermission`、FileProvider authority）全部一致。
+
+- **v0.7.9**：自述里的链接真能点了，正文更黑，列表能翻页。
+  - **根因不是样式**：`markdown.ts` 的 `inline()` 第 43 行把 `[文字](地址)` 替换成 `$1`，地址就地丢掉；`Block` 类型里根本没有 link 这种块。所以整篇 README 一个可点链接都没有，跟有没有给 `a` 上色无关。另有一半原因在表格：`renderBlock` 压根没有 `table` 分支，表格直接不渲染。
+  - `Span` + `parseInline()`：有序规则表扫描，同位置命中按数组顺序取优先。**刻意不用后行断言** `(?<!…)` —— iOS 16.4 以前不支持，正则会直接抛语法错误，表现为整页白屏。斜体只认 `*`，不认 `_`（`snake_case` 遍地都是）。
+  - **块上多挂 `spans` 而不是替换 `text`**：翻译、摘要、缓存全都读 `text`，换字段等于把三条链路重写。另存 `spansFor`（生成 spans 时的纯文本快照），机翻换掉 `text` 后两者不等，渲染侧自动退回纯文本 —— 否则译文里会混进一截原文。
+  - `Block` 的 `spans` / `spansFor` 直接展开在每个分支上，**不用 `& Rich` 交叉类型**：交叉会让 TS 丢掉对象字面量的隐式索引签名，`Block` 随即不满足 `translate.ts` 的 `BlockLike`（那里靠 `[key: string]: unknown` 遍历）。
+  - `mdlink.ts`：`safeHref`（只放行 http/https/mailto/tel/锚点，`javascript:` 与 `data:` 渲染成纯文字）、`joinPath`（`..` 顶到仓库根就返回空串，不拼出 404 地址）、`resolveHref`（相对路径按**自述所在目录**算，不是仓库根）、`isRepoPath`。
+  - `toc.ts`：`slugOf` + `anchorIndexOf`。同名标题按 GitHub 规则补 `-1` / `-2`，`#修复-1` 落到第二处。
+  - `SpanText`：链接渲染成 `<button class="md-link">` 而不是 `<a href>` —— WebView 里点 `a` 会先走一次真实导航，长按、中键、无障碍焦点都可能把当前页顶掉。
+  - **表格单元格改为保留原文**：`splitCells(line)` 不再 `.map(inline)`，改由渲染层 `SpanText` 解析；`blocksToText` / `summarize` 里才清洗。不这么改，表格里的链接与 `代码` 永远没有格式。
+  - 字体：浅色主题 `--text` / `--text-2` / `--text-3` / `--text-dim` / `--icon-dim` / `--text-dim-rgb` 统一乘 0.8（`#424a53` → `#353b42`）。**深色主题不动** —— 那里「加深」等于更难看清。
+  - `ui/useMore.ts`：首屏仍归 `useLoad`，这个只管后续页。筛选一变就清空（否则新旧筛选的页会混在一起），页码与在途状态放 ref（闭包里的 state 是旧的，连点两次会拉同一页），不满一页即判定到底（镜像站常吞 `Link` 头）。接在 Issue / PR 列表上。
+  - 星标：首屏仍拉 3 页，`nextPage` / `allLoaded` 支撑后续加载，去掉 150 硬顶。
+  - 实测（390×844，Playwright + mock 一份链接密集的 README，浅/深两套主题）：`.md-link` 13 个、表格 1 张、表格内 `.md-icode` ≥1 且 `.md-link` ≥2；链接 computed color `rgb(9, 105, 218)`、`text-decoration-line: underline`；点第一个链接 `window.open` 打开 `https://x.com/hassanyehiiaa` 且地址完全一致；正文 `max(r,g,b) ≤ 66`。脚本 `scripts/verify-md.py` 可重跑，截图 `docs/screenshots/md-links-079.png`。console 零报错，单测 1042 → 1103。
+  - **CI 产物下载**：`GET /repos/{o}/{r}/actions/artifacts/{id}/zip` 必须带令牌，且 302 到 pipelines 的签名地址；浏览器路径拿不到（`redirect: 'manual'` 只能读到不透明响应，`Location` 为空），所以只有一条线路、只能应用内下。`DownloadPlugin` 新增 `headers` 入参，并把 `setInstanceFollowRedirects` 关掉改成手动跟 5 跳 —— **跳转后不再带 Authorization**，签名地址本身不需要，也没理由把令牌交给别的域。产物不是安装包，下完不调安装器，只提示落盘位置。网页端因为 `isNativePlatform()` 为 false，面板直接禁用主按钮并写明「要在 App 里下载」，不装作能下。
+  - **仍未验证**：产物这条 UI 分支（运行 → 日志 → 产物 → 下载面板）没在浏览器里实走，要构造 Actions 全链路 mock 才点得进去；原生「带令牌请求 → 302 → 签名地址」也没真机跑过。已做的静态比对：JS 传 `headers`、Java 用 `call.getObject("headers")` 读，字段名一致；`artifactTarget` 的 URL / `auth` 标记 / 文件名 / `installable` 有 7 条单测。
+
+- **v0.8.0**：剪贴板直达 —— 从别处复制一个 GitHub 地址，切回 App 就落在那个页面上。
+  - **Android 10+ 禁止后台读剪贴板**，这是系统限制，不是没做。可用的时机只有两个：冷启动（`client` 一就绪）与 `appStateChange` 的 `isActive: true`。所以「在后台读」实际是「回前台那一下读」，设置页的说明里把这点写明了，没有含糊成「实时监听」。
+  - **冷启动不要用固定延时**。最初写的是 `setTimeout(1200)` 等启动流程，但解密保险库要多久取决于设备：早了 `client` 还是 null（探测被 `ready` 判定跳过），晚了白等。改成 `useEffect([client])` —— 客户端一就绪就探，天然对齐。
+  - `lib/clipboard-link.ts` 全是纯函数：`parseClipRoute`（SSH / 带协议 / 不带协议 / 分享文案夹带 / 中文标点尾巴）、`looksSecret`、`clipFingerprint`、`clipBlockedByRoute`、`parseClipOpen`。37 条单测。
+  - **`github.com` 前面必须有 `[^\w.-]` 边界**。少了它，`notgithub.com/a/b` 会被从中间截出 `github.com/a/b` 当成真地址；`gist.github.com` 也靠这条规则挡住（前面是点）。
+  - **不接裸 `owner/repo`**。`src/lib`、`docs/api` 这类字符串在代码里到处都是，误判的代价是把人从当前页面硬弹走，比「少认一种写法」糟得多。
+  - **指纹而非原文落盘**：djb2 + 长度，只回答「这条是不是刚处理过」。令牌类内容（`ghp_` / `github_pat_` 等）连指纹都不写 —— 没有理由把凭据的存在痕迹留在磁盘上。
+  - **三种情况主动放弃跳转**：有弹层开着（会把弹层顶掉）、正在编辑文件或 Gist（会冲掉没保存的输入）、`client` 为空（还没解锁，跳了也没数据）。判断放在 `probeClipboard` 开头，每次触发都重新看当前状态（经 ref 读，不进监听器依赖数组）。
+  - 停在同一个页面时只记指纹、不压栈、不弹提示 —— `pushRoute` 虽然会去重，但提示还是会响一下，吵。
+  - 插件用官方的 `@capacitor/clipboard`（7.0.4）。**不能改用 `navigator.clipboard.readText()`**：Android WebView 不会给这个页面授 `clipboard-read`，自动调用必然 reject；官方插件在原生侧走 `ClipboardManager`，没有这个问题。
+  - 实测（390×844，Playwright + mock，`scripts/verify-clip.py`，9 个断言点）：写 URL 后派发 `visibilitychange` → 顶栏变 `clist-cf`、提示「从剪贴板打开 zjkl0330/clist-cf」；同内容再触发 → 页面不动、无提示；换 issue 链接 → `#12`；换 `tree/main/src/lib` → 代码页 `lib`；换只有用户名的地址 → `@zjkl0330`；令牌内容 → 页面不动、无提示；设置页关掉开关 → 新链接不跳；重新开启 + 清指纹 + 整页重载 → 自动跳到 `esp32-wol`。console 零报错，单测 1110 → 1150。
+  - **仍未验证**：真机上 `appStateChange` 的触发时机（Android 12+ 读剪贴板会弹系统的「已粘贴」提示，属于系统行为，App 无法抑制）。Web 端验证的是同一段逻辑的等价事件路径，不是 Android 的 `onResume`。
+
+- **v0.8.1**：无令牌也能看热门。
+  - 表因有两层。架构层：没导入令牌时 `client` 就是 `null`，`HotPage.load` 第一句 `if (!client) { setRepos([]); return }`，页面停在空态。协议层更隐蔽 —— `request()` 无论有没有令牌都写 `Authorization: Bearer ${this.token}`，空令牌拼出来是 `Bearer `（后面什么都没有），GitHub 认它是坏凭据并回 **401 Bad credentials**，而不是按匿名请求处理。两条都修掉才算真的能用。
+  - `GitHubClient` 现在把 `token.trim()` 后存，空串即 `anonymous`；鉴权头集中到 `authHeaders()`，空令牌返回 `{}`。`rawText` 与 `request` 共用这一处，避免两边再次走偏。
+  - App 里另建一个 `guestClient`（空令牌、默认 `api.github.com`），只在 `client === null` 时喂给热门页；不复用同一个实例是为了让缓存与配额互不污染。
+  - 游客只读：star 按钮直接 `display:none`（留着点一次报一次错），页面顶部写明「游客模式」。匿名搜索配额只有 10 次/分钟，所以**预取另外两个时间段必须关掉**，否则点两下就限流。
+  - 缓存按 `GUEST_ID = 'anon'` 单独存一份，登录后不会把游客那份当成账号快照，退出登录也不会被按账号清掉又在同一秒重建。
+  - 实测（390×844，Playwright + **不 mock 任何请求**，`scripts/verify-guest.py`）：无令牌直接进主界面 → 点热门 → 30 行真实仓库、副标题「刚刚更新」、游客提示在、可见 star 按钮 0 个、抓到的请求头全部没有 `Authorization`；切 TypeScript 仍然 30 行。单测 1150 → 1153。
+  - **仍未验证**：真机匿名配额下的实际可用次数（网页端 10 次/分钟是同一个池，切换时间段 + 语言很容易打满）。
+
+- 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）
 

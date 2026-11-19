@@ -59,6 +59,12 @@ describe('文件类型判断', () => {
     expect(languageOf('a/b.yaml')).toBe('YAML')
     expect(languageOf('LICENSE')).toBe('文本')
   })
+
+  it('路径缺失不抛异常', () => {
+    // 调用点在渲染里：接口形状异常时抛一次就是整页白屏
+    expect(languageOf(undefined as unknown as string)).toBe('文本')
+    expect(languageOf('')).toBe('文本')
+  })
 })
 
 describe('目录整理', () => {

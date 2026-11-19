@@ -13,6 +13,7 @@ import {
 import { listMilestones, type Milestone } from '../lib/milestones'
 import { relTime } from '../lib/format'
 import { useLoad } from './useLoad'
+import { useMore } from './useMore'
 import { PageState } from './PageHeader'
 import { IssueFilterSheet } from './IssueFilterSheet'
 import { Icon } from './icons'
@@ -57,9 +58,25 @@ export function IssuesPage(p: {
     [p.client, p.owner, p.repo, filter, advKey],
   )
 
+  // 首屏之外再往后翻。筛选条件变了由 useMore 自己清空，不会混进上一轮的页
+  const more = useMore(
+    (page) =>
+      p.client
+        ? listIssues(p.client, p.owner, p.repo, {
+            state: filter,
+            perPage: 50,
+            page,
+            extra: buildIssueParams(adv),
+          }).then((r) => r.items)
+        : Promise.resolve([]),
+    50,
+    [p.client, p.owner, p.repo, filter, advKey],
+  )
+
   // 服务端筛过一遍，客户端再判一次：镜像站偶尔吞 query，
   // 而且 label 在服务端是「全都要有」的 AND 语义，这里只支持单选，判严一点更安全
-  const items = useMemo(() => (data?.items ?? []).filter((i) => matchesFilter(i, adv)), [data, adv])
+  const all = useMemo(() => [...(data?.items ?? []), ...more.items], [data, more.items])
+  const items = useMemo(() => all.filter((i) => matchesFilter(i, adv)), [all, adv])
   const shown = useMemo(() => filterIssues(items, query), [items, query])
   const counts = useMemo(() => labelCounts(items), [items])
   const advN = activeCount(adv)
@@ -172,6 +189,17 @@ export function IssuesPage(p: {
           <IssueRow key={i.number} issue={i} onOpen={() => p.onOpen(i.number)} />
         ))}
       </div>
+
+      {shown.length > 0 && !more.done && (
+        <button className="btn ghost block" style={{ marginTop: 10 }} onClick={more.loadMore} disabled={more.loading}>
+          {more.loading ? '加载中…' : more.error ? '加载失败，点此重试' : '加载更多'}
+        </button>
+      )}
+      {more.done && shown.length > 0 && (
+        <div className="hint" style={{ textAlign: 'center', marginTop: 10 }}>
+          没有更多了
+        </div>
+      )}
 
       {sheet && (
         <IssueFilterSheet

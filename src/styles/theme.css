@@ -124,12 +124,12 @@
   --bg-deep: #ffffff;
 
   --line: #d0d7de;
-  --text: #1f2328;
-  --text-2: #424a53;
-  --text-3: #57606a;
-  --text-dim: #656d76;
-  --icon-dim: #6e7781;
-  --text-dim-rgb: 101, 109, 118;
+  --text: #191c20;
+  --text-2: #353b42;
+  --text-3: #464d55;
+  --text-dim: #51575e;
+  --icon-dim: #585f67;
+  --text-dim-rgb: 81, 87, 94;
   --chart-issue-rgb: 154, 103, 0;
   --chart-pull-rgb: 130, 80, 223;
 
@@ -2586,6 +2586,43 @@ h1.title {
   white-space: pre-wrap;
 }
 
+/*
+ * 行内链接。
+ *
+ * 用 button 而不是 a（见 SpanText 注释），所以要把按钮的默认外观全部清掉：
+ * 不继承字号、内边距、边框都会让链接在正文里像一块按钮。
+ * 下划线是必须的 —— 只靠颜色区分，色觉障碍用户看不出哪段可点。
+ */
+.md-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--blue);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.md-link:active {
+  opacity: 0.55;
+}
+
+/* 行内代码：和正文区分开，但不能像块级代码那样抢戏 */
+.md-icode {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 4px;
+  color: var(--text);
+}
+
 .md-li {
   display: flex;
   gap: 6px;
@@ -3926,6 +3963,9 @@ button.ustat:active {
   gap: 6px;
   color: inherit;
   text-decoration: none;
+  /* 从 <a> 换成 <button> 之后：按钮默认居中，这里压回列表的左对齐 */
+  text-align: left;
+  padding: 0;
 }
 
 .asset-del {
@@ -5679,5 +5719,105 @@ button.ustat:active {
 
 .multi-box.locked {
   border-style: dashed;
+  color: var(--text-dim);
+}
+
+/* ── 统一下载面板 ────────────────────────────────────────────────
+   安装包、发行版附件、源码 ZIP 共用：一个文件卡 + 一张线路表 + 一条进度。
+   线路表刻意复用 .multi-row 的骨架（勾选 / 主文 / 右侧数字），
+   免得同一个 App 里两张「可选项列表」长得不一样。 */
+.dl-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 13px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.dl-file-ic {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+
+.dl-file-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dl-file-main b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dl-file-main i {
+  font-size: 11px;
+  font-style: normal;
+  color: var(--text-dim);
+}
+
+.dl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.dl-best {
+  margin-left: 7px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-style: normal;
+  color: var(--green);
+  background: var(--green-bg);
+  border: 1px solid var(--green-line);
+}
+
+.dl-speed {
+  flex: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.dl-speed.ok {
+  color: var(--green);
+}
+
+.dl-speed.bad {
+  color: var(--red);
+}
+
+.dl-prog {
+  margin-top: 11px;
+}
+
+.dl-prog .multi-bar {
+  margin-top: 0;
+}
+
+.dl-prog-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-dim);
 }

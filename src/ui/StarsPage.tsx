@@ -35,6 +35,11 @@ export function StarsPage(p: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   const [view, setView] = useState<View>('list')
   const [lang, setLang] = useState<string | null>(null)
+  /** 首屏之后还能不能继续翻。之前写死 3 页，star 多的人第 151 个以后直接看不见 */
+  const [nextPage, setNextPage] = useState(4)
+  const [allLoaded, setAllLoaded] = useState(false)
+  const [moreLoading, setMoreLoading] = useState(false)
+  const [moreError, setMoreError] = useState<string | null>(null)
 
   /** fresh=true 时绕过缓存，手动刷新用；首次进入直接吃缓存，不再转圈 */
   const load = useCallback(
@@ -45,15 +50,21 @@ export function StarsPage(p: Props) {
       }
       setLoading(true)
       setError(null)
+      setMoreError(null)
       try {
         const acc: Repo[] = []
-        // 最多拉 3 页，够用且不至于一口气吃掉配额
+        // 首屏先拉 3 页：够铺满一屏，也不至于一口气吃掉配额。
+        // 第三页满 50 条说明后面还有，留给「加载更多」接着拉。
+        let lastFull = false
         for (let page = 1; page <= 3; page += 1) {
           const { data } = await p.client.listStarred(page, 50, fresh)
           acc.push(...data)
-          if (data.length < 50) break
+          lastFull = data.length === 50
+          if (!lastFull) break
         }
         setRepos(acc)
+        setNextPage(4)
+        setAllLoaded(!lastFull)
       } catch (err) {
         setError((err as Error).message)
       } finally {
@@ -62,6 +73,23 @@ export function StarsPage(p: Props) {
     },
     [p.client],
   )
+
+  const loadMore = useCallback(async () => {
+    if (!p.client || moreLoading || allLoaded) return
+    setMoreLoading(true)
+    setMoreError(null)
+    try {
+      const { data } = await p.client.listStarred(nextPage, 50)
+      setRepos((prev) => [...prev, ...data])
+      setNextPage((n) => n + 1)
+      if (data.length < 50) setAllLoaded(true)
+    } catch (err) {
+      // 停在原页，再点一次就是重试
+      setMoreError((err as Error).message)
+    } finally {
+      setMoreLoading(false)
+    }
+  }, [p.client, moreLoading, allLoaded, nextPage])
 
   useEffect(() => {
     void load()
@@ -224,6 +252,22 @@ export function StarsPage(p: Props) {
 
         {view === 'list' && filtered.length > 0 && (
           <div className="rows">{filtered.map(repoRow)}</div>
+        )}
+
+        {view === 'list' && !empty && !allLoaded && (
+          <button
+            className="btn ghost block"
+            style={{ marginTop: 10 }}
+            onClick={() => void loadMore()}
+            disabled={moreLoading}
+          >
+            {moreLoading ? '加载中…' : moreError ? '加载失败，点此重试' : `加载更多（已有 ${repos.length} 个）`}
+          </button>
+        )}
+        {view === 'list' && allLoaded && repos.length > 150 && (
+          <div className="hint" style={{ textAlign: 'center', marginTop: 10 }}>
+            已是全部 {repos.length} 个星标仓库
+          </div>
         )}
 
         {view === 'group' &&

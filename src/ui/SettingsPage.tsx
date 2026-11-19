@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
 import { formatSpeed, mirrorLabel } from '../lib/mirrors'
+import { modeHint, type DownloadMode } from '../lib/download'
 import {
   ACCENTS,
   accentSwatch,
@@ -40,6 +41,12 @@ interface Props {
   /** 沉浸式全屏：藏掉状态栏 */
   fullscreen: boolean
   onFullscreen: (on: boolean) => void
+  /** 下载方式：应用内自己下并调安装器，还是交给系统浏览器 */
+  downloadMode: DownloadMode
+  onDownloadMode: (m: DownloadMode) => void
+  /** 切回前台时读剪贴板，认出 GitHub 地址就直接跳过去 */
+  clipOpen: boolean
+  onClipOpen: (on: boolean) => void
   /** 哪些内容需要机翻 */
   scope: TranslateScope
   onScope: (next: TranslateScope) => void
@@ -476,6 +483,27 @@ export function SettingsPage(p: Props) {
             </button>
           </div>
 
+          <div className="section-title">打开方式</div>
+          <div className="panel">
+            <div className="tgl-label">剪贴板直达</div>
+            <div className="seg" style={{ margin: 0 }}>
+              <button className={p.clipOpen ? 'on' : ''} onClick={() => p.onClipOpen(true)}>
+                开启
+              </button>
+              <button className={!p.clipOpen ? 'on' : ''} onClick={() => p.onClipOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              开启后，从浏览器或聊天里复制一个 GitHub 仓库地址，切回 App 会自动跳到那个仓库；
+              issue、PR、代码目录、单次提交的链接也能认。同一条内容只跳一次，正在编辑或弹层开着时不会打断你。
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              Android 10 起系统不允许后台应用读剪贴板，所以读的时机是「切回前台那一下」，不是常驻监听。
+              系统会在读取时提示「已粘贴」，那是系统行为，App 关不掉。凭据类内容（ghp_ 开头等）一律不读不留。
+            </div>
+          </div>
+
           <div className="section-title">安全</div>
           <div className="panel">
             <div className="kv-row">
@@ -540,6 +568,28 @@ export function SettingsPage(p: Props) {
               <Icon name={p.hasUpdate ? 'download' : 'refresh'} size={14} />
               {p.hasUpdate ? `发现新版本 v${p.latestVersion}` : '检查更新'}
             </button>
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              下载方式
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              <button
+                className={p.downloadMode === 'inner' ? 'on' : ''}
+                disabled={!p.native}
+                onClick={() => p.onDownloadMode('inner')}
+              >
+                应用内下载
+              </button>
+              <button
+                className={p.downloadMode === 'outer' ? 'on' : ''}
+                onClick={() => p.onDownloadMode('outer')}
+              >
+                交给浏览器
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              {modeHint(p.downloadMode, p.native)}
+            </div>
+
             <div className="field" style={{ marginTop: 14 }}>
               <label>下载加速</label>
               <button className="linkrow" onClick={p.onOpenMirrors}>
@@ -556,7 +606,9 @@ export function SettingsPage(p: Props) {
                 <Icon name="chevron" size={13} className="linkrow-arrow" />
               </button>
               <div className="hint">
-                APK 与自述图片都从加速站下载，因为 github.com 直连通常不通。站点域名换了不用重装 App：进页面点每个站点右边的铅笔直接改地址，改完立即全局生效（图片、安装包、发行版页一起跟着走）。也能添加自己的站点并测速。
+                APK 与自述图片都从加速站下载，因为 github.com 直连通常不通。安装包、任意仓库的发行版附件、源码
+                ZIP 走的是同一套候选与测速：在下载面板里逐条测速后选最快，失败自动换下一条。站点域名换了不用重装
+                App：进页面点每个站点右边的铅笔直接改地址，改完立即全局生效（图片、安装包、发行版页一起跟着走）。
               </div>
             </div>
           </div>

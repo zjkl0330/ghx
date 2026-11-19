@@ -28,6 +28,15 @@ export const HOT_MAX_ENTRIES = 9
 /** 与列表页一致的每页条数 */
 export const HOT_PAGE_SIZE = 30
 
+/**
+ * 没导入令牌时的缓存归属。
+ *
+ * 热门是公开数据，匿名也能看；单独用一个 id 存，
+ * 免得登录后把「游客看到的那份」当成自己账号的快照，
+ * 也免得退出登录时被按账号清掉又在同一秒重建。
+ */
+export const GUEST_ID = 'anon'
+
 export interface HotEntry {
   /** 写入时间（毫秒） */
   at: number

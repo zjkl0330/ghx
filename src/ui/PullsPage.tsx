@@ -30,6 +30,7 @@ import { EMPTY_FILTER, activeCount, filterSummary, matchesFilter, type IssueFilt
 import { listMilestones, type Milestone } from '../lib/milestones'
 import { IssueFilterSheet } from './IssueFilterSheet'
 import { useLoad } from './useLoad'
+import { useMore } from './useMore'
 
 /** PR 列表 */
 export function PullsPage(p: {
@@ -52,11 +53,22 @@ export function PullsPage(p: {
     [p.client, p.owner, p.repo, filter],
   )
 
+  const more = useMore(
+    (page) =>
+      p.client
+        ? listPulls(p.client, p.owner, p.repo, { state: filter, perPage: 40, page })
+        : Promise.resolve([]),
+    40,
+    [p.client, p.owner, p.repo, filter],
+  )
+
+  const all = useMemo(() => [...(data ?? []), ...more.items], [data, more.items])
+
   // PR 列表端点不支持 labels / assignee / creator / milestone / since，
   // 所以筛选只能在这一页里做 —— 弹层里已经写明，避免被当成「全仓库没有」
   const items = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const list = (data ?? []).filter((pr) => matchesFilter(pr, adv))
+    const list = all.filter((pr) => matchesFilter(pr, adv))
     if (!q) return list
     return list.filter(
       (pr) =>
@@ -64,7 +76,7 @@ export function PullsPage(p: {
         String(pr.number) === q ||
         pr.user?.login?.toLowerCase().includes(q),
     )
-  }, [data, query, adv])
+  }, [all, query, adv])
 
   const advN = activeCount(adv)
   const summary = useMemo(() => filterSummary(adv), [adv])
@@ -133,6 +145,17 @@ export function PullsPage(p: {
           <PullRow key={pr.number} pr={pr} onOpen={() => p.onOpen(pr.number)} />
         ))}
       </div>
+
+      {items.length > 0 && !more.done && (
+        <button className="btn ghost block" style={{ marginTop: 10 }} onClick={more.loadMore} disabled={more.loading}>
+          {more.loading ? '加载中…' : more.error ? '加载失败，点此重试' : '加载更多'}
+        </button>
+      )}
+      {more.done && items.length > 0 && (
+        <div className="hint" style={{ textAlign: 'center', marginTop: 10 }}>
+          没有更多了
+        </div>
+      )}
 
       {sheet && (
         <IssueFilterSheet

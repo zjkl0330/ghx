@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
+import { Clipboard } from '@capacitor/clipboard'
 import { Capacitor } from '@capacitor/core'
 import { GitHubClient, GitHubError } from './lib/api'
 import { appendAudit, clearAudit, readAudit } from './lib/audit'
+import {
+  CLIP_OPEN_KEY,
+  CLIP_SEEN_KEY,
+  clipBlockedByRoute,
+  clipFingerprint,
+  clipRouteLabel,
+  looksSecret,
+  parseClipOpen,
+  parseClipRoute,
+  serializeClipOpen,
+} from './lib/clipboard-link'
 import { pickDescItems } from './lib/desc'
 import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
 import {
@@ -47,7 +59,7 @@ import {
   type NotificationThread,
 } from './lib/notifications'
 import { loadSnapshot, saveSnapshot, type Snapshot } from './lib/snapshot'
-import { clearHotCache } from './lib/hotCache'
+import { GUEST_ID, clearHotCache } from './lib/hotCache'
 import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
 import { applyPins, isPinned, parsePins, pinKey, serializePins, togglePin } from './lib/pins'
 import {
@@ -91,6 +103,17 @@ import {
   type TranslationStore,
 } from './lib/translate'
 import { APP_VERSION, checkForUpdate, UPDATE_OWNER, UPDATE_REPO, type UpdateCheckResult } from './lib/update'
+import {
+  apkTarget,
+  archiveTarget,
+  artifactTarget,
+  assetTarget,
+  DOWNLOAD_MODE_KEY,
+  parseDownloadMode,
+  serializeDownloadMode,
+  type DownloadMode,
+  type DownloadTarget,
+} from './lib/download'
 import type {
   AuditEntry,
   BatchResult,
@@ -155,6 +178,7 @@ import { StarsPage } from './ui/StarsPage'
 import { TokenVault } from './ui/TokenVault'
 import { UnlockScreen } from './ui/UnlockScreen'
 import { UpdateSheet, type UpdatePhase } from './ui/UpdateSheet'
+import { DownloadSheet } from './ui/DownloadSheet'
 import { BatchSheet } from './ui/BatchSheet'
 import { BatchPickSheet } from './ui/BatchPickSheet'
 import { WorkflowSheet } from './ui/WorkflowSheet'
@@ -236,6 +260,14 @@ export default function App() {
   const [records, setRecords] = useState<TokenRecord[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [client, setClient] = useState<GitHubClient | null>(null)
+  /**
+   * 游客客户端：没导入令牌时用它读公开数据（热门榜单、公开仓库页）。
+   *
+   * 空令牌的客户端不会发 Authorization 头，走 GitHub 的匿名配额；
+   * 之前无令牌时热门页直接空白，是因为整个界面拿不到 client 就放弃了请求。
+   * 单独建实例而不是复用 client，是为了缓存与配额互不污染。
+   */
+  const guestClient = useMemo(() => new GitHubClient({ token: '' }), [])
   const [quota, setQuota] = useState<Record<string, { remaining: number; limit: number }>>({})
   const [checking, setChecking] = useState<string | null>(null)
   /** 正在切换的账号 id，切换期间面板上显示占位 */
@@ -319,6 +351,17 @@ export default function App() {
   const [mirrorReturn, setMirrorReturn] = useState<SheetName>('none')
   /** 自述/发行版/复刻面板的返回目标：仓库详情弹层 or 直接回仓库主页 */
   const [subReturn, setSubReturn] = useState<SheetName>('detail')
+
+  // ── 统一下载：更新包 / 发行版附件 / 源码 ZIP 共用一个面板 ─────────────
+  /** 应用内下载还是交给浏览器。默认交给浏览器：环境不支持时不会卡住 */
+  const [downloadMode, setDownloadMode] = useState<DownloadMode>('outer')
+  const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(null)
+  /** 关掉下载面板后回到哪一层：更新弹层 / 发行版面板 / 仓库详情 */
+  const [downloadReturn, setDownloadReturn] = useState<SheetName>('none')
+
+  // ── 剪贴板直达：切回前台读一眼剪贴板，是仓库地址就跳过去 ──────────────
+  /** 默认开。关掉后冷启动和切回都不再读剪贴板 */
+  const [clipOpen, setClipOpen] = useState(true)
   // 测速相关的回调里要读到最新值，用 ref 兜住闭包，避免测速跑到一半还在用旧状态
   const probeRef = useRef<MirrorProbeState>(probe)
   probeRef.current = probe
@@ -394,6 +437,7 @@ export default function App() {
     mirrorReturn,
     subReturn,
     multiReturn,
+    downloadReturn,
     sheetLocked: sheet === 'visibility' && phase === 'running',
   }
 
@@ -411,6 +455,85 @@ export default function App() {
   const replaceTopTo = useCallback((next: Route) => {
     setRouteStack((prev) => replaceTop(prev, next))
   }, [])
+
+  /* ---------------- 剪贴板直达 ---------------- */
+
+  // 监听回调注册一次就不再重注册，所以最新状态经 ref 读取，而不是进依赖数组
+  const clipOpenRef = useRef(clipOpen)
+  clipOpenRef.current = clipOpen
+  const clipStateRef = useRef<{ sheet: SheetName; route: Route | null; ready: boolean }>({
+    sheet: 'none',
+    route: null,
+    ready: false,
+  })
+  clipStateRef.current = { sheet, route, ready: client !== null }
+  const clipSeenRef = useRef('')
+
+  /**
+   * 读一眼剪贴板，能认成 GitHub 地址就跳过去。
+   *
+   * 静默失败：这是锦上添花的入口，读不到（Web 端没有用户手势、系统权限被拒）
+   * 就什么都不做，绝不弹错。以下几种情况主动放弃：
+   * - 还没解锁（`client` 为空），跳了也没数据；
+   * - 有弹层开着，跳转会把弹层顶掉；
+   * - 正在编辑文件或 Gist，跳转会冲掉没保存的输入。
+   */
+  const probeClipboard = useCallback(async () => {
+    if (!clipOpenRef.current) return
+    const st = clipStateRef.current
+    if (!st.ready || st.sheet !== 'none' || clipBlockedByRoute(st.route ?? undefined)) return
+
+    let text = ''
+    try {
+      const res = await Clipboard.read()
+      text = res.value ?? ''
+    } catch {
+      return
+    }
+    if (!text) return
+    // 令牌、密钥：连指纹都不写。剪贴板里有什么不该在磁盘上留痕
+    if (looksSecret(text)) return
+
+    const next = parseClipRoute(text)
+    if (!next) return
+
+    const fp = clipFingerprint(text)
+    if (fp === clipSeenRef.current) return
+    clipSeenRef.current = fp
+    void kvRef.current?.set(CLIP_SEEN_KEY, fp)
+
+    const label = clipRouteLabel(next)
+    // 已经停在同一页：记下指纹就够了，不再压一条相同路由、也不再提示
+    if (st.route && routeKey(st.route) === routeKey(next)) return
+
+    pushTo(next)
+    if (label) showToast(`从剪贴板打开 ${label}`)
+  }, [pushTo, showToast])
+
+  // 冷启动：客户端一就绪就探一次。不用固定延时 —— 解密保险库要多久取决于设备，
+  // 猜一个毫秒数要么早了（client 还没好，探测被跳过）要么晚了（白等一秒多）。
+  useEffect(() => {
+    if (!client) return
+    void probeClipboard()
+  }, [client, probeClipboard])
+
+  // 之后每次切回前台再读。Android 10+ 不允许后台应用读剪贴板，
+  // 所以「在后台读」实际就是「回前台那一下读」。
+  useEffect(() => {
+    let disposed = false
+    let remove: (() => void) | null = null
+
+    void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) void probeClipboard()
+    }).then((handle) => {
+      if (disposed) void handle.remove()
+      else remove = () => void handle.remove()
+    })
+    return () => {
+      disposed = true
+      remove?.()
+    }
+  }, [probeClipboard])
 
   const requestExit = useCallback(async () => {
     // 网页里没有「退出 App」这回事，只提示，避免按下去毫无反应
@@ -808,6 +931,20 @@ export default function App() {
         setMirrorRegistry(effectiveMirrors(store))
 
         if (savedMirror) setMirror(savedMirror)
+
+        // 下载方式：默认交给浏览器。老版本没这个键，解析成 outer。
+        const savedDownloadMode = await kv.get(DOWNLOAD_MODE_KEY)
+        if (cancelled) return
+        setDownloadMode(parseDownloadMode(savedDownloadMode))
+
+        // 剪贴板直达：老版本没有这个键，解析成「开」
+        const savedClipOpen = await kv.get(CLIP_OPEN_KEY)
+        if (cancelled) return
+        setClipOpen(parseClipOpen(savedClipOpen))
+        // 上次处理过的那条，重启后不该再跳一次
+        const savedClipSeen = await kv.get(CLIP_SEEN_KEY)
+        if (cancelled) return
+        clipSeenRef.current = savedClipSeen ?? ''
 
         // 加速站：自动模式下直接沿用上次测速选出的那台，冷启动不重复测
         const auto = savedAutoMirror !== 'off'
@@ -1296,6 +1433,37 @@ export default function App() {
     setMirrorReturn(from)
     setSheet('mirrors')
   }, [])
+
+  /**
+   * 打开统一下载面板。
+   *
+   * 更新包、发行版附件、源码 ZIP 都从这里进 —— 「从哪进来」决定关掉之后回哪，
+   * 但面板本身只有一套：线路表、测速、进度、安装器。
+   */
+  const openDownload = useCallback((target: DownloadTarget, from: SheetName) => {
+    setDownloadTarget(target)
+    setDownloadReturn(from)
+    setSheet('download')
+  }, [])
+
+  const changeDownloadMode = useCallback(
+    (mode: DownloadMode) => {
+      setDownloadMode(mode)
+      if (kvRef.current) void kvRef.current.set(DOWNLOAD_MODE_KEY, serializeDownloadMode(mode))
+      showToast(mode === 'inner' ? '已改为应用内下载' : '已改为交给浏览器下载')
+    },
+    [showToast],
+  )
+
+  const changeClipOpen = useCallback(
+    (on: boolean) => {
+      setClipOpen(on)
+      clipOpenRef.current = on
+      if (kvRef.current) void kvRef.current.set(CLIP_OPEN_KEY, serializeClipOpen(on))
+      showToast(on ? '切回 App 时会读取剪贴板' : '已关闭剪贴板直达')
+    },
+    [showToast],
+  )
 
   /** 进入流水线。底栏、仓库详情、仓库主页三处都走这里，保证行为一致 */
   const openPipelines = useCallback(
@@ -1952,9 +2120,10 @@ export default function App() {
 
       {!route && tab === 'hot' && (
         <HotPage
-          client={client}
+          client={client ?? guestClient}
+          readOnly={!client}
           kv={kvRef.current}
-          tokenId={activeId}
+          tokenId={activeId ?? GUEST_ID}
           descOpts={descOpts}
           onOpenRepo={(r) => {
             setDetailRepo(r)
@@ -2015,6 +2184,10 @@ export default function App() {
           native={Capacitor.isNativePlatform()}
           fullscreen={fullscreen}
           onFullscreen={changeFullscreen}
+          downloadMode={downloadMode}
+          onDownloadMode={changeDownloadMode}
+          clipOpen={clipOpen}
+          onClipOpen={changeClipOpen}
           scope={scope}
           onScope={(next) => {
             setScope(next)
@@ -2169,6 +2342,12 @@ export default function App() {
           onOpenWorkflows={() => openPipelines(routeRepo)}
           onOpenSettings={() => pushTo({ kind: 'admin', owner: route.owner, repo: route.repo })}
           onOpenOwner={() => pushTo({ kind: 'user', login: route.owner })}
+          onDownloadArchive={(ref) =>
+            openDownload(
+              archiveTarget({ mirror, owner: route.owner, repo: route.repo, ref }),
+              'none',
+            )
+          }
           onCompose={() =>
             void openCompose(
               route.tab === 'pulls' ? 'pull' : 'issue',
@@ -2588,6 +2767,17 @@ export default function App() {
             setSheet('none')
             pushTo({ kind: 'user', login })
           }}
+          onDownloadArchive={() =>
+            openDownload(
+              archiveTarget({
+                mirror,
+                owner: detailRepo.owner || detailRepo.full_name.split('/')[0],
+                repo: detailRepo.name,
+                ref: detailRepo.default_branch,
+              }),
+              'detail',
+            )
+          }
         />
       )}
 
@@ -2599,6 +2789,19 @@ export default function App() {
           onClose={() => setSheet(subReturn)}
           onToast={showToast}
           onAudit={(detail) => void logAudit('release', detailRepo.full_name, detail)}
+          onDownloadAsset={(release, asset) =>
+            openDownload(
+              assetTarget({
+                mirror,
+                owner: detailRepo.owner || detailRepo.full_name.split('/')[0],
+                repo: detailRepo.name,
+                tag: release.tag_name,
+                asset: asset.name,
+                size: asset.size,
+              }),
+              'releases',
+            )
+          }
         />
       )}
 
@@ -2737,9 +2940,41 @@ export default function App() {
           current={APP_VERSION}
           mirror={mirror}
           mirrorSpeed={currentSpeed}
+          mode={downloadMode}
+          native={Capacitor.isNativePlatform()}
           onOpenMirrors={() => openMirrors('update')}
           onRecheck={() => void runCheck(true)}
+          onDownload={() => {
+            const info = updateResult?.info
+            if (!info?.asset) {
+              showToast('这个版本还没有附带安装包')
+              return
+            }
+            openDownload(
+              apkTarget({
+                mirror,
+                owner: UPDATE_OWNER,
+                repo: UPDATE_REPO,
+                tag: info.tag,
+                asset: info.asset.name,
+                size: info.asset.size,
+                version: info.version,
+              }),
+              'update',
+            )
+          }}
           onClose={() => setSheet('none')}
+        />
+      )}
+
+      {sheet === 'download' && downloadTarget && (
+        <DownloadSheet
+          target={downloadTarget}
+          mode={downloadMode}
+          onMode={changeDownloadMode}
+          onClose={() => setSheet(downloadReturn)}
+          onToast={showToast}
+          auth={client?.authToken ?? null}
         />
       )}
 
@@ -2789,6 +3024,19 @@ export default function App() {
           runId={logsRun.id}
           runTitle={logsRun.title}
           onClose={() => setSheet('run')}
+          onDownloadArtifact={(a) =>
+            openDownload(
+              artifactTarget({
+                owner: logsRun.owner,
+                repo: logsRun.repo,
+                runId: logsRun.id,
+                artifactId: a.id,
+                name: a.name,
+                size: a.size_in_bytes,
+              }),
+              'logs',
+            )
+          }
         />
       )}
 

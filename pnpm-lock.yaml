@@ -17,6 +17,9 @@ importers:
       '@capacitor/browser':
         specifier: ^7.0.5
         version: 7.0.5(@capacitor/core@7.6.10)
+      '@capacitor/clipboard':
+        specifier: ^7.0.4
+        version: 7.0.4(@capacitor/core@7.6.10)
       '@capacitor/core':
         specifier: ^7.0.0
         version: 7.6.10
@@ -165,6 +168,11 @@ packages:
     resolution: {integrity: sha512-8S0h44+339hCJyDw0EWqKz4ivR08tzSY35WzSs49pQ4gNOrGiyKpBUaZc08zlJgvN8yfzMY1pi8QfKDsSn1eHg==}
     engines: {node: '>=20.0.0'}
     hasBin: true
+
+  '@capacitor/clipboard@7.0.4':
+    resolution: {integrity: sha512-+kiTRFjwD5UiWRg/m1JA/0Z0DDdsZLa25MLqI1e3MUi3yNZIwVZV5Oj6v4O0gxmpoBxf5A1L1v3weq+vWOBUuQ==}
+    peerDependencies:
+      '@capacitor/core': '>=7.0.0'
 
   '@capacitor/core@7.6.10':
     resolution: {integrity: sha512-foYHd//t6E3RTELVG8wdkp5jVnmLcHKUurAa9BA8EUSNd2eY0SijCHpfO0bFwYBP5DrCeXwgSFYi3NJw413gtQ==}
@@ -1349,6 +1357,10 @@ snapshots:
       xml2js: 0.6.2
     transitivePeerDependencies:
       - supports-color
+
+  '@capacitor/clipboard@7.0.4(@capacitor/core@7.6.10)':
+    dependencies:
+      '@capacitor/core': 7.6.10
 
   '@capacitor/core@7.6.10':
     dependencies:

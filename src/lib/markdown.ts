@@ -11,12 +11,40 @@
 
 import { resolveImageSrc } from './images'
 
+/**
+ * 行内片段。
+ *
+ * 之前 `[文字](地址)` 在 `inline()` 里被直接替换成 `$1`，地址就地丢失 ——
+ * 结果是自述里所有链接既不是蓝色也点不动。块上多挂一份 spans，
+ * 纯文本 `text` 原样保留，翻译、摘要、缓存的逻辑一行都不用改。
+ */
+export type Span =
+  | { t: 'text'; v: string }
+  | { t: 'code'; v: string }
+  | { t: 'strong'; v: string }
+  | { t: 'em'; v: string }
+  | { t: 'del'; v: string }
+  | { t: 'link'; v: string; href: string }
+
+/**
+ * 行内结构附带的两个字段，直接展开在每个块上而不是用 `&` 交叉 ——
+ * 交叉类型会让 TS 丢掉「对象字面量的隐式索引签名」，导致 Block 不再满足
+ * translate.ts 里的 `BlockLike`（那边靠 `[key: string]: unknown` 遍历字段）。
+ */
 export type Block =
-  | { kind: 'h'; level: number; text: string }
-  | { kind: 'p'; text: string }
-  | { kind: 'li'; text: string; depth: number; ordered: boolean; checked?: boolean }
+  | { kind: 'h'; level: number; text: string; spans?: Span[]; spansFor?: string }
+  | { kind: 'p'; text: string; spans?: Span[]; spansFor?: string }
+  | {
+      kind: 'li'
+      text: string
+      depth: number
+      ordered: boolean
+      checked?: boolean
+      spans?: Span[]
+      spansFor?: string
+    }
   | { kind: 'code'; text: string; lang: string }
-  | { kind: 'quote'; text: string }
+  | { kind: 'quote'; text: string; spans?: Span[]; spansFor?: string }
   | { kind: 'hr' }
   | { kind: 'table'; head: string[]; rows: string[][]; align: ('l' | 'c' | 'r')[] }
   | {
@@ -55,10 +83,119 @@ export function inline(raw: string): string {
   return s.replace(/[ \t]+/g, ' ').trim()
 }
 
+/**
+ * 行内拆分规则。数组顺序即优先级：同一位置命中多条时，靠前的赢。
+ *
+ * 刻意不用后行断言 `(?<!…)` —— iOS 16.4 以前不支持，整个正则字面量
+ * 会直接抛语法错误，表现为「自述整页白屏」。
+ */
+const RULES: { re: RegExp; make: (m: RegExpExecArray) => Span | null }[] = [
+  // 行内代码：里面的 `*` `[` 都不该再生效
+  { re: /`([^`\n]+)`/g, make: (m) => ({ t: 'code', v: m[1] }) },
+  // 徽章整块丢弃，否则会剩一堆空链接文字
+  { re: /\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, make: () => null },
+  // 图片：只留下 alt 文字
+  { re: /!\[([^\]]*)\]\([^)\s]*(?:\s+["'][^"']*["'])?\s*\)/g, make: (m) => (m[1] ? { t: 'text', v: m[1] } : null) },
+  // `<https://…>` 自动链接
+  { re: /<(https?:\/\/[^>\s]+)>/g, make: (m) => ({ t: 'link', v: m[1], href: m[1] }) },
+  // `[文字](地址 "标题")`，地址允许被尖括号包裹
+  {
+    re: /\[([^\]]+)\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g,
+    make: (m) => ({ t: 'link', v: m[1], href: m[2] }),
+  },
+  { re: /(\*\*)(?=\S)([\s\S]*?\S)\1/g, make: (m) => ({ t: 'strong', v: m[2] }) },
+  { re: /(__)(?=\S)([\s\S]*?\S)\1/g, make: (m) => ({ t: 'strong', v: m[2] }) },
+  { re: /~~(?=\S)([\s\S]*?\S)~~/g, make: (m) => ({ t: 'del', v: m[1] }) },
+  // 只认单星号斜体。`_` 在 snake_case 里到处都是，放进来只会误伤
+  { re: /\*(?=\S)([^*\n]*?\S)\*/g, make: (m) => ({ t: 'em', v: m[1] }) },
+  // 裸 HTML 标签：丢掉标签本身，保留中间的文字（由别的规则处理）
+  { re: /<\/?[a-zA-Z][^>]*>/g, make: () => null },
+]
+
+/** 转义占位符：先把 `\*` 这类保护起来，最后再还原，避免被当成标记 */
+const ESCAPE_TOKEN = '\uE000'
+const ESCAPABLE = '\\`*_{}[]()#+-.!~'
+
+function protectEscapes(s: string): string {
+  let out = ''
+  for (let i = 0; i < s.length; i += 1) {
+    if (s[i] === '\\' && i + 1 < s.length && ESCAPABLE.includes(s[i + 1])) {
+      out += ESCAPE_TOKEN + s[i + 1]
+      i += 1
+      continue
+    }
+    out += s[i]
+  }
+  return out
+}
+
+function restoreEscapes(s: string): string {
+  return s.replace(new RegExp(`${ESCAPE_TOKEN}(.)`, 'g'), '$1')
+}
+
+/**
+ * 把一行拆成带结构的片段。
+ *
+ * 扫描方式：每一轮在剩余串里找「最早出现」的规则匹配，命中的那段之前
+ * 一律当纯文字，命中段按规则产出一个 span，然后从它后面继续。
+ * 这样天然支持 `见 **粗体** 和 [链接](url) 混排`，不需要递归下降。
+ */
+export function parseInline(raw: string): Span[] {
+  const s = protectEscapes(raw.replace(/<!--[\s\S]*?-->/g, ''))
+  const out: Span[] = []
+  let buf = ''
+  let i = 0
+
+  const flush = () => {
+    if (!buf) return
+    out.push({ t: 'text', v: restoreEscapes(buf) })
+    buf = ''
+  }
+
+  while (i < s.length) {
+    let best: { at: number; len: number; span: Span | null } | null = null
+    for (const rule of RULES) {
+      rule.re.lastIndex = i
+      const m = rule.re.exec(s)
+      if (!m || m[0].length === 0) continue
+      if (!best || m.index < best.at) best = { at: m.index, len: m[0].length, span: rule.make(m) }
+    }
+    if (!best) {
+      buf += s.slice(i)
+      break
+    }
+    buf += s.slice(i, best.at)
+    flush()
+    if (best.span) out.push(best.span)
+    i = best.at + best.len
+  }
+  flush()
+  return out
+}
+
+/** 片段还原成纯文本（链接只留文字），用来和 block.text 比对 */
+export function spansText(spans: Span[]): string {
+  return spans
+    .map((sp) => sp.v)
+    .join('')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+}
+
+/**
+ * 同时产出纯文本与行内结构。
+ *
+ * `spansFor` 记下当时的纯文本：机翻会把 `text` 换掉但碰不到 spans，
+ * 渲染侧据此判断「这段还是原文吗」，否则译文里会混进一截原文。
+ */
+export function rich(raw: string): { text: string; spans: Span[]; spansFor: string } {
+  const text = inline(raw)
+  return { text, spans: parseInline(raw), spansFor: text }
+}
+
 /** 一行是否只由图片/徽章构成 —— 这类行在 README 顶部极多，整行不留 */
 function isDecorationOnly(raw: string): boolean {
   const stripped = raw
-    .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/g, '')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/<\/?[a-zA-Z][^>]*>/g, '')
@@ -213,8 +350,8 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
     if (para.length === 0) return
     const raw = para.join(' ')
     para = []
-    const text = inline(raw)
-    if (text) blocks.push({ kind: 'p', text })
+    const r = rich(raw)
+    if (r.text) blocks.push({ kind: 'p', ...r })
     // 段落里夹的图单独成块，别让它们跟着文字一起被当纯文本吞掉
     pushImages(raw)
   }
@@ -263,8 +400,8 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
     const htmlHeading = HTML_HEADING.exec(line)
     if (htmlHeading) {
       flushPara()
-      const text = inline(htmlHeading[2])
-      if (text) blocks.push({ kind: 'h', level: Number(htmlHeading[1]), text })
+      const r = rich(htmlHeading[2])
+      if (r.text) blocks.push({ kind: 'h', level: Number(htmlHeading[1]), ...r })
       i += 1
       continue
     }
@@ -272,8 +409,8 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
     const heading = HEADING.exec(line)
     if (heading) {
       flushPara()
-      const text = inline(heading[2])
-      if (text) blocks.push({ kind: 'h', level: heading[1].length, text })
+      const r = rich(heading[2])
+      if (r.text) blocks.push({ kind: 'h', level: heading[1].length, ...r })
       i += 1
       continue
     }
@@ -288,8 +425,8 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
         buf.push(m[1])
         i += 1
       }
-      const text = inline(buf.join(' '))
-      if (text) blocks.push({ kind: 'quote', text })
+      const r = rich(buf.join(' '))
+      if (r.text) blocks.push({ kind: 'quote', ...r })
       continue
     }
 
@@ -302,17 +439,17 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
       const body = m[2]
       // 任务列表：保留勾选状态，Issue 里的清单要能一眼看出哪些做完了
       const task = TASK.exec(body.trim())
-      const text = inline(task ? task[2] : body)
+      const r = rich(task ? task[2] : body)
       // 纯徽章列表项不留
-      if (text && !isDecorationOnly(line)) {
+      if (r.text && !isDecorationOnly(line)) {
         blocks.push({
           kind: 'li',
-          text,
+          ...r,
           depth: Math.min(Math.floor(indent / 2), 3),
           ordered: !!ol,
           ...(task ? { checked: task[1].toLowerCase() === 'x' } : {}),
         })
-      } else if (task && !text) {
+      } else if (task && !r.text) {
         // 只有勾选框没有文字（`- [x]`）也算一条，否则清单会缺行
         blocks.push({ kind: 'li', text: '', depth: 0, ordered: false, checked: task[1].toLowerCase() === 'x' })
       }
@@ -323,13 +460,16 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
     // 表格：本行像表头，下一行是分隔行。Issue/PR 正文与 README 都大量使用
     if (line.includes('|') && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1])) {
       flushPara()
-      const head = splitCells(line).map(inline).slice(0, 6)
+      // 格子里保留原始标记，不在这里 `inline()`：表格里放链接、`代码` 太常见，
+      // 提前清洗会把地址丢掉，渲染层就没法把它们变成可点的东西了。
+      // 纯文本场景（摘要、导出）另行清洗，见 blocksToText / summarize。
+      const head = splitCells(line).slice(0, 6)
       const align = splitCells(lines[i + 1]).map(alignOf).slice(0, 6)
       i += 2
       const rows: string[][] = []
       // 行数封顶，避免有人贴一张几千行的表把界面拖死
       while (i < lines.length && lines[i].includes('|') && lines[i].trim() && rows.length < 60) {
-        rows.push(splitCells(lines[i]).map(inline).slice(0, 6))
+        rows.push(splitCells(lines[i]).slice(0, 6))
         i += 1
       }
       blocks.push({ kind: 'table', head, rows, align })
@@ -377,7 +517,11 @@ export function blocksToText(blocks: Block[]): string {
         case 'img':
           return b.alt ? `[图片：${b.alt}]` : ''
         case 'table':
-          return [b.head.join(' | '), ...b.rows.map((r) => r.join(' | '))].join('\n')
+          // 块里存的是带标记的原文（渲染要拿它解析链接），这里才清洗
+          return [
+            b.head.map(inline).join(' | '),
+            ...b.rows.map((r) => r.map(inline).join(' | ')),
+          ].join('\n')
         default:
           return b.text
       }
@@ -392,7 +536,7 @@ export function summarize(blocks: Block[], maxChars = 120): string {
   let total = 0
   for (const b of blocks) {
     if (b.kind === 'code' || b.kind === 'hr' || b.kind === 'img') continue
-    const t = b.kind === 'table' ? b.head.join(' ') : b.text.trim()
+    const t = b.kind === 'table' ? b.head.map(inline).join(' ') : b.text.trim()
     if (!t) continue
     parts.push(t)
     total += t.length

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
-import { formatSpeed, mirrorLabel, pickReachable, releaseCandidates, releasePageUrl } from '../lib/mirrors'
+import { formatSpeed, mirrorLabel, releasePageUrl } from '../lib/mirrors'
 import {
   formatBytes,
   formatDate,
-  headReachable,
   openExternal,
   UPDATE_OWNER,
   UPDATE_REPO,
   type UpdateCheckResult,
 } from '../lib/update'
+import type { DownloadMode } from '../lib/download'
 import { Icon } from './icons'
 
 export type UpdatePhase = 'checking' | 'latest' | 'found' | 'error'
@@ -21,8 +21,14 @@ interface Props {
   mirror: string
   /** 当前镜像的实测速度（KB/s），没测过为 null */
   mirrorSpeed: number | null
+  /** 下载方式设置：应用内 / 交给浏览器 */
+  mode: DownloadMode
+  /** 是否跑在原生壳里：网页版没有安装能力 */
+  native: boolean
   onOpenMirrors: () => void
   onRecheck: () => void
+  /** 打开统一下载面板（测速、选线、应用内进度都在那里） */
+  onDownload: () => void
   onClose: () => void
 }
 
@@ -38,13 +44,11 @@ function cleanNotes(raw: string): string {
 }
 
 export function UpdateSheet(p: Props) {
-  const [opening, setOpening] = useState(false)
   const [openError, setOpenError] = useState<string | null>(null)
   const [pageBusy, setPageBusy] = useState(false)
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
-    setOpening(false)
     setOpenError(null)
     setPageBusy(false)
     setExpanded(false)
@@ -54,30 +58,10 @@ export function UpdateSheet(p: Props) {
   const notes = info ? cleanNotes(info.notes) : ''
   const showToggle = notes.length > 260 && !expanded
 
-  // 下载地址与页面地址都按「当前镜像」现算：测速换站后不必重新检查更新
-  const downloadUrls =
-    info?.asset != null
-      ? releaseCandidates(p.mirror, UPDATE_OWNER, UPDATE_REPO, info.tag, info.asset.name)
-      : []
+  // 页面地址按「当前镜像」现算：测速换站后不必重新检查更新
   const pageUrl = releasePageUrl(p.mirror, UPDATE_OWNER, UPDATE_REPO, info?.tag)
   const mirrorName = mirrorLabel(p.mirror)
-
-  async function download() {
-    if (downloadUrls.length === 0) return
-    setOpening(true)
-    setOpenError(null)
-    try {
-      // 先 HEAD 探活再唤起浏览器：自建站这类「页面能开、资产偶发 522」的站点会让
-      // 浏览器停在错误页，用户只看到「打不开」。探到能下的那条再交出去；
-      // 探活本身不可靠时（Web 端 CORS）pickReachable 会回退第一条，行为同旧版。
-      const url = await pickReachable(downloadUrls, (u) => headReachable(u))
-      await openExternal(url)
-      setOpening(false)
-    } catch (err) {
-      setOpening(false)
-      setOpenError(`无法唤起浏览器：${(err as Error).message}`)
-    }
-  }
+  const innerReady = p.mode === 'inner' && p.native
 
   async function openPage() {
     setPageBusy(true)
@@ -177,9 +161,9 @@ export function UpdateSheet(p: Props) {
                   <button className="btn ghost" onClick={p.onClose}>
                     稍后
                   </button>
-                  <button className="btn primary" disabled={opening} onClick={() => void download()}>
-                    <Icon name="download" size={14} />
-                    {opening ? '正在选择线路…' : '下载并安装'}
+                  <button className="btn primary" onClick={p.onDownload}>
+                    <Icon name={innerReady ? 'download' : 'external'} size={14} />
+                    {innerReady ? '下载并安装' : '用浏览器下载'}
                   </button>
                 </div>
                 <button className="btn ghost block" style={{ marginTop: 8 }} disabled={pageBusy} onClick={() => void openPage()}>
@@ -187,7 +171,9 @@ export function UpdateSheet(p: Props) {
                   打开发行版页面
                 </button>
                 <div className="hint" style={{ marginTop: 10, textAlign: 'center' }}>
-                  下载完成后点通知即可安装；覆盖安装不会丢失本地令牌与审计日志。
+                  {innerReady
+                    ? '下载面板里会先测速选最快线路，下完直接调起安装器；覆盖安装不会丢失本地令牌与审计日志。'
+                    : '交给浏览器后进度在通知栏，下载完成后点通知即可安装；覆盖安装不会丢失本地令牌与审计日志。'}
                 </div>
               </>
             ) : (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeHeading, buildToc, tocAnchor, tocIndent } from '../toc'
+import { activeHeading, anchorIndexOf, buildToc, slugOf, tocAnchor, tocIndent } from '../toc'
 import type { Block } from '../markdown'
 
 const h = (level: number, text: string): Block => ({ kind: 'h', level, text })
@@ -98,5 +98,53 @@ describe('滚动时高亮哪一节', () => {
     expect(activeHeading(offsets, 310, 0)).toBe(0)
     expect(activeHeading(offsets, 310, 24)).toBe(1)
     expect(activeHeading([], 100)).toBe(-1)
+  })
+})
+
+describe('标题 slug', () => {
+  it('小写并把空白换成连字符', () => {
+    expect(slugOf('Getting Started')).toBe('getting-started')
+  })
+
+  it('去掉标点', () => {
+    expect(slugOf('Q&A: 怎么用？')).toBe('qa-怎么用')
+  })
+
+  it('中文原样保留', () => {
+    expect(slugOf('安装说明')).toBe('安装说明')
+  })
+})
+
+describe('锚点反查块下标', () => {
+  const blocks: Block[] = [h(1, '安装说明'), p('正文'), h(2, 'Getting Started'), h(2, '修复')]
+
+  it('按标题文字找到对应块', () => {
+    expect(anchorIndexOf(blocks, '安装说明')).toBe(0)
+    expect(anchorIndexOf(blocks, '#getting-started')).toBe(2)
+  })
+
+  it('带 # 前缀也认', () => {
+    expect(anchorIndexOf(blocks, '#修复')).toBe(3)
+  })
+
+  it('百分号编码的锚点能解回来', () => {
+    expect(anchorIndexOf(blocks, '%E4%BF%AE%E5%A4%8D')).toBe(3)
+  })
+
+  it('找不到返回 null', () => {
+    expect(anchorIndexOf(blocks, '不存在的节')).toBeNull()
+    expect(anchorIndexOf(blocks, '')).toBeNull()
+    expect(anchorIndexOf(blocks, '#')).toBeNull()
+  })
+
+  it('同名标题按出现顺序编号，与 GitHub 一致', () => {
+    const dup: Block[] = [h(2, '修复'), h(2, '修复'), h(2, '修复')]
+    expect(anchorIndexOf(dup, '修复')).toBe(0)
+    expect(anchorIndexOf(dup, '修复-1')).toBe(1)
+    expect(anchorIndexOf(dup, '修复-2')).toBe(2)
+  })
+
+  it('忽略大小写', () => {
+    expect(anchorIndexOf(blocks, 'GETTING-STARTED')).toBe(2)
   })
 })

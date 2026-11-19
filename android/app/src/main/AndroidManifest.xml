@@ -39,4 +39,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      应用内下载安装包后要调起系统安装器。这是普通权限，不弹对话框，
+      但 Android 8+ 还要求用户在「安装未知应用」里为本应用单独放行，
+      DownloadPlugin.install 会检查并在未放行时跳设置页。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 </manifest>

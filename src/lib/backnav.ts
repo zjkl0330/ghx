@@ -30,6 +30,8 @@ export type SheetName =
   | 'accounts'
   /** 多账号批量动作（同时 star / 同时复刻） */
   | 'multi'
+  /** 统一下载面板（更新包 / 发行版附件 / 源码 ZIP） */
+  | 'download'
 
 /** 首页页签：底栏第一项就是「首页」，返回时回到它 */
 export const HOME_TAB = 'repos'
@@ -58,6 +60,8 @@ export interface BackState {
   subReturn?: SheetName
   /** 多账号面板从哪进来的：详情页还是复刻页 */
   multiReturn?: SheetName
+  /** 下载面板从哪进来的：更新弹层、发行版面板还是仓库详情 */
+  downloadReturn?: SheetName
 }
 
 export type BackAction =
@@ -76,6 +80,7 @@ export function sheetBackTarget(
   mirrorReturn: SheetName = 'none',
   subReturn: SheetName = 'detail',
   multiReturn: SheetName = 'detail',
+  downloadReturn: SheetName = 'none',
 ): SheetName {
   switch (sheet) {
     // 加速站是从更新弹层点进来的，退回去继续看更新说明，而不是整屏收起
@@ -89,6 +94,9 @@ export function sheetBackTarget(
     // 多账号面板可能从详情进来，也可能从复刻页进来，各回各的
     case 'multi':
       return multiReturn
+    // 下载面板三个入口：更新弹层、发行版面板、仓库详情
+    case 'download':
+      return downloadReturn
     case 'run':
       return hasWorkflow ? 'workflow' : 'none'
     case 'logs':
@@ -119,6 +127,7 @@ export function resolveBack(state: BackState): BackAction {
         state.mirrorReturn,
         state.subReturn,
         state.multiReturn,
+        state.downloadReturn,
       ),
     }
   }

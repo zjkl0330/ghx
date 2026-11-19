@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { mirrorImage } from '../lib/images'
 import type { Block } from '../lib/markdown'
+import type { LinkContext } from '../lib/mdlink'
+import { tocAnchor } from '../lib/toc'
+import { SpanText } from './SpanText'
 
 /**
  * 通用 Markdown 渲染（Issue / PR 正文、评论、发行版说明）。
@@ -71,15 +74,25 @@ function MdImage({ b, mirror }: { b: Extract<Block, { kind: 'img' }>; mirror?: s
   )
 }
 
-function Table({ b }: { b: Extract<Block, { kind: 'table' }> }) {
+export function Table({
+  b,
+  ctx,
+  onAnchor,
+}: {
+  b: Extract<Block, { kind: 'table' }>
+  ctx?: LinkContext | null
+  onAnchor?: (id: string) => void
+}) {
+  const alignStyle = (i: number) =>
+    ({ textAlign: b.align[i] === 'r' ? 'right' : b.align[i] === 'c' ? 'center' : 'left' }) as const
   return (
     <div className="md-tablewrap">
       <table className="md-table">
         <thead>
           <tr>
             {b.head.map((h, i) => (
-              <th key={i} style={{ textAlign: b.align[i] === 'r' ? 'right' : b.align[i] === 'c' ? 'center' : 'left' }}>
-                {h}
+              <th key={i} style={alignStyle(i)}>
+                <SpanText text={h} ctx={ctx} onAnchor={onAnchor} />
               </th>
             ))}
           </tr>
@@ -88,11 +101,8 @@ function Table({ b }: { b: Extract<Block, { kind: 'table' }> }) {
           {b.rows.map((row, ri) => (
             <tr key={ri}>
               {b.head.map((_, ci) => (
-                <td
-                  key={ci}
-                  style={{ textAlign: b.align[ci] === 'r' ? 'right' : b.align[ci] === 'c' ? 'center' : 'left' }}
-                >
-                  {row[ci] ?? ''}
+                <td key={ci} style={alignStyle(ci)}>
+                  <SpanText text={row[ci] ?? ''} ctx={ctx} onAnchor={onAnchor} />
                 </td>
               ))}
             </tr>
@@ -103,34 +113,51 @@ function Table({ b }: { b: Extract<Block, { kind: 'table' }> }) {
   )
 }
 
-export function MarkdownView({ blocks, mirror }: { blocks: Block[]; mirror?: string }) {
+export function MarkdownView({
+  blocks,
+  mirror,
+  ctx,
+  onAnchor,
+}: {
+  blocks: Block[]
+  mirror?: string
+  /** 仓库上下文：有它自述里的相对链接才能解析成正确地址 */
+  ctx?: LinkContext | null
+  onAnchor?: (id: string) => void
+}) {
+  const rich = (b: Extract<Block, { kind: 'h' | 'p' | 'li' | 'quote' }>) => (
+    <SpanText text={b.text} spans={b.spans} spansFor={b.spansFor} ctx={ctx} onAnchor={onAnchor} />
+  )
+
   return (
     <div className="md">
       {blocks.map((b, i) => {
         switch (b.kind) {
           case 'h':
             return (
-              <div className={`md-h md-h${Math.min(b.level, 4)}`} key={i}>
-                {b.text}
+              <div className={`md-h md-h${Math.min(b.level, 4)}`} key={i} id={tocAnchor(i)}>
+                {rich(b)}
               </div>
             )
           case 'p':
             return (
               <p className="md-p" key={i}>
-                {b.text}
+                {rich(b)}
               </p>
             )
           case 'li':
             return (
               <div className={`md-li d${b.depth}`} key={i}>
                 <span className="md-bullet">{b.checked !== undefined ? (b.checked ? '☑' : '☐') : b.ordered ? '·' : '•'}</span>
-                <span style={b.checked ? { color: 'var(--text-dim)' } : undefined}>{b.text || '\u00a0'}</span>
+                <span style={b.checked ? { color: 'var(--text-dim)' } : undefined}>
+                  {b.text ? rich(b) : '\u00a0'}
+                </span>
               </div>
             )
           case 'quote':
             return (
               <div className="md-quote" key={i}>
-                {b.text}
+                {rich(b)}
               </div>
             )
           case 'code':
@@ -144,7 +171,7 @@ export function MarkdownView({ blocks, mirror }: { blocks: Block[]; mirror?: str
           case 'img':
             return <MdImage key={i} b={b} mirror={mirror} />
           case 'table':
-            return <Table key={i} b={b} />
+            return <Table key={i} b={b} ctx={ctx} onAnchor={onAnchor} />
           default:
             return null
         }

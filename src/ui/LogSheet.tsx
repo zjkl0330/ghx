@@ -24,6 +24,8 @@ export function LogSheet(p: {
   runId: number
   runTitle: string
   onClose: () => void
+  /** 有它就把产物交给统一下载面板；没接线时退回「打开网页」 */
+  onDownloadArtifact?: (a: Artifact) => void
 }) {
   const [files, setFiles] = useState<LogFile[]>([])
   const [active, setActive] = useState(0)
@@ -130,11 +132,14 @@ export function LogSheet(p: {
                 <button
                   className="linkrow"
                   disabled={a.expired}
-                  onClick={() =>
-                    void openExternal(
-                      `https://github.com/${p.owner}/${p.repo}/actions/runs/${p.runId}/artifacts/${a.id}`,
-                    )
-                  }
+                  onClick={() => {
+                    // 产物下载必须带令牌，网页那条路对打不开 github.com 的人是死路
+                    if (p.onDownloadArtifact) p.onDownloadArtifact(a)
+                    else
+                      void openExternal(
+                        `https://github.com/${p.owner}/${p.repo}/actions/runs/${p.runId}/artifacts/${a.id}`,
+                      )
+                  }}
                 >
                   <span className="linkrow-main">
                     <b>{a.name}</b>

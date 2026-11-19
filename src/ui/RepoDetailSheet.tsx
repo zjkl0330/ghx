@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { repoPageUrl } from '../lib/mirrors'
-import { archiveCandidates, archiveFileName } from '../lib/archive'
+import { archiveFileName } from '../lib/archive'
 import type { GitHubClient } from '../lib/api'
 import type { AuditEntry, Repo, Visibility } from '../lib/types'
 import { parseTopics, topicsToInput } from '../lib/topics'
-import { openArchive, openExternal } from '../lib/update'
+import { openExternal } from '../lib/update'
 import { Icon, type IconName } from './icons'
 
 interface Props {
@@ -36,6 +36,8 @@ interface Props {
   starTick?: number
   /** 点头像/账号名进入这个 owner 的主页；组织同样适用 */
   onOpenOwner?: () => void
+  /** 下载源码 ZIP：开统一下载面板（测速选线在那边，和安装包共用一套） */
+  onDownloadArchive?: () => void
 }
 
 function relTime(iso: string): string {
@@ -392,7 +394,14 @@ export function RepoDetailSheet(p: Props) {
             '下载源码 ZIP',
             `${archiveFileName(name, p.repo.default_branch)} · 默认分支 ${p.repo.default_branch}`,
             async () => {
-              await openArchive(archiveCandidates(p.mirror, owner, name, p.repo.default_branch))
+              if (p.onDownloadArchive) {
+                p.onDownloadArchive()
+                return
+              }
+              // 没接下载面板时（老调用方）退回旧的打包地址
+              await openExternal(
+                `https://github.com/${owner}/${name}/archive/refs/heads/${p.repo.default_branch}.zip`,
+              )
               p.onToast('已交给浏览器下载，可在通知栏看进度')
             },
           )}

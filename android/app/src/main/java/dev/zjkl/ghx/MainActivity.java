@@ -21,6 +21,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // 自定义插件要在 super 之前登记：BridgeActivity 在 onCreate 里就把 Bridge 建好了。
         registerPlugin(ImmersivePlugin.class);
+        registerPlugin(DownloadPlugin.class);
 
         // 必须先 super：BridgeActivity 会在这里把主题从启动屏主题切到 AppTheme.NoActionBar，
         // 切换会重新 apply 一遍窗口属性。反过来先设窗口再 super，颜色会被主题覆盖回去。

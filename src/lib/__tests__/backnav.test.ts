@@ -49,6 +49,21 @@ describe('sheetBackTarget', () => {
     expect(sheetBackTarget('multi', false, 'none', 'detail', 'forks')).toBe('forks')
   })
 
+  it('下载面板按来时的层级退回：更新弹层 / 发行版 / 详情', () => {
+    expect(sheetBackTarget('download', false, 'none', 'detail', 'detail', 'update')).toBe('update')
+    expect(sheetBackTarget('download', false, 'none', 'detail', 'detail', 'releases')).toBe('releases')
+    expect(sheetBackTarget('download', false, 'none', 'detail', 'detail', 'detail')).toBe('detail')
+    // 从仓库主页进来时没有上一层弹层，直接收起
+    expect(sheetBackTarget('download', false)).toBe('none')
+  })
+
+  it('返回键把下载面板交给它自己的来源层级', () => {
+    expect(resolveBack(state({ sheet: 'download', downloadReturn: 'update' }))).toEqual({
+      kind: 'sheet',
+      to: 'update',
+    })
+  })
+
   it('其余弹层一律收起', () => {
     const others: SheetName[] = [
       'add',

@@ -145,10 +145,23 @@ export class GitHubClient {
   scopes: string[] = []
 
   constructor(opts: ClientOptions) {
-    this.token = opts.token
+    // 空令牌 = 匿名客户端，只读公开数据（热门、搜索、仓库页）。
+    // 必须真的空着，不能留着 `Bearer ` 这个半截头 —— GitHub 见到它会直接 401 Bad credentials，
+    // 而不是按匿名请求处理。
+    this.token = (opts.token ?? '').trim()
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
     this.retryDelayMs = opts.retryDelayMs ?? 400
+  }
+
+  /** 有令牌才带 Authorization。没令牌时裸发，走 GitHub 的匿名配额。 */
+  private authHeaders(): Record<string, string> {
+    return this.token ? { Authorization: `Bearer ${this.token}` } : {}
+  }
+
+  /** 匿名客户端没有写权限，界面据此收起 star / 新建这类按钮 */
+  get anonymous(): boolean {
+    return this.token.length === 0
   }
 
   /**
@@ -224,7 +237,7 @@ export class GitHubClient {
         ...init,
         headers: {
           Accept: 'application/vnd.github+json',
-          Authorization: `Bearer ${this.token}`,
+          ...this.authHeaders(),
           'X-GitHub-Api-Version': '2022-11-28',
           ...(init.body ? { 'Content-Type': 'application/json' } : {}),
           ...(stale?.etag ? { 'If-None-Match': stale.etag } : {}),
@@ -287,7 +300,7 @@ export class GitHubClient {
       {
         headers: {
           Accept: opts.accept ?? 'application/vnd.github.raw',
-          Authorization: `Bearer ${this.token}`,
+          ...this.authHeaders(),
           'X-GitHub-Api-Version': '2022-11-28',
         },
       },
