@@ -704,6 +704,8 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .row-name {
@@ -713,6 +715,9 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 和简介同一条约束：别指望老内核对 flex item 自动给 min-width: 0 */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .badge {
@@ -755,27 +760,48 @@ textarea {
 }
 
 /*
- * 简介一行放下，超出省略；「译」标单独占一格，不能跟着文字一起被裁掉。
- * 之前把标记塞在文本流里，长句子一省略，标就消失在省略号后面了。
+ * 简介一行放下，超出省略；「译」标钉在行尾。
+ *
+ * 原来这里是 flex：`.desc-text` 靠 `min-width: 0` 收缩。标准内核没问题，
+ * 但华为的 WebView 不认这条 —— nowrap 的文本按 max-content 排到 1900px，
+ * 整行顶出屏幕，用户看到就是「长描述不折叠、突出屏幕一大截」。
+ *
+ * 所以改成块级容器 + overflow 裁剪：宽度只由父级决定，完全不参与 flex
+ * 的收缩计算。这是 CSS 里最老的行为，老内核也不会算错。
+ * 纯文本调用方（个人页、工作流路径）直接往 .row-desc 里塞文字，所以裁剪
+ * 规则在 .row-desc 和 .desc-text 上各写一份。
  */
 .row-desc {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+  display: block;
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 11px;
   color: var(--text-dim);
   margin-top: 3px;
 }
 
 .row-desc .desc-text {
-  min-width: 0;
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
+/* 有「译」标时给文本让出右侧位置，省略号正好停在它左边 */
+.row-desc.with-mark .desc-text {
+  padding-right: 26px;
+}
+
+/* 绝对定位后「译」标不参与文本流：文本再长也推不走它，也盖不住它 */
 .row-desc .tr-mark {
-  flex: none;
+  position: absolute;
+  top: 0;
+  right: 0;
   margin-left: 0;
 }
 
@@ -1949,6 +1975,8 @@ h1.title {
   flex-direction: column;
   gap: 3px;
   text-align: left;
+  /* 兜底：行内任何一处算宽了，也裁在行里，不许顶到屏幕外 */
+  overflow: hidden;
 }
 
 .row-owner {

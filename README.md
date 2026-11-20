@@ -14,14 +14,16 @@ Android 上的 GitHub 本地控制台。不给网页版当壳，直接调 REST A
 
 国内访问 github.com 网页经常失败，但 `api.github.com` 通常还是通的。网页打不开 → 改不了仓库可见度、管不了令牌。ghx 就是补这个缺口：用一个装在本机的 App，通过 API 完成这些管理动作，不依赖任何后端服务。
 
-## 这一版改了什么（v0.8.5）
+## 这一版改了什么（v0.8.6）
 
 | 改动 | 说明 |
 |---|---|
-| **复制不再冒红字** | 「复制仓库地址」以前直接调 `navigator.clipboard.writeText`。华为 EMUI 的 WebView 把这个接口整个裁掉了，于是抛 `Cannot read properties of undefined (reading 'writeText')`，弹层把错误原样接住、染红显示 —— 你在手机上看到的那串红字就是它。现在统一走三条通道：**系统剪贴板**（`@capacitor/clipboard`，包装了却一直没接上）→ `navigator.clipboard` → `execCommand` |
-| **判断类型再取值** | 老内核里 `navigator.clipboard` 是 `undefined`，`typeof` 判断必须在取值之前 —— 这一步漏了，兜底代码也会一起崩 |
-| **全挂也给中文兜底** | 三条通道都不通时，按钮正下方摊开完整地址、可长按选中，提示「复制失败，长按下面那行地址」。不再把英文堆栈甩到界面上 |
-| **一处改、处处生效** | Gist 链接、文件内容、代码页路径这些复制入口本来就走同一个 `copyText`，一并对齐到新通道 |
+| **长简介不再顶出屏幕** | 列表行原来用 flex 布局，靠 `.desc-text` 的 `min-width: 0` 收缩。华为的 WebView 不认这条 —— 机翻后的长中文（`nowrap`、没有空格）按 max-content 排到 **1900px**，整行冲出屏幕，右侧直接看不见，实测旧写法在同一条件下被撑到 **2018px**。现在换成块级容器 + `overflow` 裁剪，宽度只由父级决定，不参与 flex 收缩计算 |
+| **「译」标钉在行尾** | 改绝对定位，不占文本流：文本再长也推不走它，也不会被省略号一起吞掉；有标记时文本让出 26px，省略号正好停在它左边 |
+| **极长仓库名同样加固** | `a-very-long-repository-name-that-keeps-going…` 这种名字是同一个病根，`.row-l1` 与 `.row-name` 补上显式收缩约束 |
+| **行级兜底** | `.row-hit` 加 `overflow: hidden`：行内任何一处算宽了也裁在行里，不许顶到屏幕外 |
+
+上一版（v0.8.5）的内容仍在：「复制仓库地址」改走三条通道（原生剪贴板 → `navigator.clipboard` → `execCommand`），华为 WebView 上不再抛英文错误；三条全挂时摊开可长按的地址。
 
 上一版（v0.8.4）的内容仍在：一页 25 个仓库的 `APK`/`EXE` 标记合并成 **1 次 GraphQL 调用**（1 点、0.77 秒，走 GraphQL 自己的配额池，REST 一个点都不动），空结果也缓存 24 小时，批量不通时只把这一批退回逐条，单个别名出错不牵连整批。
 

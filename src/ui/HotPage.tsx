@@ -461,7 +461,7 @@ export function HotPage(p: Props) {
                       <span className="row-name">{r.name}</span>
                     </span>
                     {(zh ?? r.description) && (
-                      <span className="row-desc">
+                      <span className={`row-desc${zh ? ' with-mark' : ''}`}>
                         <span className="desc-text">{zh ?? r.description}</span>
                         {zh && <span className="tr-mark">译</span>}
                       </span>

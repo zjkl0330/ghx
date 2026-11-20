@@ -279,7 +279,7 @@ export function RepoList(p: Props) {
                       const text = zh ?? r.description
                       if (!text) return null
                       return (
-                        <span className="row-desc">
+                        <span className={`row-desc${zh ? ' with-mark' : ''}`}>
                           <span className="desc-text">{text}</span>
                           {zh && <span className="tr-mark">译</span>}
                         </span>

@@ -422,6 +422,15 @@ user / notifications / search / profile / settings / tokens / audit
   - 单测 1210 → 1218（`clipboard.test.ts` 8 条，测的是 `copyWithDeps` 的通道选择与错误聚合，注入 fake，不碰真实插件）。
   - **仍未验证**：真机华为上的实际表现。沙箱只能模拟「接口不存在」，模拟不出它其余的内核怪癖；但原生通道不经过 WebView，理论上不受影响。
 
+- **v0.8.6**：长简介（尤其机翻后的中文）在华为上顶出屏幕。
+  - **根因还是「别指望老内核认 flex 的 min-width: 0」**。`.row-desc` 是 flex，`.desc-text` 靠 `min-width: 0` 收缩；标准内核正常，华为的 WebView 不认，`white-space: nowrap` 且没有空格的中文按 max-content 排开，整行被顶宽。实测对照：旧写法在同一注入条件下 `.row` 被撑到 **2018px**，屏宽 390。
+  - **改法是「不依赖 flex 收缩」，不是再加一条 min-width**。`.row-desc` 改 `display: block` + `overflow: hidden` + `text-overflow: ellipsis`，`.desc-text` 同样是块级裁剪 —— 块级宽度只由父级决定，这是 CSS 里最老的行为，老内核算不错。纯文本调用方（个人页、工作流路径）直接往 `.row-desc` 里塞文字，所以裁剪规则在两处各写一份。
+  - **「译」标必须脱离文本流**。原来靠 flex 分栏，现在 `.tr-mark` 绝对定位到 `right: 0`；有标记时给 `.desc-text` 加 `padding-right: 26px`（类名 `with-mark`，由 JSX 按有无译文决定），省略号正好停在标记左边，不需要给标记加背景去遮文字。
+  - **`.row-hit` 加 `overflow: hidden` 是兜底**，不是主修法。它会把「算宽了」的结果裁在行里；但只有兜底、没有块级裁剪时，文本是被硬切掉而不是显示省略号，所以两条都要。
+  - 副作用：`UserPage` 的仓库简介原来是可折行的（那边没套 `.desc-text`，`white-space` 继承 normal），现在统一成单行省略。一致，且不会再撑宽，接受。
+  - 实测（`scripts/verify-overflow.py`，390×844，mock 3 个仓库 = 长中文 + 80 字符仓库名 + 长英文，Edge 翻译端点 mock 成长中文以便真的出现「译」标）：A 三页（仓库/星标/热门）文档 390/390、3 行全在屏内、3 行都出现省略、译标 1 个；B 注入 `min-width: auto`（模拟老内核不收缩）仍不溢出；C 旧 flex 写法在同样注入下 3 行被撑到 2018px —— 证明 B 的通过不是假阳性。截图 `docs/screenshots/overflow-085-*.png`。
+  - **仍未验证**：真机华为。沙箱只能模拟「min-width 不生效」这一条，模拟不出它其它内核怪癖。
+
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）
