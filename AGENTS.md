@@ -412,6 +412,16 @@ user / notifications / search / profile / settings / tokens / audit
   - 实测（`scripts/verify-batch.py`，mock 24 个仓库、拦真实请求计数）：GraphQL 正常 → `/graphql` **1 次**、`/releases` **0 次**、徽标 3 APK / 2 EXE；GraphQL 回 500 → `/graphql` 1 次 + `/releases` **24 次**回落、徽标仍是 3/2（降级不能变成没有）。单测 1181 → 1210（`graphql` 23 条 + `api` 的 `graphql()` 6 条）。
   - **仍未验证**：fine-grained 令牌只授 `metadata: read` 时 `releases` 字段的行为（可能回空 nodes，被判成「没有包」）。REST 路径有同样的权限前提，这一版没有额外劣化，但也没实测。
 
+- **v0.8.5**：复制仓库地址在华为上冒红字。
+  - **根因是「写剪贴板没走原生」**。`RepoDetailSheet` 里那一行直连 `navigator.clipboard.writeText`，没兜底也没 `try`。华为 EMUI 的 WebView 把这个接口整个裁掉，于是抛 `Cannot read properties of undefined (reading 'writeText')`，被 `run()` 的 catch 接住塞进 `setError`，`.errline` 用的是 `var(--red)` —— 用户看到的那串红字就是这个。
+  - **补 try/catch 不算修好**。只吞掉错误，地址还是复制不出来。真正的解是接上 `@capacitor/clipboard`：依赖早就装了、`capacitor.plugins.json` 里也注册了、读剪贴板（`Clipboard.read`）一直在用它，唯独写走的是 web API。
+  - **判断必须在取值之前**。老内核里 `navigator.clipboard` 是 `undefined`，`api && typeof api.writeText === 'function'` 这样写才安全；而且访问 `navigator.clipboard` 这个 getter 本身在某些内核会抛，取值也要包在 try 里。
+  - 三条通道顺序：原生 → `navigator.clipboard` → `execCommand`。`execCommand` 路径里 `focus()` 不能省，华为 WebView 上不 focus 时选区是空的，会「复制成功但内容是空串」。
+  - **兜底块的位置要贴按钮**。第一版把它渲染在弹层顶部（errline 旁边），截图一看：按钮在列表中部，点完根本看不到那块。现在插在「复制仓库地址」这一行下面，当 `.acts` 里的一整行做，接上分割线。
+  - 实测（`scripts/verify-copy.py`，390×844，mock，xvfb）：①正常内核复制成功、剪贴板精确等于 `https://github.com/zjkl0330/clist-cf`、红字 0 行；②把 `navigator.clipboard` 用 `defineProperty` 置成 `undefined` 模拟华为 → 走 `execCommand` 仍复制成功、红字 0 行；③再让 `document.execCommand` 返回 false → 出现可长按兜底块、提示是中文、红字仍是 0 行；④在同一环境里跑旧写法，复现出 `Cannot read properties of undefined (reading 'writeText')` —— 这条是根因证据，不是猜测。截图 `docs/screenshots/copy-085-*.png`。
+  - 单测 1210 → 1218（`clipboard.test.ts` 8 条，测的是 `copyWithDeps` 的通道选择与错误聚合，注入 fake，不碰真实插件）。
+  - **仍未验证**：真机华为上的实际表现。沙箱只能模拟「接口不存在」，模拟不出它其余的内核怪癖；但原生通道不经过 WebView，理论上不受影响。
+
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）

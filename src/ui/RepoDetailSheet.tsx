@@ -5,6 +5,7 @@ import type { GitHubClient } from '../lib/api'
 import type { AuditEntry, Repo, Visibility } from '../lib/types'
 import { parseTopics, topicsToInput } from '../lib/topics'
 import { openExternal } from '../lib/update'
+import { copyText } from '../lib/clipboard'
 import { Icon, type IconName } from './icons'
 
 interface Props {
@@ -81,6 +82,8 @@ export function RepoDetailSheet(p: Props) {
   const [editError, setEditError] = useState<string | null>(null)
   /** 机翻简介旁边给一个「看原文」的开关，别让人以为原文就是这样 */
   const [showSrc, setShowSrc] = useState(false)
+  /** 三条剪贴板通道都挂了，就把地址摊开让人长按选中 */
+  const [copyFallback, setCopyFallback] = useState(false)
 
   const owner = p.repo.owner
   const name = p.repo.name
@@ -384,9 +387,26 @@ export function RepoDetailSheet(p: Props) {
               这个 App 里没有终端，拿到 git@… 或 .git 结尾的地址没地方用；
               仓库地址可以直接粘进浏览器、分享给别人，也能让 git 自己补 .git。 */}
           {action('repo-url', 'copy', '复制仓库地址', `https://github.com/${p.repo.full_name}`, async () => {
-            await navigator.clipboard.writeText(`https://github.com/${p.repo.full_name}`)
-            p.onToast('仓库地址已复制')
+            // 走 copyText 的三条通道（原生 → navigator.clipboard → execCommand）。
+            // 以前这里直连 navigator.clipboard，华为 WebView 上那是 undefined，
+            // 抛出的英文报错会被 run() 接到、原样染红显示在弹层里。
+            const url = `https://github.com/${p.repo.full_name}`
+            if (await copyText(url)) {
+              setCopyFallback(false)
+              p.onToast('仓库地址已复制')
+              return
+            }
+            setCopyFallback(true)
+            p.onToast('复制失败，长按下面那行地址')
           })}
+
+          {/* 就贴在复制按钮下面：整页操作很多，放在弹层顶部等于看不见 */}
+          {copyFallback && (
+            <div className="url-fallback">
+              <span>复制失败，长按选中：</span>
+              <code>{`https://github.com/${p.repo.full_name}`}</code>
+            </div>
+          )}
 
           {action(
             'zip',
