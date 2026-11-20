@@ -94,6 +94,8 @@ export function DashboardPage(p: {
   /** 作为二级页面时给返回按钮；作为底栏页签时不给 */
   onBack?: () => void
   onOpenRepo: (full: string) => void
+  /** 点「已归档」直接跳到列表的归档档 —— 知道有几个却找不到，比不知道更难受 */
+  onOpenArchived?: () => void
 }) {
   const [data, setData] = useState<Loaded | null>(null)
   const [loading, setLoading] = useState(true)
@@ -352,9 +354,12 @@ export function DashboardPage(p: {
                   ]}
                 />
                 <div className="dash-facts">
-                  <div>
+                  <div
+                    onClick={p.onOpenArchived}
+                    style={p.onOpenArchived && dash.counts.archived > 0 ? { cursor: 'pointer' } : undefined}
+                  >
                     <b>{dash.counts.archived}</b>
-                    <span>已归档</span>
+                    <span>已归档{dash.counts.archived > 0 && p.onOpenArchived ? ' ›' : ''}</span>
                   </div>
                   <div>
                     <b>{dash.counts.withTopics}</b>

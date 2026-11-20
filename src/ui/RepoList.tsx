@@ -3,6 +3,7 @@ import { isPinned } from '../lib/pins'
 import type { PkgKind } from '../lib/rel-badge'
 import { snapshotAge } from '../lib/snapshot'
 import type { RepoSort } from '../lib/sort'
+import type { RepoFilterVisibility } from '../lib/repos'
 import type { Repo } from '../lib/types'
 import { Icon } from './icons'
 
@@ -52,9 +53,10 @@ interface Props {
   error: string | null
   query: string
   onQuery: (v: string) => void
-  visibility: 'all' | 'public' | 'private'
-  onVisibility: (v: 'all' | 'public' | 'private') => void
-  counts: { total: number; public: number; private: number }
+  visibility: RepoFilterVisibility
+  onVisibility: (v: RepoFilterVisibility) => void
+  /** live 不含归档：「全部」这个数字必须等于点进去能看到的行数 */
+  counts: { total: number; public: number; private: number; archived: number; live: number }
   selectMode: boolean
   selected: Set<string>
   onToggleSelect: (repo: Repo) => void
@@ -173,9 +175,13 @@ export function RepoList(p: Props) {
         <div className="seg" style={{ margin: 0, flex: 1 }}>
           {(
             [
-              ['all', `全部 ${p.counts.total}`],
+              ['all', `全部 ${p.counts.live}`],
               ['public', `公开 ${p.counts.public}`],
               ['private', `私有 ${p.counts.private}`],
+              // 一个归档都没有时不占位置：绝大多数账号永远看不到这一档
+              ...(p.counts.archived > 0
+                ? ([['archived', `归档 ${p.counts.archived}`]] as const)
+                : []),
             ] as const
           ).map(([key, label]) => (
             <button
@@ -228,8 +234,12 @@ export function RepoList(p: Props) {
 
         {!p.loading && p.repos.length === 0 && !p.error && (
           <div className="empty">
-            <b>没有匹配的仓库</b>
-            {p.hasToken ? '换个筛选条件，或点右上角刷新。' : '点左上角头像进「令牌保险库」，导入一个 PAT。'}
+            <b>{p.visibility === 'archived' ? '没有归档的仓库' : '没有匹配的仓库'}</b>
+            {!p.hasToken
+              ? '点左上角头像进「令牌保险库」，导入一个 PAT。'
+              : p.visibility === 'archived'
+                ? '归档过的仓库会出现在这里，点进去可以随时取消归档。'
+                : '换个筛选条件，或点右上角刷新。'}
           </div>
         )}
 

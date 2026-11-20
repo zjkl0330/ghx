@@ -347,7 +347,9 @@ export function RepoDetailSheet(p: Props) {
               'archive',
               'archive',
               p.repo.archived ? '取消归档' : '归档仓库',
-              p.repo.archived ? '归档后仓库只读' : '归档后变为只读，可随时撤销',
+              // 已归档时说的是「撤销会怎样」，别再写「归档后变只读」——
+              // 那句话读起来像正要执行归档，两个方向正好读反
+              p.repo.archived ? '恢复后可继续提交、开 Issue' : '归档后变为只读，可随时撤销',
               async () => {
                 if (!p.client) throw new Error('未连接令牌')
                 const next = !p.repo.archived

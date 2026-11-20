@@ -43,7 +43,7 @@ export function SortSheet(p: Props) {
         </div>
 
         <div className="hint" style={{ marginTop: 10 }}>
-          选择会记住，下次打开沿用。归档仓库默认不列出，与排序无关。
+          选择会记住，下次打开沿用。归档仓库不在「全部」里，切到上方「归档」那一档才看得到。
         </div>
       </div>
     </div>

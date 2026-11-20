@@ -45,6 +45,7 @@ import {
   filterRepos,
   type BatchAction,
   type BatchPlanItem,
+  type RepoFilterVisibility,
 } from './lib/repos'
 import { popRoute, pushRoute, replaceTop, repoOf, routeKey, type Route } from './lib/routes'
 import { listBranches } from './lib/refs'
@@ -320,7 +321,7 @@ export default function App() {
   const [routeStack, setRouteStack] = useState<Route[]>([])
   const route = routeStack[routeStack.length - 1] ?? null
   const [query, setQuery] = useState('')
-  const [visibility, setVisibility] = useState<'all' | 'public' | 'private'>('all')
+  const [visibility, setVisibility] = useState<RepoFilterVisibility>('all')
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   /** 本地置顶的仓库，按账号分开存 */
@@ -2113,13 +2114,13 @@ export default function App() {
 
   const counts = useMemo(() => {
     const c = countBy(repos)
-    return { total: c.total, public: c.public, private: c.private }
+    return { total: c.total, public: c.public, private: c.private, archived: c.archived, live: c.live }
   }, [repos])
 
   const filtered = useMemo(
     () =>
       applyPins(
-        sortRepos(filterRepos(repos, { query, visibility, includeArchived: false }), sort),
+        sortRepos(filterRepos(repos, { query, visibility }), sort),
         pins,
       ),
     [repos, query, visibility, sort, pins],
@@ -2346,6 +2347,11 @@ export default function App() {
             const [owner, repo] = full.split('/')
             if (!owner || !repo) return
             pushTo({ kind: 'repo', owner, repo, tab: 'code' })
+          }}
+          onOpenArchived={() => {
+            setTab('repos')
+            setVisibility('archived')
+            showToast('已切到归档仓库')
           }}
         />
       )}

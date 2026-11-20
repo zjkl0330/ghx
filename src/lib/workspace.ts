@@ -7,6 +7,7 @@
  * 这里只做不可变的表操作，不碰 React 也不碰存储，方便单测。
  */
 
+import type { RepoFilterVisibility } from './repos'
 import type { Route } from './routes'
 import type { RepoSort } from './sort'
 import type { Repo } from './types'
@@ -18,7 +19,7 @@ export interface Workspace {
   /** 列表来自本地快照的时间戳；null 表示就是刚拉的 */
   snapshotAt: number | null
   query: string
-  visibility: 'all' | 'public' | 'private'
+  visibility: RepoFilterVisibility
   sort: RepoSort
   unread: number
   /** 置顶的仓库（full_name） */

@@ -94,9 +94,19 @@ export function planBatch(repos: Repo[], action: BatchAction): BatchPlanItem[] {
 }
 
 
+/**
+ * 仓库列表的筛选档位。
+ *
+ * `archived` 单独成档，而不是做成「全部 + 含归档」的开关。归档仓库是只读的：
+ * 混在在用仓库里那一列，点进去发现提交、开 issue、发版全灰，比找不到更难受。
+ * 分开一档，找得到、也不挡路。
+ */
+export type RepoFilterVisibility = 'all' | 'public' | 'private' | 'archived'
+
 export interface RepoFilter {
   query?: string
-  visibility?: 'all' | 'public' | 'private'
+  visibility?: RepoFilterVisibility
+  /** 兼容旧调用：为真时「全部/公开/私有」里也带上归档仓库 */
   includeArchived?: boolean
 }
 
@@ -118,8 +128,14 @@ export function normalizeRepo(raw: RawRepo): Repo {
 /** 纯函数：本地筛选，不发请求。查询同时匹配 name 与 description。 */
 export function filterRepos(repos: Repo[], filter: RepoFilter = {}): Repo[] {
   const q = (filter.query ?? '').trim().toLowerCase()
+  // 归档档与其余档互斥：进归档档就只看归档，否则默认把归档排除在外
+  const onlyArchived = filter.visibility === 'archived'
   return repos.filter((r) => {
-    if (!filter.includeArchived && r.archived) return false
+    if (onlyArchived) {
+      if (!r.archived) return false
+    } else if (!filter.includeArchived && r.archived) {
+      return false
+    }
     if (filter.visibility === 'public' && r.private) return false
     if (filter.visibility === 'private' && !r.private) return false
     if (!q) return true
@@ -131,11 +147,25 @@ export function filterRepos(repos: Repo[], filter: RepoFilter = {}): Repo[] {
   })
 }
 
+/**
+ * 各档位的数量。
+ *
+ * 公开 / 私有 / 全部 都**不含归档**，三者必须能对上：归档仓库单独一档，
+ * 混进公开里会让「公开 3 + 私有 1」和「全部 2」当场打起来。
+ * `total` 是账户真实总数（含归档），用在「你有多少仓库」这类口径上。
+ */
 export function countBy(repos: Repo[]) {
   const total = repos.length
-  const privateCount = repos.filter((r) => r.private).length
-  const archived = repos.filter((r) => r.archived).length
-  return { total, private: privateCount, public: total - privateCount, archived }
+  const live = repos.filter((r) => !r.archived)
+  const archived = total - live.length
+  const privateCount = live.filter((r) => r.private).length
+  return {
+    total,
+    private: privateCount,
+    public: live.length - privateCount,
+    archived,
+    live: live.length,
+  }
 }
 
 /**

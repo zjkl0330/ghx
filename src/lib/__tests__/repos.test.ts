@@ -60,8 +60,55 @@ describe('filterRepos', () => {
     expect(filterRepos(repos, { query: '示例', includeArchived: true })).toHaveLength(3)
   })
 
-  it('countBy 统计公开与私有', () => {
-    expect(countBy(repos)).toEqual({ total: 3, private: 1, public: 2, archived: 1 })
+  /*
+   * 归档档。
+   *
+   * 这一档存在的唯一理由：归档仓库以前在界面上完全看不见 —— 归档完就等于丢了，
+   * 想取消归档只能去 GitHub 网页。它不是「全部 + 含归档」的开关，因为归档后
+   * 仓库只读，混在在用仓库里点进去什么都改不了。
+   */
+  describe('归档档', () => {
+    it('只看归档，且与公开/私有互斥', () => {
+      expect(filterRepos(repos, { visibility: 'archived' }).map((r) => r.name)).toEqual(['c'])
+    })
+
+    it('归档档里也能搜索', () => {
+      expect(filterRepos(repos, { visibility: 'archived', query: 'C' })).toHaveLength(1)
+      expect(filterRepos(repos, { visibility: 'archived', query: 'a' })).toHaveLength(0)
+    })
+
+    it('归档档不会把在用的仓库带出来', () => {
+      const list = filterRepos(repos, { visibility: 'archived' })
+      expect(list.every((r) => r.archived)).toBe(true)
+    })
+
+    it('旧参数 includeArchived 仍然可用', () => {
+      expect(filterRepos(repos, { includeArchived: true })).toHaveLength(3)
+      expect(filterRepos(repos, { visibility: 'public', includeArchived: true })).toHaveLength(2)
+    })
+  })
+
+  /*
+   * 数字必须自洽。
+   *
+   * 以前公开/私有把归档也算进去，于是「公开 2 + 私有 1」和「全部 2」对不上 ——
+   * 用户看到的第一反应就是「有个仓库丢了」。
+   */
+  it('countBy 把归档单独拎出来，公开 + 私有 = 全部', () => {
+    expect(countBy(repos)).toEqual({ total: 3, private: 1, public: 1, archived: 1, live: 2 })
+  })
+
+  it('没有归档时全部就等于总数', () => {
+    const live = repos.filter((r) => !r.archived)
+    const c = countBy(live)
+    expect(c.live).toBe(c.total)
+    expect(c.public + c.private).toBe(c.total)
+    expect(c.archived).toBe(0)
+  })
+
+  it('全是归档时全部为 0，但总数不为 0', () => {
+    const c = countBy([repos[2]])
+    expect(c).toEqual({ total: 1, private: 0, public: 0, archived: 1, live: 0 })
   })
 })
 
