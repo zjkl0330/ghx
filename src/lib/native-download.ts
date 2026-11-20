@@ -14,6 +14,8 @@
  */
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
+import type { DownloadKind } from './download'
+import { parsePendingDownload, type PendingDownload } from './dl-history'
 
 export interface NativeProgress {
   bytes: number
@@ -34,6 +36,31 @@ export interface InstallResult {
   needPermission?: boolean
 }
 
+/**
+ * 原生侧的下载快照。
+ *
+ * `running` 是「现在有没有在跑」，`hasResult` 是「上一次留下了结果」。
+ * 两者互斥：跑的时候结果被清空，结束后 running 变 false、结果才出现。
+ *
+ * 为什么要这个查询：熄屏、切后台、WebView 被系统回收重建之后，
+ * 原来那个 `download()` 的 Promise 已经跟着页面一起没了，下载却还在继续。
+ * 回来时只能问一句「现在什么情况」。
+ */
+export interface NativeStatus {
+  running: boolean
+  hasResult: boolean
+  bytes: number
+  total: number
+  kbps: number
+  fileName: string
+  /** 成功时才有 */
+  path?: string
+  /** 失败或取消时的中文原因 */
+  error?: string
+  /** 成功时才有：耗时毫秒 */
+  ms: number
+}
+
 interface DownloaderBridge {
   download(o: {
     url: string
@@ -41,9 +68,16 @@ interface DownloaderBridge {
     expectBytes?: number
     /** 需要鉴权的资源（CI 产物）才传；跨域重定向时原生侧会主动丢掉它 */
     headers?: Record<string, string>
+    /** 只有下载记录用得上；界面被销毁时靠它把「下过什么」补回来 */
+    repo?: string
+    kind?: DownloadKind
+    tag?: string
   }): Promise<NativeDownloadResult>
   install(o: { path: string }): Promise<InstallResult>
   cancel(): Promise<void>
+  status(): Promise<NativeStatus>
+  exists(o: { paths: string[] }): Promise<{ exists: Record<string, boolean> }>
+  takePending(): Promise<{ raw?: string }>
   addListener(
     event: 'progress',
     cb: (data: NativeProgress) => void,
@@ -75,6 +109,10 @@ export interface InnerDownloadOptions {
   expectBytes?: number
   /** 需要鉴权的资源才传（CI 产物）；公开资源留空 */
   headers?: Record<string, string>
+  /** 来源仓库，写下载记录用 */
+  repo?: string
+  kind?: DownloadKind
+  tag?: string
   onProgress?: (p: NativeProgress) => void
 }
 
@@ -100,6 +138,9 @@ export async function innerDownload(o: InnerDownloadOptions): Promise<NativeDown
       fileName: o.fileName,
       expectBytes: o.expectBytes,
       ...(o.headers ? { headers: o.headers } : {}),
+      ...(o.repo ? { repo: o.repo } : {}),
+      ...(o.kind ? { kind: o.kind } : {}),
+      ...(o.tag ? { tag: o.tag } : {}),
     })
   } catch (err) {
     throw new Error(humanError(err))
@@ -129,5 +170,52 @@ export async function cancelInnerDownload(): Promise<void> {
     await Downloader.cancel()
   } catch {
     // 取消是尽力而为，失败不打扰用户
+  }
+}
+
+/**
+ * 查询原生下载状态。网页端恒返回「没有在跑」——
+ * 那边没有原生通道，也不存在「下载跑到一半页面没了」这种事。
+ */
+export async function downloadStatus(): Promise<NativeStatus> {
+  if (!nativeDownloadAvailable()) {
+    return { running: false, hasResult: false, bytes: 0, total: 0, kbps: 0, fileName: '', ms: 0 }
+  }
+  try {
+    return await Downloader.status()
+  } catch {
+    return { running: false, hasResult: false, bytes: 0, total: 0, kbps: 0, fileName: '', ms: 0 }
+  }
+}
+
+/**
+ * 批量检查文件是否还在。
+ *
+ * 下载记录只存了路径，用户清过 App 存储、系统清理过缓存之后，路径就指空了。
+ * 面板要能区分「还能装」与「只剩一条记录」，不能给一个点了报错的安装按钮。
+ */
+export async function filesExist(paths: string[]): Promise<Record<string, boolean>> {
+  if (paths.length === 0 || !nativeDownloadAvailable()) return {}
+  try {
+    const r = await Downloader.exists({ paths })
+    return r?.exists ?? {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 认领一条待记录的下载。取走即清空 —— 同一个结果不会被记两次。
+ *
+ * 正常时序下，下载一结束 DownloadSheet 立刻来取；页面不在了就留到下次启动，
+ * 由 App 启动时兜一次。这样「熄屏下载完 → 回来」也能在记录里看到。
+ */
+export async function takePendingDownload(): Promise<PendingDownload | null> {
+  if (!nativeDownloadAvailable()) return null
+  try {
+    const r = await Downloader.takePending()
+    return parsePendingDownload(r?.raw)
+  } catch {
+    return null
   }
 }

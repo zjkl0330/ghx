@@ -111,6 +111,12 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
+      # 下载续航那套（Hub 单例 + 两把锁 + 前台服务）只能在真机上跑起来，
+      # 但「有没有真的接上」可以静态证明：少一条权限、onDestroy 里还在 cancel，
+      # 装到手机上依旧是熄屏就断。这里把它当发版闸门。
+      - name: Check native download wiring
+        run: python3 scripts/check-download-native.py --apk android/app/build/outputs/apk/debug/app-debug.apk
+
       - name: Rename APK
         run: |
           SRC=android/app/build/outputs/apk/debug/app-debug.apk

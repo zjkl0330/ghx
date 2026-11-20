@@ -32,6 +32,8 @@ export type SheetName =
   | 'multi'
   /** 统一下载面板（更新包 / 发行版附件 / 源码 ZIP） */
   | 'download'
+  /** 下载记录（设置 → 本机数据） */
+  | 'dlHistory'
 
 /** 首页页签：底栏第一项就是「首页」，返回时回到它 */
 export const HOME_TAB = 'repos'

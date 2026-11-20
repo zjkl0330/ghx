@@ -124,6 +124,8 @@ import {
   type DownloadMode,
   type DownloadTarget,
 } from './lib/download'
+import { appendRecord, clearHistory, readHistory, recordFromPending, type DlRecord } from './lib/dl-history'
+import { filesExist, installApk, takePendingDownload } from './lib/native-download'
 import type {
   AuditEntry,
   BatchResult,
@@ -189,6 +191,7 @@ import { TokenVault } from './ui/TokenVault'
 import { UnlockScreen } from './ui/UnlockScreen'
 import { UpdateSheet, type UpdatePhase } from './ui/UpdateSheet'
 import { DownloadSheet } from './ui/DownloadSheet'
+import { DlHistorySheet } from './ui/DlHistorySheet'
 import { BatchSheet } from './ui/BatchSheet'
 import { BatchPickSheet } from './ui/BatchPickSheet'
 import { WorkflowSheet } from './ui/WorkflowSheet'
@@ -379,6 +382,10 @@ export default function App() {
   const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(null)
   /** 关掉下载面板后回到哪一层：更新弹层 / 发行版面板 / 仓库详情 */
   const [downloadReturn, setDownloadReturn] = useState<SheetName>('none')
+  /** 本机下载记录（面板打开时重读，写入发生在下载面板里） */
+  const [dlHistory, setDlHistory] = useState<DlRecord[]>(() => readHistory())
+  /** 记录里的文件是否还在：用户清过 App 存储后，路径会指空 */
+  const [dlExists, setDlExists] = useState<Record<string, boolean>>({})
 
   // ── 剪贴板直达：切回前台读一眼剪贴板，是仓库地址就跳过去 ──────────────
   /** 默认开。关掉后冷启动和切回都不再读剪贴板 */
@@ -1556,6 +1563,41 @@ export default function App() {
     setSheet('download')
   }, [])
 
+  /**
+   * 打开下载记录。
+   *
+   * 每次打开都重读 localStorage —— 记录是在下载面板里写的，那边写完
+   * 不一定有机会回调到这里，重读一次比维护跨组件状态简单可靠。
+   * 顺带问一次原生「这些文件还在不在」：清过 App 存储后路径会指空。
+   */
+  const openDlHistory = useCallback(async () => {
+    const list = readHistory()
+    setDlHistory(list)
+    setSheet('dlHistory')
+    const paths = list.map((r) => r.path).filter((v): v is string => !!v)
+    if (paths.length === 0) return
+    const map = await filesExist(paths)
+    setDlExists(map)
+  }, [])
+
+  // 面板关掉之后回到设置页，条数要跟着变
+  useEffect(() => {
+    setDlHistory(readHistory())
+  }, [sheet])
+
+  /**
+   * 启动时补一条：上次的下载是在「界面已经没了」的情况下结束的
+   * （用户退出了 App、或 WebView 被系统回收），记录没人写，原生替我们留着。
+   */
+  useEffect(() => {
+    void (async () => {
+      const pend = await takePendingDownload()
+      if (!pend) return
+      appendRecord(recordFromPending(pend))
+      setDlHistory(readHistory())
+    })()
+  }, [])
+
   const changeDownloadMode = useCallback(
     (mode: DownloadMode) => {
       setDownloadMode(mode)
@@ -2363,6 +2405,8 @@ export default function App() {
           mirrorCheckedAt={probe.at}
           mirrorCustom={mirrorStore.custom.length}
           mirrorChanged={Object.keys(mirrorStore.overrides).length}
+          dlCount={dlHistory.length}
+          onOpenHistory={() => void openDlHistory()}
           onOpenMirrors={() => openMirrors('none')}
           onOpenTokens={() => pushTo({ kind: 'tokens' })}
           onBack={popTo}
@@ -3088,6 +3132,38 @@ export default function App() {
           onClose={() => setSheet(downloadReturn)}
           onToast={showToast}
           auth={client?.authToken ?? null}
+        />
+      )}
+
+      {sheet === 'dlHistory' && (
+        <DlHistorySheet
+          records={dlHistory}
+          exists={dlExists}
+          onClose={() => setSheet('none')}
+          onOpenRepo={(full) => {
+            const [owner, repo] = full.split('/')
+            if (!owner || !repo) {
+              showToast('这条记录没有来源仓库')
+              return
+            }
+            setSheet('none')
+            pushTo({ kind: 'repo', owner, repo, tab: 'code' })
+          }}
+          onInstall={(rec) => {
+            if (!rec.path) return
+            void installApk(rec.path).then(
+              (r) =>
+                showToast(
+                  r.needPermission ? '请在系统设置里允许「安装未知应用」，再回来点一次' : '已调起安装器',
+                ),
+              (e: Error) => showToast(e.message),
+            )
+          }}
+          onClear={() => {
+            clearHistory()
+            setDlHistory([])
+            showToast('下载记录已清空')
+          }}
         />
       )}
 

@@ -1,9 +1,9 @@
 package dev.zjkl.ghx;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Environment;
 import android.provider.Settings;
 
 import androidx.core.content.FileProvider;
@@ -14,38 +14,26 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
 /**
- * 应用内下载 + 安装。
+ * 应用内下载 + 安装的 JS 门面。
  *
- * 为什么必须在原生侧做：
- *  - WebView 的 fetch 下不了安装包：加速站基本不给 ACAO，跨域就断了；
- *  - 就算拿到字节，WebView 也没有写文件的通道，更调不起 PackageInstaller。
+ * 下载本体在 {@link DownloadHub}，续航保障在 {@link DownloadService} ——
+ * 这个类只负责三件事：把 JS 参数翻成 Java、把事件转发成 notifyListeners、
+ * 以及调起安装器。
  *
- * 所以这里用 HttpURLConnection 边下边写，写到 App 自己的外部下载目录
- * （/Android/data/dev.zjkl.ghx/files/Download），再用 FileProvider 授权、
- * ACTION_VIEW 拉起系统安装器。文件落在私有目录而不是公共 Download：
- * 不需要任何存储权限，覆盖安装后旧包也不会留成垃圾。
- *
- * 进度靠 notifyListeners 每 200ms 推一帧 —— 不用 CapacitorHttp 整包返回，
- * 4 MB 的包一次性进内存既慢又容易被系统回收。
+ * **销毁时不再取消下载。** 以前 handleOnDestroy 会断连接，于是熄屏、切后台、
+ * 页面重建都会让下载半路夭折。现在 Plugin 可以随时重建，下载照跑，回来时
+ * 用 status() 对账。
  */
 @CapacitorPlugin(name = "Downloader")
 public class DownloadPlugin extends Plugin {
 
-    private volatile boolean cancelled = false;
-    private volatile HttpURLConnection conn = null;
-    private volatile Thread worker = null;
+    private DownloadHub.Listener bridge;
 
     @PluginMethod
     public void download(PluginCall call) {
@@ -54,74 +42,89 @@ public class DownloadPlugin extends Plugin {
             call.reject("缺少下载地址");
             return;
         }
-        if (worker != null && worker.isAlive()) {
+        if (DownloadHub.isRunning()) {
             call.reject("已有下载正在进行");
             return;
         }
 
-        final String fileName = safeName(call.getString("fileName", "download.bin"));
+        String fileName = call.getString("fileName", "download.bin");
         Long expectBoxed = call.getLong("expectBytes");
-        final long expect = expectBoxed == null ? 0L : expectBoxed;
-        final Map<String, String> headers = readHeaders(call.getObject("headers"));
-        cancelled = false;
+        long expect = expectBoxed == null ? 0L : expectBoxed;
+        Map<String, String> headers = readHeaders(call.getObject("headers"));
+        // 来源信息只用于「界面已销毁时也能补一条下载记录」，缺了不影响下载
+        String repo = call.getString("repo", "");
+        String kind = call.getString("kind", "");
+        String tag = call.getString("tag", "");
 
-        worker = new Thread(() -> {
-            try {
-                JSObject ret = doDownload(url.trim(), fileName, expect, headers);
-                runOnUi(() -> call.resolve(ret));
-            } catch (Exception e) {
-                String msg = e.getMessage() == null ? "下载失败" : e.getMessage();
-                runOnUi(() -> call.reject(msg));
-            }
-        }, "ghx-download");
-        worker.start();
-    }
+        // 先挂监听再起线程：否则第一帧进度可能早于监听注册
+        attachBridge(call);
 
-    /** 请求头从 JS 传过来；CI 产物要带 Authorization，公开资源传空即可 */
-    private static Map<String, String> readHeaders(JSObject obj) {
-        Map<String, String> out = new HashMap<>();
-        if (obj == null) return out;
-        Iterator<String> it = obj.keys();
-        while (it.hasNext()) {
-            String k = it.next();
-            Object v = obj.opt(k);
-            if (v instanceof String && !((String) v).isEmpty()) out.put(k, (String) v);
+        boolean ok = DownloadHub.start(
+                getContext().getApplicationContext(), url.trim(), fileName, expect, headers,
+                repo == null ? "" : repo, kind == null ? "" : kind, tag == null ? "" : tag);
+        if (!ok) {
+            detachBridge();
+            call.reject("已有下载正在进行");
+            return;
         }
-        return out;
+        startKeepAliveService();
     }
 
-    private HttpURLConnection open(String url, Map<String, String> headers) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        // 手动跟重定向：GitHub 的产物与附件会 302 到签名地址，
-        // 自动跟随时 Authorization 会被一并带到那个域上去，没必要。
-        c.setInstanceFollowRedirects(false);
-        c.setConnectTimeout(15000);
-        c.setReadTimeout(30000);
-        c.setRequestProperty("User-Agent", "ghx-android/" + versionName());
-        c.setRequestProperty("Accept", "*/*");
-        if (headers != null) {
-            for (Map.Entry<String, String> e : headers.entrySet()) {
-                c.setRequestProperty(e.getKey(), e.getValue());
+    /**
+     * 取走「下载完了但界面没来得及记」的那一条。
+     *
+     * 页面正常活着时，下载一结束就会来取；页面被销毁重建、或者下载期间
+     * 用户退出了 App，就等下次启动再来取。取走即清空，不会重复记。
+     */
+    @PluginMethod
+    public void takePending(PluginCall call) {
+        String raw = DownloadHub.takePending(getContext());
+        JSObject ret = new JSObject();
+        if (raw != null) ret.put("raw", raw);
+        call.resolve(ret);
+    }
+
+    /**
+     * 回来对账。WebView 被回收重建后，页面拿不到原来的 call，
+     * 只能靠这个查询「下载是不是还在跑、结果是什么」。
+     */
+    @PluginMethod
+    public void status(PluginCall call) {
+        DownloadHub.Snapshot s = DownloadHub.snapshot();
+        JSObject ret = new JSObject();
+        ret.put("running", s.running);
+        ret.put("hasResult", s.hasResult);
+        ret.put("bytes", s.bytes);
+        ret.put("total", s.total);
+        ret.put("kbps", s.kbps);
+        ret.put("fileName", s.fileName);
+        ret.put("ms", s.ms);
+        if (s.path != null) ret.put("path", s.path);
+        if (s.error != null) ret.put("error", s.error);
+        call.resolve(ret);
+    }
+
+    /** 历史记录里那些落盘文件还在不在（用户可能清理过 App 存储） */
+    @PluginMethod
+    public void exists(PluginCall call) {
+        com.getcapacitor.JSArray paths = call.getArray("paths");
+        JSObject ret = new JSObject();
+        JSObject map = new JSObject();
+        if (paths != null) {
+            for (int i = 0; i < paths.length(); i += 1) {
+                String p = paths.optString(i, "");
+                if (p == null || p.isEmpty()) continue;
+                File f = new File(p);
+                map.put(p, f.exists() && f.length() > 0);
             }
         }
-        return c;
-    }
-
-    private static boolean isRedirect(int code) {
-        return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+        ret.put("exists", map);
+        call.resolve(ret);
     }
 
     @PluginMethod
     public void cancel(PluginCall call) {
-        cancelled = true;
-        HttpURLConnection c = conn;
-        if (c != null) {
-            try {
-                c.disconnect();
-            } catch (Exception ignored) {
-                // 断开失败无所谓，下一轮循环靠 cancelled 退出
-            }
-        }
+        DownloadHub.cancel();
         call.resolve();
     }
 
@@ -182,187 +185,90 @@ public class DownloadPlugin extends Plugin {
         }
     }
 
-    /** 下载目录：优先外部私有目录（用户能在文件管理器里通过 Android/data 找到） */
-    private File downloadDir() {
-        File dir = getContext().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-        if (dir == null) dir = new File(getContext().getFilesDir(), "Download");
-        if (!dir.exists() && !dir.mkdirs()) return null;
-        return dir;
-    }
+    /* ---------------- 内部 ---------------- */
 
-    private JSObject doDownload(String url, String fileName, long expect, Map<String, String> headers)
-            throws IOException {
-        File dir = downloadDir();
-        if (dir == null) throw new IOException("无法创建下载目录");
-
-        File out = new File(dir, fileName);
-        File part = new File(dir, fileName + ".part");
-        // 同名旧包先清掉；清不掉（被安装器占着）就换一个带时间戳的名字，
-        // 不要因为「上一版还没装完」就整个下载失败。
-        if (part.exists() && !part.delete()) throw new IOException("无法清理临时文件");
-        if (out.exists() && !out.delete()) {
-            out = new File(dir, System.currentTimeMillis() + "-" + fileName);
-        }
-
-        long start = System.currentTimeMillis();
-        long done = 0;
-        long total = expect;
-        long lastEmit = 0;
-        long lastBytes = 0;
-        long lastTime = start;
-
-        HttpURLConnection c = null;
-        InputStream in = null;
-        FileOutputStream fos = null;
-        try {
-            c = open(url, headers);
-            conn = c;
-            int code = c.getResponseCode();
-
-            // 产物下载：api.github.com 返回 302 到 pipelines 的签名地址。
-            // 跟随之后只带 UA，不带鉴权头 —— 签名地址本身不需要，也不该收到令牌。
-            int hops = 0;
-            while (isRedirect(code) && hops < 5) {
-                String loc = c.getHeaderField("Location");
-                if (loc == null || loc.trim().isEmpty()) break;
-                URL next = new URL(new URL(url), loc);
-                c.disconnect();
-                url = next.toString();
-                c = open(url, null);
-                conn = c;
-                code = c.getResponseCode();
-                hops += 1;
-            }
-
-            if (code != HttpURLConnection.HTTP_OK && code != 206) {
-                throw new IOException("HTTP " + code);
-            }
-            long len = parseContentLength(c.getHeaderField("Content-Length"));
-            if (len > 0) total = len;
-
-            in = new BufferedInputStream(c.getInputStream(), 64 * 1024);
-            fos = new FileOutputStream(part);
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                if (cancelled) throw new IOException("已取消");
-                fos.write(buf, 0, n);
-                done += n;
-
-                long now = System.currentTimeMillis();
-                if (now - lastEmit >= 200) {
-                    long dt = Math.max(1, now - lastTime);
-                    double kbps = ((done - lastBytes) / 1024.0) / (dt / 1000.0);
-                    JSObject p = new JSObject();
-                    p.put("bytes", done);
-                    p.put("total", total);
-                    p.put("kbps", Math.round(kbps * 10) / 10.0);
-                    emitProgress(p);
-                    lastEmit = now;
-                    lastBytes = done;
-                    lastTime = now;
+    private void attachBridge(PluginCall call) {
+        detachBridge();
+        bridge = new DownloadHub.Listener() {
+            @Override
+            public void onProgress(long bytes, long total, double kbps) {
+                JSObject p = new JSObject();
+                p.put("bytes", bytes);
+                p.put("total", total);
+                p.put("kbps", kbps);
+                try {
+                    notifyListeners("progress", p);
+                } catch (Exception ignored) {
+                    // 页面已销毁就当没人听；下载本身不受影响
                 }
             }
-            fos.flush();
-            fos.close();
-            fos = null;
-            in.close();
-            in = null;
 
-            if (done <= 0) throw new IOException("下载到 0 字节");
-            if (!part.renameTo(out)) throw new IOException("无法保存文件");
-
-            JSObject ret = new JSObject();
-            ret.put("path", out.getAbsolutePath());
-            ret.put("bytes", done);
-            ret.put("ms", System.currentTimeMillis() - start);
-            return ret;
-        } finally {
-            if (fos != null) {
+            @Override
+            public void onDone(String path, long bytes, long ms) {
+                JSObject ret = new JSObject();
+                ret.put("path", path);
+                ret.put("bytes", bytes);
+                ret.put("ms", ms);
                 try {
-                    fos.close();
-                } catch (IOException ignored) {
-                    // 收尾失败不覆盖主异常
+                    call.resolve(ret);
+                } catch (Exception ignored) {
+                    // bridge 已销毁；结果留在 DownloadHub，由 status() 取
                 }
+                detachBridge();
             }
-            if (in != null) {
+
+            @Override
+            public void onError(String message) {
                 try {
-                    in.close();
-                } catch (IOException ignored) {
+                    call.reject(message);
+                } catch (Exception ignored) {
                     // 同上
                 }
+                detachBridge();
             }
-            if (c != null) {
-                c.disconnect();
-                conn = null;
-            }
-            // 中途失败或取消：删掉半截文件，别占着空间
-            if (part.exists() && !out.exists()) {
-                //noinspection ResultOfMethodCallIgnored
-                part.delete();
-            }
+        };
+        DownloadHub.addListener(bridge);
+    }
+
+    private void detachBridge() {
+        if (bridge != null) {
+            DownloadHub.removeListener(bridge);
+            bridge = null;
         }
     }
 
-    private void emitProgress(JSObject payload) {
-        runOnUi(() -> {
-            try {
-                notifyListeners("progress", payload);
-            } catch (Exception ignored) {
-                // 页面已销毁就当没人听
-            }
-        });
-    }
-
-    private void runOnUi(Runnable r) {
+    /** 起前台服务。失败不影响下载，只是失去「不被冻结」的保障 */
+    private void startKeepAliveService() {
         try {
-            getActivity().runOnUiThread(r);
-        } catch (Exception e) {
-            r.run();
+            Context ctx = getContext().getApplicationContext();
+            Intent i = new Intent(ctx, DownloadService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(i);
+            } else {
+                ctx.startService(i);
+            }
+        } catch (Exception ignored) {
+            // 后台启动限制等情况下会被拒；下载已经跑起来了，不因此报错
         }
     }
 
-    private String versionName() {
-        try {
-            return getContext().getPackageManager()
-                    .getPackageInfo(getContext().getPackageName(), 0).versionName;
-        } catch (Exception e) {
-            return "0.0.0";
+    /** 请求头从 JS 传过来；CI 产物要带 Authorization，公开资源传空即可 */
+    private static Map<String, String> readHeaders(JSObject obj) {
+        Map<String, String> out = new HashMap<>();
+        if (obj == null) return out;
+        Iterator<String> it = obj.keys();
+        while (it.hasNext()) {
+            String k = it.next();
+            Object v = obj.opt(k);
+            if (v instanceof String && !((String) v).isEmpty()) out.put(k, (String) v);
         }
-    }
-
-    /** 文件名安全化：去掉路径分隔符，防止写到下载目录之外 */
-    private static String safeName(String raw) {
-        String s = raw == null ? "" : raw.trim();
-        s = s.replaceAll("[\\\\/:*?\"<>|]", "_").replaceAll("[\\u0000-\\u001f]", "");
-        while (s.startsWith(".")) s = s.substring(1);
-        return s.isEmpty() ? "download.bin" : s;
-    }
-
-    /**
-     * 手动解析 Content-Length。
-     * 不用 HttpURLConnection.getContentLengthLong()：那是 API 24，本项目 minSdk 23。
-     */
-    private static long parseContentLength(String raw) {
-        if (raw == null) return -1L;
-        try {
-            return Long.parseLong(raw.trim());
-        } catch (NumberFormatException e) {
-            return -1L;
-        }
+        return out;
     }
 
     @Override
     protected void handleOnDestroy() {
-        cancelled = true;
-        HttpURLConnection c = conn;
-        if (c != null) {
-            try {
-                c.disconnect();
-            } catch (Exception ignored) {
-                // 销毁阶段尽力而为
-            }
-        }
+        // 只解绑转发，不动下载 —— 这是这次改动的全部意义
+        detachBridge();
         super.handleOnDestroy();
     }
 }

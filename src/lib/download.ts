@@ -75,6 +75,15 @@ export interface DownloadTarget {
   routes: DownloadRoute[]
   /** 能不能应用内下完直接调安装器：只有 apk 有意义 */
   installable: boolean
+  /**
+   * 来源仓库 full_name（`owner/repo`）。
+   *
+   * 下载记录靠它跳回仓库 —— 光有文件名回不去。四种目标都从某个仓库来，
+   * 所以这里必填；万一将来出现「不知道来源」的下载，传空串，记录里就不给跳转。
+   */
+  repo: string
+  /** 发行版标签 / 分支引用，仅用于记录里展示 */
+  tag?: string
 }
 
 /* ---------------- 地址 → 站点 ---------------- */
@@ -173,6 +182,8 @@ export function apkTarget(o: ApkInput): DownloadTarget {
     size: o.size,
     routes,
     installable: isApkName(o.asset),
+    repo: `${o.owner}/${o.repo}`,
+    tag: o.tag,
   }
 }
 
@@ -195,6 +206,8 @@ export function assetTarget(o: AssetInput): DownloadTarget {
     size: o.size,
     routes: toRoutes(releaseCandidates(o.mirror, o.owner, o.repo, o.tag, o.asset)),
     installable: isApkName(o.asset),
+    repo: `${o.owner}/${o.repo}`,
+    tag: o.tag,
   }
 }
 
@@ -216,6 +229,8 @@ export function archiveTarget(o: ArchiveInput): DownloadTarget {
     size: 0,
     routes: toRoutes(archiveCandidates(o.mirror, o.owner, o.repo, ref)),
     installable: false,
+    repo: `${o.owner}/${o.repo}`,
+    tag: ref,
   }
 }
 
@@ -249,6 +264,8 @@ export function artifactTarget(o: ArtifactInput): DownloadTarget {
     size: o.size,
     routes: [{ url, base, label: '官方 API', style: 'path', auth: true }],
     installable: false,
+    repo: `${o.owner}/${o.repo}`,
+    tag: `run #${o.runId}`,
   }
 }
 

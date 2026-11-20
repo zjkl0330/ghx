@@ -20,7 +20,15 @@ import {
 } from '../lib/download'
 import { formatSpeed, pickReachable } from '../lib/mirrors'
 import { formatBytes, headReachable, openExternal } from '../lib/update'
-import { cancelInnerDownload, innerDownload, installApk, nativeDownloadAvailable } from '../lib/native-download'
+import {
+  cancelInnerDownload,
+  downloadStatus,
+  innerDownload,
+  installApk,
+  nativeDownloadAvailable,
+  takePendingDownload,
+} from '../lib/native-download'
+import { appendRecord, makeRecord, recordFromPending } from '../lib/dl-history'
 import { Icon } from './icons'
 
 /**
@@ -67,6 +75,67 @@ export function DownloadSheet(p: Props) {
       aliveRef.current = false
     }
   }, [])
+
+  /**
+   * 进来先对账。
+   *
+   * 熄屏、切后台、WebView 被系统回收重建之后，原来那个下载 Promise 早就没了，
+   * 但原生线程还在跑。这里问一句「是不是同一个文件在下」，是就接着显示进度，
+   * 不是就明说「另一个文件在下」，别让用户又点一次把按钮点成死循环。
+   */
+  useEffect(() => {
+    if (!native) return
+    let stop = false
+    void (async () => {
+      const s = await downloadStatus()
+      if (stop || !s.running) return
+      if (s.fileName && s.fileName !== safeFileName(p.target.fileName)) {
+        setErr(`另一个文件正在下载：${s.fileName}`)
+        return
+      }
+      setPhase('downloading')
+      setProgress({ bytes: s.bytes, total: s.total, kbps: s.kbps, startedAt: Date.now() })
+    })()
+    return () => {
+      stop = true
+    }
+    // 只在挂载时对一次账
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * 下载中轮询原生状态。
+   *
+   * 进度事件在页面活着时是通的，但页面重建过一次之后监听就断了 ——
+   * 轮询是那条路的兜底。两种情况同时存在也不冲突：谁先到算谁的，值都来自同一处。
+   */
+  useEffect(() => {
+    if (phase !== 'downloading' || !native) return
+    const timer = setInterval(() => {
+      void (async () => {
+        const s = await downloadStatus()
+        if (!aliveRef.current) return
+        if (s.running) {
+          setProgress((prev) => ({
+            bytes: s.bytes,
+            total: s.total > 0 ? s.total : p.target.size,
+            kbps: s.kbps,
+            startedAt: prev?.startedAt ?? Date.now(),
+          }))
+          return
+        }
+        if (!s.hasResult) return
+        if (s.path) {
+          setSavedPath(s.path)
+          setPhase('done')
+        } else {
+          setErr(s.error ?? '下载已停止')
+          setPhase('error')
+        }
+      })()
+    }, 800)
+    return () => clearInterval(timer)
+  }, [phase, native, p.target.size])
 
   /**
    * 应用内只对安装包有意义：其它文件落在 App 私有目录，文件管理器看不到。
@@ -128,11 +197,45 @@ export function DownloadSheet(p: Props) {
     return [hit, ...base.filter((r) => r.url !== hit.url)]
   }, [entries, ranked, picked, p.target.routes])
 
+  /**
+   * 认领这次下载的结果并写进本机历史。
+   *
+   * 优先用原生留下的「待认领」记录：它连「页面已经被销毁」的情况也覆盖了；
+   * 取不到（比如网页端没有原生通道）才用调用方给的兜底值。
+   * 同一个结果只会被记一次 —— 原生那边取走即清空。
+   */
+  async function claimRecord(fallback?: { ok: boolean; path?: string; error?: string }) {
+    const pend = await takePendingDownload()
+    if (pend) {
+      appendRecord(
+        recordFromPending({
+          ...pend,
+          repo: pend.repo || p.target.repo,
+          tag: pend.tag || p.target.tag,
+        }),
+      )
+      return
+    }
+    if (!fallback) return
+    appendRecord(
+      makeRecord({
+        repo: p.target.repo,
+        name: p.target.fileName,
+        kind: p.target.kind,
+        tag: p.target.tag,
+        size: p.target.size,
+        bytes: 0,
+        status: fallback.ok ? 'done' : 'failed',
+        ...(fallback.path ? { path: fallback.path } : {}),
+        ...(fallback.error ? { error: fallback.error } : {}),
+      }),
+    )
+  }
+
   async function start() {
     if (busy || p.target.routes.length === 0) return
     setErr(null)
     cancelledRef.current = false
-
     // 应用外：探一条通的就交给浏览器。探活失败时 pickReachable 回退第一条，
     // 与「检查更新」旧行为一致 —— 让浏览器再试一次，比直接说「下不了」有用。
     if (effectiveMode === 'outer') {
@@ -165,6 +268,9 @@ export function DownloadSheet(p: Props) {
           fileName: safeFileName(p.target.fileName),
           expectBytes: p.target.size,
           ...(route.auth && p.auth ? { headers: { Authorization: `Bearer ${p.auth}` } } : {}),
+          repo: p.target.repo,
+          kind: p.target.kind,
+          ...(p.target.tag ? { tag: p.target.tag } : {}),
           onProgress: (d) => {
             if (!aliveRef.current) return
             setProgress((prev) => ({
@@ -175,6 +281,8 @@ export function DownloadSheet(p: Props) {
             }))
           },
         })
+        // 记录不依赖界面是否还活着：用户可能已经切走，包却下完了
+        void claimRecord({ ok: true, path: res.path })
         if (!aliveRef.current) return
         setSavedPath(res.path)
         // 只有安装包才需要调安装器；产物是 zip，交给系统查看器即可
@@ -199,12 +307,16 @@ export function DownloadSheet(p: Props) {
       }
     }
 
-    if (!aliveRef.current) return
     if (cancelledRef.current) {
+      // 取消不留记录，但要清掉上一条线路失败时留下的待认领，免得下次启动冒出来
+      void takePendingDownload()
+      if (!aliveRef.current) return
       setPhase('idle')
       setProgress(null)
       return
     }
+    void claimRecord({ ok: false, error: lastError })
+    if (!aliveRef.current) return
     setPhase('error')
     setErr(tried.length > 1 ? `试了 ${tried.length} 条线路都不行：${lastError}` : lastError)
   }

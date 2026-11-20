@@ -1554,6 +1554,58 @@ html[data-ime='1'] .actionbar {
   background: var(--red);
 }
 
+/* 取消的那条不红不绿：它既不是失败也不值得庆祝 */
+.result-dot.idle {
+  background: var(--text-dim);
+}
+
+/*
+ * 下载记录行：整行可点，点回仓库。
+ * 用 div + role=button 而不是 <button>：行里还嵌着「安装」按钮，
+ * 按钮不能套按钮。
+ */
+.dlh-row {
+  cursor: pointer;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  gap: 8px;
+}
+
+.dlh-row:last-child {
+  border-bottom: 0;
+}
+
+.dlh-row:active {
+  background: var(--surface-2);
+}
+
+.dlh-name {
+  font-size: 12.5px;
+  display: block;
+}
+
+.dlh-row .audit-d {
+  font-size: 10.5px;
+}
+
+/* 行内小按钮：比整宽按钮小一号，不抢文件名的地方 */
+.dlh-act {
+  flex: none;
+  align-self: center;
+  padding: 5px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.dlh-act:active {
+  transform: scale(0.96);
+}
+
 /* 进度 */
 .progress {
   height: 4px;

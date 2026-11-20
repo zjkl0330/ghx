@@ -34,6 +34,16 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!--
+          下载用的前台服务。它不下东西，只负责把进程留在前台优先级 ——
+          Android 12+ 的后台进程会被 Cached Apps Freezer 冻结，wake lock 也拦不住，
+          只有前台服务能让下载在熄屏、切走之后继续跑。
+        -->
+        <service
+            android:name=".DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
     <!-- Permissions -->
@@ -45,4 +55,17 @@
       DownloadPlugin.install 会检查并在未放行时跳设置页。
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!--
+      下载期间的三件套，缺一样熄屏就会断：
+        · WAKE_LOCK            熄屏后 CPU 进 suspend，socket 读超时 30 秒即断
+        · ACCESS_WIFI_STATE    拿 WifiLock 要让 WiFi 射频别睡
+        · FOREGROUND_SERVICE   前台服务本体
+        · FOREGROUND_SERVICE_DATA_SYNC  Android 14 起按类型校验，少了它 startForeground 抛异常
+      三个都是普通权限，安装时不会弹授权框。
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 </manifest>

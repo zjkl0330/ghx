@@ -78,6 +78,9 @@ interface Props {
   mirrorCustom: number
   /** 改过地址的内置站点数 */
   mirrorChanged: number
+  /** 本机下载记录条数 */
+  dlCount: number
+  onOpenHistory: () => void
   onOpenMirrors: () => void
   onOpenTokens: () => void
   onBack: () => void
@@ -640,7 +643,14 @@ export function SettingsPage(p: Props) {
 
           <div className="section-title">本机数据</div>
           <div className="panel">
-            <button className="linkrow" onClick={p.onOpenAudit}>
+            <button className="linkrow" onClick={p.onOpenHistory}>
+              <span className="linkrow-main">
+                <b>下载记录</b>
+                <i>仅存本机 · {p.dlCount} 条 · 可跳回仓库</i>
+              </span>
+              <Icon name="chevron" size={13} className="linkrow-arrow" />
+            </button>
+            <button className="linkrow" style={{ marginTop: 8 }} onClick={p.onOpenAudit}>
               <span className="linkrow-main">
                 <b>审计日志</b>
                 <i>仅存本机 · {p.auditCount} 条记录</i>

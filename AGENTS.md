@@ -442,6 +442,18 @@ user / notifications / search / profile / settings / tokens / audit
   - **踩过的坑**：第一版用 `canvas.measureText` 量宽度，两种字体都返回 106.68px —— canvas 的 `font` 简写在无头环境里静默回退，量的是同一个 fallback。改成真实 DOM（隐藏 div + `getBoundingClientRect`）才量出差异。以后测字体一律用 DOM。
   - **仍未验证**：真机 WebView 解析 22 MB 字体的耗时与内存占用。低端机可能要几百毫秒并多吃几十 MB 内存，这一版没有实测数据。
 
+- **v0.8.8**：熄屏 / 切后台不再中断下载 + 下载记录。
+  - **断的原因有三个，修一个不够**。①下载线程原来是 `DownloadPlugin` 的成员，Plugin 跟 Activity 一起销毁 —— `handleOnDestroy` 里 `cancelled = true` 加 `disconnect()`，熄屏被回收就断；②就算线程活着，熄屏后 CPU 进 suspend，`setReadTimeout(30000)` 一到就抛；③WiFi 射频在熄屏后休眠，包收不到。三条分别对应：进程级单例、`PARTIAL_WAKE_LOCK`、`WifiLock`。
+  - **Android 12+ 还有第四刀：Cached Apps Freezer**。进程退到后台进 cached 状态十来秒后被整组冻结，CPU 时间归零，**wake lock 拦不住**。唯一可靠解法是前台服务。所以 `DownloadService` 不是「顺便加个通知」，是这套改动里唯一能对付冻结的那一环；它不下载，只 `startForeground` 然后等结束 `stopSelf`。
+  - **两把锁都要带超时**：`wake.acquire(30 分钟)`、`setReferenceCounted(false)`。异常路径没走到 `release` 时，不能让手机 CPU 一直醒着。
+  - **`handleOnDestroy` 只解绑监听、不取消下载**。这是「熄屏断开」的直接成因，`scripts/check-download-native.py` 里拿正则盯着它，别哪天又被人加回去。
+  - **回来要能对账**：页面重建后原来的 Promise 没了，`status()` 给出 `{running, hasResult, bytes, total, kbps, fileName, path, error}`。DownloadSheet 挂载时问一次：同一个文件就接着显示进度，别的文件就明说「另一个文件在下」，不要让人重复点。
+  - **记录不能只靠 JS 写**。下载可能在「界面已经没了」的时候结束（用户退了 App、WebView 被回收）。原生完成时把结果落一份到 SharedPreferences（`ghx_dl/pending`），谁先来谁取走，**取走即清空**，所以同一个结果不会被记两次。
+  - **记录去重键是 `repo|kind|name`**。同一个包重下十次只留一条（最新那次），列表才有用。`kind` 参与去重是必要的 —— 同一个 `x.zip` 可能既是发行版附件又是源码包。
+  - **取消不留记录**：那是用户自己按的，不需要事后解释。原生侧 `if (!cancelled) persist(...)`。
+  - 实测：`scripts/check-download-native.py` 20 条静态断言全过（4 个权限、service 的 `dataSync` 类型、两把锁与超时、onDestroy 不取消、APK 里真有这两个类）；`scripts/verify-dlhistory.py` 四段过（入口条数、三条记录与状态点、点击跳回仓库、清空后 localStorage 键删除）。截图 `docs/screenshots/dlh-088-*.png`。单测 1227 → 1253（`dl-history.test.ts` 26 条）。
+  - **仍未验证**：真机上的熄屏行为。沙箱里没有 Android 运行时，WakeLock / WifiLock / 前台服务 / 冻结策略全都验不了 —— 只能证明「接上了」，不能证明「在这台手机上一定不断」。装到华为上如果还断，先看通知栏有没有那条下载通知：没有就说明前台服务被系统拒了。
+
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）
