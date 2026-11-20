@@ -5917,6 +5917,16 @@ button.ustat:active {
    安装包、发行版附件、源码 ZIP 共用：一个文件卡 + 一张线路表 + 一条进度。
    线路表刻意复用 .multi-row 的骨架（勾选 / 主文 / 右侧数字），
    免得同一个 App 里两张「可选项列表」长得不一样。 */
+/* 「今天 08:31 测过」这行小字。
+   列表里已经有速度了，得说清是什么时候测的、什么时候会再测 ——
+   否则用户会以为「没测速却显示速度」，或者以为测速按钮坏了。 */
+.dl-note {
+  margin: -2px 0 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
 .dl-file {
   display: flex;
   align-items: center;

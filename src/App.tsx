@@ -3126,6 +3126,8 @@ export default function App() {
 
       {sheet === 'download' && downloadTarget && (
         <DownloadSheet
+          /* 换一个包就重挂：测速结果、进度、错误都是这一个包的，不能串到下一个包 */
+          key={`${downloadTarget.kind}:${downloadTarget.fileName}`}
           target={downloadTarget}
           mode={downloadMode}
           onMode={changeDownloadMode}

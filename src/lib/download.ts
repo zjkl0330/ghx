@@ -276,34 +276,63 @@ export interface SpeedEntry {
   result: ProbeResult
 }
 
+/**
+ * 并发测速的线路数。
+ *
+ * 3 是个折中：六条线路两批跑完，总耗时约串行的三分之一；再多就会在移动网络
+ * 上互相抢带宽，测出来的 kbps 偏低，虽然名次大体还在，但数字会显得难看。
+ */
+export const PROBE_CONCURRENCY = 3
+
 export interface MeasureOptions {
   http?: ProbeHttp
   timeoutMs?: number
   now?: () => number
-  /** 每测完一条回调一次，界面据此逐行点亮 */
+  /** 每测完一条回调一次，界面据此逐行点亮（并发下完成顺序不保证按原序） */
   onResult?: (entry: SpeedEntry, index: number) => void
+  /** 同时在跑的线路数，默认 3 */
+  concurrency?: number
 }
 
 /**
- * 逐条测速。串行而不是并发：并发会互相抢带宽，测出来的名次不能用来选线。
- * 每条只拉前 256 KB（PROBE_BYTES），四条线路满打满算 1 MB。
+ * 并发测速。
+ *
+ * 以前是串行：一条挂了要等满 8 秒超时，六条线路最坏 48 秒，面板一直转圈。
+ * 这些候选是**不同站点**，不是同一条链路的分片，前 256 KB 的争抢可以忽略，
+ * 所以按 3 条一批并发，总耗时从「和」变成「约三分之一的和」。
+ *
+ * 返回顺序仍与传入的 routes 一一对应 —— 并发只影响谁先完成，不影响结果位置；
+ * onResult 的 index 也是原始下标，界面据此点亮对应那行。
  */
 export async function measureRoutes(
   routes: DownloadRoute[],
   opts: MeasureOptions = {},
 ): Promise<SpeedEntry[]> {
-  const out: SpeedEntry[] = []
-  for (let i = 0; i < routes.length; i += 1) {
-    const route = routes[i]
-    const result = await probeMirror(route.base || route.url, route.url, {
-      http: opts.http,
-      timeoutMs: opts.timeoutMs,
-      now: opts.now,
-    })
-    const entry: SpeedEntry = { route, result }
-    out.push(entry)
-    opts.onResult?.(entry, i)
+  const total = routes.length
+  if (total === 0) return []
+
+  const width = Math.max(1, Math.min(opts.concurrency ?? PROBE_CONCURRENCY, total))
+  const out: SpeedEntry[] = new Array(total)
+  let cursor = 0
+
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = cursor
+      cursor += 1
+      if (i >= total) return
+      const route = routes[i]
+      const result = await probeMirror(route.base || route.url, route.url, {
+        http: opts.http,
+        timeoutMs: opts.timeoutMs,
+        now: opts.now,
+      })
+      const entry: SpeedEntry = { route, result }
+      out[i] = entry
+      opts.onResult?.(entry, i)
+    }
   }
+
+  await Promise.all(Array.from({ length: width }, () => worker()))
   return out
 }
 
@@ -332,23 +361,149 @@ export function fastestRoute(entries: SpeedEntry[]): DownloadRoute | null {
   return first && first.result.status === 'ok' ? first.route : null
 }
 
-/** 测速快照的缓存键：同一附件才复用，换文件就重测 */
-export function speedKey(t: DownloadTarget): string {
-  return `${t.kind}:${(t.routes[0]?.url ?? '').toLowerCase()}`
+/* ---------------- 测速看板：一天只测一次 ---------------- */
+
+/**
+ * 测速结果按「站点」记，不按「文件」记。
+ *
+ * 以前是每个附件各存一份（键里带 url），结果下 A 包测一遍、下 B 包又测一遍，
+ * 而候选线路压根就是同一批代理 —— 白费流量。现在按 base 存成一块看板，
+ * 所有下载共用：今天测过，今天所有包都直接用。
+ */
+export const SPEED_BOARD_KEY = 'ghx.speed.board'
+
+/** 一条线路的一次测量 */
+export interface SpeedSample {
+  kbps: number
+  ms: number
+  status: 'ok' | 'fail'
+  error?: string
 }
 
-/** 单次测速结果的内存缓存有效期，与 mirrors.ts 的 SPEED_TTL 一致 */
-export const SPEED_CACHE_TTL = 6 * 60 * 60 * 1000
-
-export interface SpeedCache {
+export interface SpeedBoard {
   at: number
-  entries: SpeedEntry[]
+  /** base（小写）→ 样本 */
+  samples: Record<string, SpeedSample>
 }
 
-export function cacheFresh(c: SpeedCache | null | undefined, now = Date.now()): boolean {
-  if (!c) return false
-  const age = now - c.at
-  return age >= 0 && age < SPEED_CACHE_TTL
+/** 本地时区的日期键 */
+export function dayKeyOf(ts: number): string {
+  const d = new Date(ts)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/**
+ * 这块看板今天还能用吗。
+ *
+ * 判据是**自然日**而不是滚动 24 小时：用户说的「每天一次」就是跨过零点才重测。
+ * 早上八点开 App 不该因为「距上次才 20 小时」又白测一轮。
+ * 时间被往回拨（at 在未来）一律当过期，宁可多测一次。
+ */
+export function boardFresh(b: SpeedBoard | null | undefined, now = Date.now()): boolean {
+  if (!b || typeof b.at !== 'number' || !Number.isFinite(b.at)) return false
+  if (b.at > now) return false
+  return dayKeyOf(b.at) === dayKeyOf(now)
+}
+
+/** 容错解析：坏 JSON、旧格式、字段缺失一律当没有看板 */
+export function parseSpeedBoard(raw: string | null | undefined): SpeedBoard | null {
+  if (!raw) return null
+  try {
+    const d = JSON.parse(raw) as Partial<SpeedBoard>
+    if (!d || typeof d.at !== 'number' || !d.samples || typeof d.samples !== 'object') return null
+    const samples: Record<string, SpeedSample> = {}
+    for (const [k, v] of Object.entries(d.samples)) {
+      if (!k || !v || typeof v !== 'object') continue
+      const s = v as Partial<SpeedSample>
+      if (typeof s.kbps !== 'number' || typeof s.ms !== 'number') continue
+      samples[k.toLowerCase()] = {
+        kbps: s.kbps,
+        ms: s.ms,
+        status: s.status === 'ok' ? 'ok' : 'fail',
+        ...(typeof s.error === 'string' && s.error ? { error: s.error } : {}),
+      }
+    }
+    return { at: d.at, samples }
+  } catch {
+    return null
+  }
+}
+
+function boardStorage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage
+  } catch {
+    // 隐私模式下访问 localStorage 会抛
+    return null
+  }
+}
+
+export function readSpeedBoard(now = Date.now()): SpeedBoard | null {
+  try {
+    const board = parseSpeedBoard(boardStorage()?.getItem(SPEED_BOARD_KEY) ?? null)
+    return boardFresh(board, now) ? board : null
+  } catch {
+    return null
+  }
+}
+
+export function writeSpeedBoard(board: SpeedBoard): void {
+  try {
+    boardStorage()?.setItem(SPEED_BOARD_KEY, JSON.stringify(board))
+  } catch {
+    // 存不下就算了，下次重测
+  }
+}
+
+/** 把这一轮的测量结果并进看板；prev 里其它站点的样本保留，重测一条不会抹掉别的 */
+export function boardOf(
+  entries: SpeedEntry[],
+  now = Date.now(),
+  prev?: SpeedBoard | null,
+): SpeedBoard {
+  const samples: Record<string, SpeedSample> = { ...(prev?.samples ?? {}) }
+  for (const e of entries) {
+    const key = (e.route.base || '').toLowerCase()
+    if (!key) continue
+    samples[key] = {
+      kbps: e.result.kbps,
+      ms: e.result.ms,
+      status: e.result.status,
+      ...(e.result.error ? { error: e.result.error } : {}),
+    }
+  }
+  return { at: now, samples }
+}
+
+/** 看板还原成当前这批线路的测速结果；没有样本的线路不出现 */
+export function entriesFromBoard(routes: DownloadRoute[], board: SpeedBoard | null): SpeedEntry[] {
+  if (!board) return []
+  const out: SpeedEntry[] = []
+  for (const route of routes) {
+    const s = board.samples[(route.base || '').toLowerCase()]
+    if (!s) continue
+    out.push({
+      route,
+      result: {
+        base: route.base,
+        label: route.label,
+        style: route.style,
+        status: s.status,
+        ms: s.ms,
+        bytes: 0,
+        kbps: s.kbps,
+        ...(s.error ? { error: s.error } : {}),
+      },
+    })
+  }
+  return out
+}
+
+/** 看板里还没有样本的线路 —— 自动测速只补这些，不把已经测过的再拉一遍 */
+export function routesWithoutSample(routes: DownloadRoute[], board: SpeedBoard | null): DownloadRoute[] {
+  if (!board) return [...routes]
+  return routes.filter((r) => !board.samples[(r.base || '').toLowerCase()])
 }
 
 /* ---------------- 进度与文案 ---------------- */

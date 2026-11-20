@@ -4,7 +4,10 @@ import {
   archiveTarget,
   artifactTarget,
   assetTarget,
-  cacheFresh,
+  boardOf,
+  boardFresh,
+  dayKeyOf,
+  entriesFromBoard,
   etaSeconds,
   fastestRoute,
   formatEta,
@@ -13,13 +16,14 @@ import {
   mirrorOfUrl,
   modeHint,
   parseDownloadMode,
+  parseSpeedBoard,
   progressOf,
   rankRoutes,
   routeDetail,
   routeLabelOf,
+  routesWithoutSample,
   safeFileName,
   serializeDownloadMode,
-  speedKey,
   toRoutes,
   type SpeedEntry,
 } from '../download'
@@ -185,7 +189,7 @@ describe('测速与选线', () => {
     size: 1000,
   })
 
-  it('逐条测速，回调按顺序给结果', async () => {
+  it('concurrency 为 1 时退回串行，回调按顺序给结果', async () => {
     const slow = t.routes[0].url
     const fast = t.routes[1].url
     const seen: number[] = []
@@ -196,6 +200,7 @@ describe('测速与选线', () => {
     let clock = 0
     const entries = await measureRoutes(t.routes.slice(0, 2), {
       http,
+      concurrency: 1,
       now: () => {
         clock += 100
         return clock
@@ -218,6 +223,7 @@ describe('测速与选线', () => {
     let clock = 0
     const entries = await measureRoutes(t.routes.slice(0, 2), {
       http,
+      concurrency: 1,
       now: () => {
         clock += 200
         return clock
@@ -279,6 +285,7 @@ describe('测速与选线', () => {
     let clock = 0
     const entries = await measureRoutes(t.routes.slice(0, 2), {
       http,
+      concurrency: 1,
       now: () => {
         clock += 100
         return clock
@@ -297,26 +304,145 @@ describe('测速与选线', () => {
     expect(fastestRoute([])).toBeNull()
   })
 
-  it('测速缓存 6 小时内有效', () => {
-    const entries: SpeedEntry[] = []
-    expect(cacheFresh(null)).toBe(false)
-    expect(cacheFresh({ at: 1000, entries }, 1000 + 60_000)).toBe(true)
-    expect(cacheFresh({ at: 1000, entries }, 1000 + 7 * 60 * 60 * 1000)).toBe(false)
-    // 未来时间（改过系统时间）不算新鲜
-    expect(cacheFresh({ at: 5000, entries }, 1000)).toBe(false)
+  /*
+   * 并发。串行时代的痛点是：一条挂了要等满超时，六条线路最坏四十多秒都在转圈。
+   * 这里不测「快了多少」（那依赖真实网络），只测「确实同时在跑」且结果位置不变。
+   */
+  it('默认 3 条并发，结果仍按传入顺序摆放', async () => {
+    const routes = t.routes.slice(0, 4)
+    let running = 0
+    let peak = 0
+    const http = async (): Promise<ProbeResponse> => {
+      running += 1
+      peak = Math.max(peak, running)
+      await new Promise((r) => setTimeout(r, 8))
+      running -= 1
+      return { status: 200, headers: { 'content-length': '1024' }, bytes: 1024 }
+    }
+    const entries = await measureRoutes(routes, { http })
+    expect(peak).toBe(3)
+    expect(entries.map((e) => e.route.url)).toEqual(routes.map((r) => r.url))
+    expect(entries.every((e) => e.result.status === 'ok')).toBe(true)
   })
 
-  it('缓存键跟着附件走：换文件就重测', () => {
+  it('并发度可以调到 1，退回串行', async () => {
+    let running = 0
+    let peak = 0
+    const http = async (): Promise<ProbeResponse> => {
+      running += 1
+      peak = Math.max(peak, running)
+      await new Promise((r) => setTimeout(r, 4))
+      running -= 1
+      return { status: 200, headers: {}, bytes: 1024 }
+    }
+    await measureRoutes(t.routes.slice(0, 3), { http, concurrency: 1 })
+    expect(peak).toBe(1)
+  })
+})
+
+/* ---------------- 测速看板 ---------------- */
+
+describe('测速看板：一天只测一次', () => {
+  const t = apkTarget({
+    mirror: DEFAULT_MIRROR,
+    owner: 'o',
+    repo: 'r',
+    tag: 'v1',
+    asset: 'a.apk',
+    size: 1000,
+  })
+  const baseOf = (i: number) => t.routes[i].base.toLowerCase()
+
+  function entry(i: number, kbps: number, status: 'ok' | 'fail' = 'ok'): SpeedEntry {
+    const route = t.routes[i]
+    return {
+      route,
+      result: { base: route.base, label: route.label, style: route.style, status, ms: 120, bytes: 2048, kbps },
+    }
+  }
+
+  const day = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m, 0, 0).getTime()
+
+  it('同一天内有效，跨过零点就重测', () => {
+    const b = { at: day(20, 8, 31), samples: {} }
+    expect(boardFresh(b, day(20, 8, 32))).toBe(true)
+    expect(boardFresh(b, day(20, 23, 59))).toBe(true)
+    // 「每天一次」是自然日，不是滚动 24 小时：早上八点不该因为才过 20 小时又测一轮
+    expect(boardFresh(b, day(21, 0, 1))).toBe(false)
+    expect(boardFresh(null, day(20, 9))).toBe(false)
+  })
+
+  it('日期键按本地时区切', () => {
+    expect(dayKeyOf(day(20, 0, 0))).toBe('2026-11-20')
+    expect(dayKeyOf(day(20, 23, 59))).toBe('2026-11-20')
+    expect(dayKeyOf(day(21, 0, 0))).toBe('2026-11-21')
+  })
+
+  it('时间指向未来（被改过系统时间）一律重测', () => {
+    expect(boardFresh({ at: day(21, 9), samples: {} }, day(20, 9))).toBe(false)
+  })
+
+  it('坏数据当没有看板，不会让界面启动就崩', () => {
+    expect(parseSpeedBoard(null)).toBeNull()
+    expect(parseSpeedBoard('{')).toBeNull()
+    expect(parseSpeedBoard('{"at":1}')).toBeNull()
+    expect(parseSpeedBoard('{"at":1,"samples":{}}')).toEqual({ at: 1, samples: {} })
+  })
+
+  it('字段不全的样本被丢掉，其余保留且键归一成小写', () => {
+    const b = parseSpeedBoard(
+      JSON.stringify({
+        at: 100,
+        samples: {
+          'https://A.com': { kbps: 12, ms: 30, status: 'ok' },
+          'https://bad.com': { ms: 30 },
+          'https://Fail.com': { kbps: 0, ms: 8000, status: 'fail', error: '超时' },
+        },
+      }),
+    )
+    expect(b?.samples['https://a.com']).toMatchObject({ kbps: 12, status: 'ok' })
+    expect(b?.samples['https://bad.com']).toBeUndefined()
+    expect(b?.samples['https://fail.com']).toMatchObject({ status: 'fail', error: '超时' })
+  })
+
+  it('按站点存：换一个包、换一个版本，测过的结果照样能用', () => {
+    const b = boardOf([entry(0, 900), entry(1, 300)], day(20, 9))
     const other = assetTarget({
       mirror: DEFAULT_MIRROR,
-      owner: 'o',
-      repo: 'r',
-      tag: 'v2',
-      asset: 'b.apk',
+      owner: 'x',
+      repo: 'y',
+      tag: 'v9',
+      asset: 'b.zip',
       size: 1,
     })
-    expect(speedKey(t)).not.toBe(speedKey(other))
-    expect(speedKey(t)).toBe(speedKey(t))
+    const sameBase = other.routes.find((r) => r.base.toLowerCase() === baseOf(0))!
+    const got = entriesFromBoard([sameBase], b)
+    expect(got).toHaveLength(1)
+    expect(got[0].result.kbps).toBe(900)
+    // 还原出来的是「当前这个包的地址」，不是上次测的那个
+    expect(got[0].route.url).toBe(sameBase.url)
+  })
+
+  it('并进看板时保留别的站点，重测一条不会抹掉其余', () => {
+    const first = boardOf([entry(0, 900), entry(1, 300)], day(20, 9))
+    const second = boardOf([entry(1, 640)], day(20, 10), first)
+    expect(second.at).toBe(day(20, 10))
+    expect(second.samples[baseOf(0)].kbps).toBe(900)
+    expect(second.samples[baseOf(1)].kbps).toBe(640)
+  })
+
+  it('只补没有样本的线路，测过的不再拉一遍', () => {
+    const b = boardOf([entry(0, 900)], day(20, 9))
+    const missing = routesWithoutSample(t.routes, b)
+    expect(missing.map((r) => r.base.toLowerCase())).not.toContain(baseOf(0))
+    expect(missing).toHaveLength(t.routes.length - 1)
+    expect(routesWithoutSample(t.routes, null)).toHaveLength(t.routes.length)
+  })
+
+  it('没有样本的线路不出现在还原结果里', () => {
+    const b = boardOf([entry(0, 900)], day(20, 9))
+    expect(entriesFromBoard(t.routes, b)).toHaveLength(1)
+    expect(entriesFromBoard(t.routes, null)).toEqual([])
   })
 })
 

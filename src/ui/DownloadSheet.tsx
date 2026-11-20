@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  cacheFresh,
+  boardOf,
+  entriesFromBoard,
   etaSeconds,
   fastestRoute,
   formatEta,
@@ -8,14 +9,17 @@ import {
   modeHint,
   progressOf,
   rankRoutes,
+  readSpeedBoard,
   routeDetail,
   routeLabelOf,
+  routesWithoutSample,
   safeFileName,
-  speedKey,
   targetSummary,
+  writeSpeedBoard,
   type DownloadMode,
+  type DownloadRoute,
   type DownloadTarget,
-  type SpeedCache,
+  type SpeedBoard,
   type SpeedEntry,
 } from '../lib/download'
 import { formatSpeed, pickReachable } from '../lib/mirrors'
@@ -37,10 +41,14 @@ import { Icon } from './icons'
  * 三个入口（检查更新的安装包、任意仓库的发行版附件、仓库源码 ZIP）都开到这里：
  * 线路表、测速、选线、进度、安装是同一套，不该各写三遍。
  *
- * 测速结果按「附件 + 候选首地址」缓存在模块级 Map 里，同一个包再打开时
- * 直接沿用（6 小时），不会因为退出面板又重新拉 1 MB。
+ * 测速结果存在本机（localStorage），**按自然日一天只测一次**：候选线路是同一批
+ * 代理，下 A 包测过的结果对 B 包同样成立，没必要每开一个包就重测一轮。
+ * 跨过零点、或者用户点「重新测速」时才真的再拉一次。
  */
-const SPEED_MEM = new Map<string, SpeedCache>()
+function hhmm(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 type Phase = 'idle' | 'probing' | 'downloading' | 'installing' | 'done' | 'error'
 
@@ -56,11 +64,14 @@ interface Props {
 
 export function DownloadSheet(p: Props) {
   const native = nativeDownloadAvailable()
-  const key = speedKey(p.target)
-  const cached = SPEED_MEM.get(key)
 
-  const [entries, setEntries] = useState<SpeedEntry[]>(() => (cacheFresh(cached) ? (cached as SpeedCache).entries : []))
+  const [board, setBoard] = useState<SpeedBoard | null>(() => readSpeedBoard())
+  const [entries, setEntries] = useState<SpeedEntry[]>(() =>
+    entriesFromBoard(p.target.routes, readSpeedBoard()),
+  )
   const [probing, setProbing] = useState(false)
+  const [probeDone, setProbeDone] = useState(0)
+  const [probeTotal, setProbeTotal] = useState(0)
   const [picked, setPicked] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [progress, setProgress] = useState<{ bytes: number; total: number; kbps: number; startedAt: number } | null>(null)
@@ -148,26 +159,51 @@ export function DownloadSheet(p: Props) {
   const effectiveMode: DownloadMode = canInner ? (mustInner ? 'inner' : p.mode) : 'outer'
   const busy = phase === 'downloading' || phase === 'installing'
 
-  const measure = useCallback(async () => {
-    if (probing || p.target.routes.length === 0) return
-    setProbing(true)
-    const acc: SpeedEntry[] = []
-    await measureRoutes(p.target.routes, {
-      onResult: (entry) => {
-        acc.push(entry)
-        if (aliveRef.current) setEntries([...acc])
-      },
-    })
-    SPEED_MEM.set(key, { at: Date.now(), entries: acc })
-    if (aliveRef.current) setProbing(false)
-  }, [probing, key, p.target.routes])
+  /**
+   * 测速。传 only 就只测那几条（自动测速补齐缺的样本），不传则全测（用户点「重新测速」）。
+   *
+   * 并发 3 条，边测边点亮；测完把结果并进当天的看板，关闭面板再打开、甚至重启
+   * App 都直接命中，不再拉流量。
+   */
+  const measure = useCallback(
+    async (only?: DownloadRoute[]) => {
+      const targets = only ?? p.target.routes
+      if (probing || targets.length === 0) return
+      setProbing(true)
+      setProbeDone(0)
+      setProbeTotal(targets.length)
+      const acc: SpeedEntry[] = []
+      await measureRoutes(targets, {
+        onResult: (entry) => {
+          acc.push(entry)
+          if (!aliveRef.current) return
+          setProbeDone(acc.length)
+          setEntries((prev) => [...prev.filter((e) => e.route.url !== entry.route.url), entry])
+        },
+      })
+      const next = boardOf(acc, Date.now(), readSpeedBoard())
+      writeSpeedBoard(next)
+      if (!aliveRef.current) return
+      setBoard(next)
+      setProbing(false)
+    },
+    [probing, p.target.routes],
+  )
 
-  // 打开即测：用户要的就是「哪条快」。已有 6 小时内的结果就直接用。
-  // CI 产物不测：它只有一条线路，而且必须带令牌，HEAD 会直接 401。
+  /**
+   * 打开就出结果：当天测过就直接用，一条请求都不发。
+   *
+   * 只有「看板过期」或「有线路还没样本」（比如用户刚加了自定义站）时才补测，
+   * 而且只补缺的那几条 —— 不会因为多了一个站就把六条线路全拉一遍。
+   * CI 产物不测：它只有一条线路，且必须带令牌，HEAD 会直接 401。
+   */
   useEffect(() => {
     if (p.target.kind === 'artifact') return
-    if (entries.length === 0) void measure()
-    // 只在首次挂载时决定是否自动测速
+    const today = readSpeedBoard()
+    const missing = routesWithoutSample(p.target.routes, today)
+    if (missing.length === 0) return
+    void measure(missing)
+    // 只在首次挂载时决定要不要测
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -407,12 +443,16 @@ export function DownloadSheet(p: Props) {
           </span>
           <button className="multi-all" disabled={probing || busy} onClick={() => void measure()}>
             {probing
-              ? `测速中 ${entries.length}/${p.target.routes.length}`
+              ? `测速中 ${probeDone}/${probeTotal}`
               : entries.length > 0
                 ? '重新测速'
                 : '开始测速'}
           </button>
         </div>
+
+        {!probing && board && entries.length > 0 && (
+          <div className="dl-note">今天 {hhmm(board.at)} 测过 · 每天自动测一次</div>
+        )}
 
         <div className="multi-list">
           {order.map((r, i) => {

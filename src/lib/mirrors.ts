@@ -413,7 +413,14 @@ export async function pickReachable(candidates: string[], probe: ReachProbe): Pr
 
 /** 单次探测拉多少字节。够看出吞吐，又不至于在移动网络下太费流量 */
 export const PROBE_BYTES = 256 * 1024
-export const PROBE_TIMEOUT = 8000
+/**
+ * 单条线路的超时。
+ *
+ * 8 秒是串行时代的数字 —— 那时一条挂掉就白等 8 秒，六条能拖到 48 秒。
+ * 现在是并发测，超时只需覆盖「建连 + 前 256 KB」，6 秒足够；真慢到 6 秒还
+ * 没吐完的线路，就算通了也不该排在第一位。
+ */
+export const PROBE_TIMEOUT = 6000
 /** 测速结果有效期：6 小时内冷启动直接沿用，不重复测 */
 export const SPEED_TTL = 6 * 60 * 60 * 1000
 
