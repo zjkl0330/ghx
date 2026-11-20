@@ -172,10 +172,12 @@ def main():
         pg.wait_for_timeout(1200)
         after = pg.evaluate("document.documentElement.dataset.font")
         assert after == 'system', f'刷新后字体偏好丢了：{after}'
-        print(f'[4] 刷新后仍是 {after}')
+        pg.wait_for_selector('.rows .row', timeout=20000)
+        pg.wait_for_timeout(900)
+        pg.screenshot(path=f'{OUT}/font-086-system.png')
+        print(f'[4] 刷新后仍是 {after}，列表页已截图用于对照')
 
         # ── 5. 切回 OPPO Sans ──
-        pg.wait_for_selector('.rows .row', timeout=20000)
         pg.click('.avatar-btn')
         pg.wait_for_timeout(700)
         pg.click('text=设置')
