@@ -67,28 +67,41 @@
    */
   /* 玻璃拆成四个可调项：tint、alpha、blur、saturate。
      设置里的「通透 / 标准 / 厚实」只改这四项，底栏结构不用动。 */
-  --glass-tint: 24, 29, 36;
-  --glass-alpha: 0.26;
+  /*
+   * 液态玻璃的 tint 必须是白色，不能是页面底色。
+   * 用页面底色（24,29,36）时，玻璃叠在 #0D1117 上算出来是 rgb(17,21,28)，
+   * 与底色对比度 1.03:1 —— 眼睛判定「这里没有东西」，再降 alpha 也没用。
+   * 掺白之后才会在滚动内容上留下一层可辨认的薄雾，背后文字轮廓仍然透得出来。
+   */
+  --glass-tint: 255, 255, 255;
+  --glass-alpha: 0.075;
   --glass-blur: 12px;
-  --glass-sat: 185%;
-  --glass-bg: rgba(var(--glass-tint), var(--glass-alpha));
-  --glass-line: rgba(255, 255, 255, 0.16);
-  --glass-sheen: rgba(255, 255, 255, 0.36);
+  --glass-sat: 190%;
+  /*
+   * 底色改成自上而下的渐变：上缘约 1/5 浓度，下缘全浓度。
+   * 内容从上方滚入时先碰到几乎没有底色的区域，再逐渐化进玻璃里，
+   * 而不是在边界上被一刀切成两段。顶部不是 0：完全为 0 时玻璃上缘会消失，
+   * 只剩一片悬空的模糊，反而看不出「有一层东西」。
+   */
+  --glass-bg: linear-gradient(
+    to bottom,
+    rgba(var(--glass-tint), calc(var(--glass-alpha) * 0.22)) 0%,
+    rgba(var(--glass-tint), calc(var(--glass-alpha) * 0.62)) 44%,
+    rgba(var(--glass-tint), var(--glass-alpha)) 100%
+  );
+  --glass-line: rgba(255, 255, 255, 0.1);
+  --glass-sheen: rgba(255, 255, 255, 0.14);
   --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   /*
-   * 1px 镜面环：玻璃的边会反光，塑料板的边不会 —— 这是两者最省成本的分界。
-   * 亮部固定在左上（320deg–60deg）与右下（180deg 附近），方向和投影一致。
-   * 首尾必须同色，否则 360deg 接回 0deg 会留一道硬接缝。
+   * 上缘高光代替整圈描边。
+   * 整圈 1px 环在小尺寸下读起来就是一条分割线 —— 正是液态玻璃要去掉的那种硬边。
+   * 现在只留朝内容那一侧的 1px，且在 62% 处彻底消失，边界由渐变 + 投影交代。
    */
-  --glass-rim: conic-gradient(
-    from 205deg at 50% 50%,
-    rgba(255, 255, 255, 0.55) 0deg,
-    rgba(255, 255, 255, 0.07) 60deg,
-    rgba(255, 255, 255, 0.02) 120deg,
-    rgba(255, 255, 255, 0.28) 180deg,
-    rgba(255, 255, 255, 0.03) 250deg,
-    rgba(255, 255, 255, 0.4) 320deg,
-    rgba(255, 255, 255, 0.55) 360deg
+  --glass-rim: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.05) 24%,
+    rgba(255, 255, 255, 0) 58%
   );
   --glass-active-top: rgba(var(--accent-rgb), 0.42);
   --glass-active-bottom: rgba(var(--accent-rgb), 0.24);
@@ -96,8 +109,9 @@
   --glass-active-glow: rgba(var(--accent-rgb), 0.2);
   --tab-active-fg: #eaf3ff;
   --tab-fg: #97a1ad;
-  --tab-label-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  --tab-active-base: rgba(11, 17, 27, 0.5);
+  /* 微弱即可：底栏背后的正文已被模糊过，阴影只用来拉开一点点对比 */
+  --tab-label-shadow: 0 1px 2px rgba(0, 0, 0, 0.38);
+  --tab-active-base: rgba(255, 255, 255, 0.1);
 
   --radius: 10px;
   /* 底栏高度：只留图标时收窄到 50px，页面让位也跟着它走 */
@@ -165,25 +179,32 @@
    * - alpha 0.2：0.6 时合成色是 rgb(246,248,250)，和 #FFFFFF 差 5 级，眼睛判定为实心；
    * - blur 6px：CSS 的 blur(σ) 是高斯核标准差，σ=20px 时 3σ=60px > 胶囊高度，
    *   一行 14px 的正文被平均成纯色，透是透了，什么都看不见。σ=6px 才留得住字块轮廓。
-   * tint 用近白冷调（236,241,249），白叠白等于没有，必须差一点点才有「玻璃」可言。 */
-  --glass-tint: 236, 241, 249;
-  --glass-alpha: 0.2;
-  --glass-blur: 6px;
-  --glass-sat: 175%;
-  --glass-bg: rgba(var(--glass-tint), var(--glass-alpha));
-  --glass-line: rgba(31, 35, 40, 0.12);
-  --glass-sheen: rgba(255, 255, 255, 0.95);
+   *
+   * 液态玻璃这里用纯白 0.1（按设计要求给到 rgba(255,255,255,0.1)）。
+   * 注意白叠白在纯白页面上等于不存在 —— 浅色下这一层能看出「有玻璃」全靠
+   * 模糊把滚过的文字抹开、以及上缘那道渐隐高光，不是靠底色。所以 blur 提到 12px：
+   * 模糊本身是浅色主题唯一的边界证据，压到 6px 就只剩一层看不见的膜。
+   */
+  --glass-tint: 255, 255, 255;
+  --glass-alpha: 0.1;
+  --glass-blur: 12px;
+  --glass-sat: 190%;
+  --glass-bg: linear-gradient(
+    to bottom,
+    rgba(var(--glass-tint), calc(var(--glass-alpha) * 0.22)) 0%,
+    rgba(var(--glass-tint), calc(var(--glass-alpha) * 0.62)) 44%,
+    rgba(var(--glass-tint), var(--glass-alpha)) 100%
+  );
+  --glass-line: rgba(31, 35, 40, 0.08);
+  --glass-sheen: rgba(255, 255, 255, 0.5);
   --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-  /* 浅色的镜面环是「白亮」的：亮部更实，暗部只用极淡的灰，避免一圈脏边 */
-  --glass-rim: conic-gradient(
-    from 205deg at 50% 50%,
-    rgba(255, 255, 255, 1) 0deg,
-    rgba(255, 255, 255, 0.55) 60deg,
-    rgba(31, 35, 40, 0.06) 130deg,
-    rgba(255, 255, 255, 0.82) 195deg,
-    rgba(31, 35, 40, 0.05) 265deg,
-    rgba(255, 255, 255, 0.9) 330deg,
-    rgba(255, 255, 255, 1) 360deg
+  /* 上缘高光代替整圈描边：白玻璃的边缘是「亮」的，但一条 1px 白线就是分割线，
+     所以让它向下 60% 处化没，只留一点点反光的暗示 */
+  --glass-rim: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.7) 0%,
+    rgba(255, 255, 255, 0.26) 20%,
+    rgba(255, 255, 255, 0) 56%
   );
   /* 选中项退回浅灰药丸（不是蓝块），图标与文字用品牌蓝 —— 白玻璃上压一块蓝会显脏 */
   --glass-active-top: rgba(15, 23, 42, 0.075);
@@ -193,8 +214,8 @@
   --tab-active-fg: rgb(var(--accent-rgb));
   /* 白玻璃上灰得太淡会飘，未选中项压到近黑 */
   --tab-fg: #3d444d;
-  --tab-label-shadow: 0 1px 2px rgba(255, 255, 255, 0.7);
-  --tab-active-base: rgba(15, 23, 42, 0.045);
+  --tab-label-shadow: 0 1px 2px rgba(255, 255, 255, 0.85);
+  --tab-active-base: rgba(255, 255, 255, 0.55);
 }
 
 /* ---- 外观预览 ----
@@ -298,25 +319,28 @@ html[data-tabbar='dock'] .look-preview .tabbar {
 }
 
 /* ---- 玻璃厚度 ----
- * 浅色的 alpha 必须单独给：tint 是冷白，直接套深色的 0.18 会透成一层灰纱。
+ * 三档共用同一套液态玻璃结构，只改浓度与模糊半径。
+ * blur 严格留在 10–16px：低于 10 时背后文字几乎不糊（像没做玻璃），
+ * 高于 16 时 3σ 已经超过栏高，字块被平均成一片色斑，轮廓彻底消失。
+ * 浅色的 alpha 必须单独给：白玻璃在白页面上本来就吃亏，只能比深色更低。
  */
 :root[data-glass='clear'] {
-  --glass-alpha: 0.18;
-  --glass-blur: 9px;
+  --glass-alpha: 0.05;
+  --glass-blur: 10px;
 }
 :root[data-theme='light'][data-glass='clear'] {
-  --glass-alpha: 0.12;
-  --glass-blur: 5px;
+  --glass-alpha: 0.06;
+  --glass-blur: 10px;
 }
 :root[data-glass='thick'] {
-  --glass-alpha: 0.46;
-  --glass-blur: 18px;
-  --glass-sat: 150%;
+  --glass-alpha: 0.18;
+  --glass-blur: 16px;
+  --glass-sat: 170%;
 }
 :root[data-theme='light'][data-glass='thick'] {
-  --glass-alpha: 0.5;
-  --glass-blur: 14px;
-  --glass-sat: 160%;
+  --glass-alpha: 0.24;
+  --glass-blur: 16px;
+  --glass-sat: 175%;
 }
 
 /* ---- 底栏只留图标 ---- */
@@ -334,7 +358,8 @@ html[data-tablabel='icon'] .tabbar .tab-label {
 
 /* ---- 底栏贴底通栏 ----
  * 圆角只保留顶部两个角；底部要给手势条让位，所以高度和 padding 都带上 safe-bottom。
- * 投影方向反过来朝上，否则通栏底栏会像一张浮在半空的纸。
+ * 投影方向反过来朝上，否则通栏底栏会像一张浮在半空的纸；
+ * 但也不再加 inset 底边线 —— 那就是一条分割线。
  */
 html[data-tabbar='dock'] .tabbar {
   bottom: 0;
@@ -343,18 +368,16 @@ html[data-tabbar='dock'] .tabbar {
   padding: 5px 6px calc(5px + var(--safe-bottom));
   border-radius: 20px 20px 0 0;
   box-shadow:
-    0 -8px 26px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 var(--glass-sheen),
-    inset 0 0 18px rgba(255, 255, 255, 0.03);
+    0 -10px 28px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 var(--glass-sheen);
 }
 
-/* 浅色通栏在白页面上几乎融成一片，只靠投影分不出边界；
-   补一条 1px 顶边（比投影更容易被看见，也不会像一圈深色描边那样脏） */
+/* 浅色通栏在白页面上几乎融成一片，但也不能补一条 1px 顶边（那正是要去的分割线）；
+   改用朝上的淡影 + 上缘渐变高光，边界由模糊本身交代。 */
 html[data-theme='light'][data-tabbar='dock'] .tabbar {
-  border-top-color: rgba(31, 35, 40, 0.09);
   box-shadow:
-    0 -6px 22px rgba(31, 35, 40, 0.12),
-    inset 0 1px 0 #ffffff;
+    0 -8px 24px rgba(31, 35, 40, 0.07),
+    inset 0 1px 0 var(--glass-sheen);
 }
 
 /* 通栏时背后的压暗层要更高一点，否则正文会直接撞在底栏顶上 */
@@ -794,13 +817,35 @@ textarea {
   z-index: 23;
   pointer-events: none;
   background:
-    radial-gradient(64% 120% at 50% 108%, rgba(var(--accent-rgb), 0.1), transparent 66%),
+    radial-gradient(64% 120% at 50% 108%, rgba(var(--accent-rgb), 0.06), transparent 66%),
     linear-gradient(
       to top,
-      rgba(1, 4, 9, 0.5) 0%,
-      rgba(1, 4, 9, 0.22) 46%,
+      rgba(1, 4, 9, 0.1) 0%,
+      rgba(1, 4, 9, 0.04) 46%,
       rgba(1, 4, 9, 0) 100%
     );
+  /*
+   * 压暗层必须很浅。
+   *
+   * 它铺在正文和底栏之间，压重了正文就变成一片黑，玻璃再薄也只能透出黑色 ——
+   * 于是「高透」在截图上表现为一条深色实心条。0.1 是实测出来「能托住浅色图标、
+   * 又不吃掉背后文字」的位置：再往上加，底栏区域的像素均值就与滚动位置无关了
+   * （见 scripts/verify-glass.py 的对照采样），等于一块实心板。
+   */
+  /*
+   * 渐变模糊遮罩：底栏顶上那一段不能突然开始糊。
+   *
+   * 只给 .tabbar 加 backdrop-filter 的话，模糊边界是一条硬线 —— 文字滚到底栏上缘时
+   * 从「完全清晰」跳到「完全模糊」，比颜色硬边更刺眼。这一层铺在正文与底栏之间，
+   * 自己再糊一遍，并用 mask 让模糊从底栏内部往上逐渐消失，于是文字是「化」进玻璃的。
+   *
+   * mask 的全显范围只覆盖底栏本身（132px 的 44% ≈ 58px），往上 28% 渐隐；
+   * 同时把原来的压暗渐变压成同一个形状，两者边界一致，不会出现两种不同的过渡。
+   */
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 2px)) saturate(var(--glass-sat));
+  backdrop-filter: blur(calc(var(--glass-blur) + 2px)) saturate(var(--glass-sat));
+  -webkit-mask-image: linear-gradient(to top, #000 0 44%, rgba(0, 0, 0, 0) 72%);
+  mask-image: linear-gradient(to top, #000 0 44%, rgba(0, 0, 0, 0) 72%);
 }
 
 html[data-theme='light'] .glass-backdrop {
@@ -828,14 +873,13 @@ html[data-theme='light'] .glass-backdrop {
  *    透不出形状，眼睛就判定成不透明。
  * 3. brightness(1.02) 作用在 (13,17,23) 上取整后完全不变，是空操作；浅色下还会被 clip。
  *
- * 现在：
- * - tint 压到 0.30，背后七成内容能穿过来（浅色不能用纯白 tint，数学上等于不存在）；
- * - blur 14px，保住色块的位置与走向；saturate 只负责保色，不再提亮；
- * - 存在感交给 1px conic 镜面环 + 顶边镜面线：双层 background，
- *   padding-box 铺底色、border-box 只露那一圈渐变；
- * - 投影收紧：0 18px 42px 太散，看起来像浮起来的卡片；
- * - 可读性交给背后的 .glass-backdrop 压暗层，而不是加厚 tint ——
- *   这是 HIG 对 clear 变体的做法：不透明度加在玻璃背后，不是加在玻璃上。
+ * 现在（液态玻璃）：
+ * - tint 用白色，alpha 0.075（浅色 0.1），背后九成内容能穿过来；
+ * - blur 12px，保住色块的位置与走向；saturate 只负责保色，不再提亮；
+ * - **没有边框、没有整圈镜面环、没有内阴影硬线** —— 那三样在小尺寸下就是「分割线」；
+ *   边界交给上缘渐变高光（向下 62% 化没）+ 一层很淡的外投影；
+ * - 底色本身是自上而下的渐变，内容滚入时逐渐加浓，不是一刀切换；
+ * - 可读性交给背后的 .glass-backdrop（压暗 + 渐变模糊），而不是加厚 tint。
  */
 .tabbar {
   position: fixed;
@@ -853,24 +897,19 @@ html[data-theme='light'] .glass-backdrop {
   align-items: stretch;
   gap: 2px;
   border-radius: 27px;
-  border: 1px solid transparent;
   /*
-   * 底色只有一层，镜面环不跟它挤在同一组 background 里。
+   * 不画边框。
+   * 之前那 `1px solid transparent` 是为了给 conic 镜面环留位置；环已经换成
+   * ::after 里的一道上缘渐变，边框就只剩「多算 2px 尺寸」这一个作用了。
    *
-   * 之前写的是 `linear-gradient(玻璃色) padding-box, conic(镜面环) border-box`，
-   * 想用 padding-box 那层盖住环的内侧、只露 1px 边。这招只在不透明底色下成立：
-   * 玻璃是半透明的，压不住底下那层 conic —— 环里 0deg/360deg 是纯白，
-   * 于是一整块底栏被垫成了白板，alpha 调到 0.18 也一样白。
-   * 这正是「浅色下怎么调都不透」的真正原因，不是色值问题。
-   * 环现在由 ::after 用 mask 只留 1px 边，见下面 .tabbar::after。
+   * 这里也彻底不放 conic 底色层：半透明玻璃压不住它，环里的纯白段会把整块底栏
+   * 垫成白板（alpha 调到 0.18 也一样白）—— 那是「浅色怎么调都不透」的真正原因。
    */
   background: var(--glass-bg);
   box-shadow:
-    0 10px 26px rgba(0, 0, 0, 0.38),
-    0 2px 6px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 var(--glass-sheen),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
-    inset 0 0 18px rgba(255, 255, 255, 0.035);
+    0 12px 30px rgba(0, 0, 0, 0.26),
+    0 2px 8px rgba(0, 0, 0, 0.14),
+    inset 0 1px 0 var(--glass-sheen);
   -webkit-backdrop-filter: var(--glass-filter);
   backdrop-filter: var(--glass-filter);
   z-index: 24;
@@ -882,16 +921,14 @@ html[data-theme='light'] .glass-backdrop {
 }
 
 /*
- * 浅色玻璃的投影要单独给：深色那套 38% 黑压在白纸上是一圈脏影，
- * 玻璃的边界感靠 1px 环 + 一层很浅的扩散影就够了。
+ * 浅色玻璃的投影要单独给：深色那套 26% 黑压在白纸上是一圈脏影。
+ * 白色玻璃在白页面上没有底色差，边界只剩一层很淡的扩散影 + 上缘高光。
  */
 :root[data-theme='light'] .tabbar {
   box-shadow:
-    0 8px 24px rgba(31, 35, 40, 0.13),
-    0 1px 3px rgba(31, 35, 40, 0.09),
-    inset 0 1px 0 var(--glass-sheen),
-    inset 0 -1px 0 rgba(31, 35, 40, 0.05),
-    inset 0 0 18px rgba(255, 255, 255, 0.1);
+    0 10px 26px rgba(31, 35, 40, 0.1),
+    0 1px 3px rgba(31, 35, 40, 0.06),
+    inset 0 1px 0 var(--glass-sheen);
 }
 
 /*
@@ -908,17 +945,17 @@ html[data-ime='1'] .actionbar {
 }
 
 /* 老 WebView 不认 backdrop-filter：把底色叠回不透明，绝不能让正文透出来。
-   这里要补回实色描边 —— 正常情况下边框是 transparent、由 conic 镜面环占位，
-   没有 filter 的机器上那圈渐变换成纯色，边框不补会露出一条窗口底色。 */
+   这时候也没有「渐变淡出」可言（没有模糊，半透明只会变成一层脏纱），
+   所以补一条实色描边把边界说清楚 —— 正常路径下这条边是不存在的。 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .tabbar {
     background: rgba(19, 24, 31, 0.96);
-    border-color: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.16);
   }
 
   :root[data-theme='light'] .tabbar {
     background: rgba(249, 251, 253, 0.97);
-    border-color: rgba(31, 35, 40, 0.12);
+    border: 1px solid rgba(31, 35, 40, 0.12);
   }
 }
 
@@ -1001,6 +1038,15 @@ html[data-ime='1'] .actionbar {
   font-weight: 600;
 }
 
+/*
+ * 图标也要「浮」在模糊层之上。
+ * text-shadow 管不到 SVG，用 drop-shadow 跟着图形描边（不是给整个方框投一块影）。
+ * 浅色主题不加：那里的图标本身是深色，白影反而会让边缘发毛。
+ */
+.tabbar button svg {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.32));
+}
+
 /* 选中态：一枚内嵌的玻璃药丸，比纯文字变色更像「按下去的那一格」 */
 .tabbar button.on::before {
   content: '';
@@ -1027,30 +1073,12 @@ html[data-ime='1'] .actionbar {
   transform: scale(0.95);
 }
 
-/* 浅色玻璃的顶边更亮：白玻璃的反光比深色明显。
-   仍然只贴边 —— 铺满整片会把 tint 冲成纯白，玻璃又变回一块白板。 */
-html[data-theme='light'] .tabbar::before {
-  background:
-    radial-gradient(120% 80% at 14% -34%, rgba(255, 255, 255, 0.72), transparent 46%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent 40%);
-}
+/* 这里原先还有一条 `html[data-theme='light'] .tabbar::before`，
+   铺 72% 的白径向光。它的选择器特异性低于上面的 `:root[...]` 版本，
+   从来没有生效过；而且不带噪点层，一旦生效会把砂面丢掉。已删除。 */
 
-/* 浅色玻璃的边缘是「亮」的，不是「暗」的：白色镜面环 + 底部反光，
-   深色那套 inset 暗线照搬过来会变成一圈灰边，像贴在页面上的塑料片。
-   注意这里不能再写 border-color —— 边框已经是 transparent，实色会盖掉 conic 镜面环。 */
-html[data-theme='light'] .tabbar {
-  box-shadow:
-    0 9px 22px rgba(31, 35, 40, 0.12),
-    0 2px 6px rgba(31, 35, 40, 0.06),
-    inset 0 1px 0 #ffffff,
-    inset 0 -1px 0 rgba(255, 255, 255, 0.6);
-}
-
-/* 浅色主题下白噪点几乎不可见，砂面另用一层暗颗粒压出来 */
-html[data-theme='light'] .tabbar::after {
-  opacity: 0.42;
-  filter: invert(1);
-}
+/* 上缘高光已经由 --glass-rim 的渐变本身表达（白色 → 透明），
+   不再用 invert 反向压暗：那样会把白玻璃的上缘翻成一条灰线，正是要去的分割线。 */
 
 /* 底栏脱离文档流后，页面末尾要自己让出这段高度 */
 .app.with-tabs > .page {
