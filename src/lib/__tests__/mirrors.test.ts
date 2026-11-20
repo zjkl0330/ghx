@@ -503,6 +503,37 @@ describe('安装包下载线路', () => {
     expect(list.filter((u) => u.startsWith('https://gh-proxy.com/')).length).toBe(1)
   })
 
+  /*
+   * 回归：开了「自动选最快」后，后台会把当前镜像切成某条公共代理，
+   * 自建站不再是 selected，于是从候选表里整个消失 —— 用户看到的就是
+   * 「我的加速站不见了」。它必须固定占一位，位置紧跟在选中站之后。
+   */
+  it('自动切到公共代理后，自建站仍固定占第二位', () => {
+    const list = releaseCandidates('https://gitproxy.click', 'o', 'r', 'v1', 'a.apk')
+    expect(list[0]).toBe('https://gitproxy.click/o/r/releases/download/v1/a.apk')
+    expect(list[1]).toBe(`${DEFAULT_MIRROR}/o/r/releases/download/v1/a.apk`)
+    expect(list[list.length - 1]).toBe('https://github.com/o/r/releases/download/v1/a.apk')
+    expect(list.length).toBe(7)
+  })
+
+  it('当前镜像就是官方时，自建站也照样在表里', () => {
+    const list = releaseCandidates('https://github.com', 'o', 'r', 'v1', 'a.apk')
+    expect(list[0]).toBe(`${DEFAULT_MIRROR}/o/r/releases/download/v1/a.apk`)
+    expect(list[list.length - 1]).toBe('https://github.com/o/r/releases/download/v1/a.apk')
+  })
+
+  it('设置页把自建站改成新地址后，下载候选跟着走', () => {
+    const list = releaseCandidates('https://gh-proxy.com', 'o', 'r', 'v1', 'a.apk', [], 'https://new.example.com')
+    expect(list[1]).toBe('https://new.example.com/o/r/releases/download/v1/a.apk')
+    expect(list).not.toContain(`${DEFAULT_MIRROR}/o/r/releases/download/v1/a.apk`)
+  })
+
+  it('自建站在表里只出现一次，不会因为「选中 + 固定位」排两条', () => {
+    const list = releaseCandidates(DEFAULT_MIRROR, 'o', 'r', 'v1', 'a.apk')
+    expect(list.filter((u) => u.startsWith(`${DEFAULT_MIRROR}/`)).length).toBe(1)
+    expect(new Set(list.map((u) => u.toLowerCase())).size).toBe(list.length)
+  })
+
   it('资产名里的空格与 # 会被编码，不会把路径截断', () => {
     const list = releaseCandidates(DEFAULT_MIRROR, 'o', 'r', 'v1.0.0', 'gh x#1.apk')
     expect(list[0]).toContain('gh%20x%231.apk')

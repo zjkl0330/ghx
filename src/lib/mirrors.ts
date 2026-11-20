@@ -27,6 +27,32 @@ export interface MirrorDef {
 /** 自建站点：既是默认下载镜像，也是唯一保证能翻网页的镜像 */
 export const DEFAULT_MIRROR = 'https://gh.zjkl0330.dpdns.org'
 
+/**
+ * 自建站当前的真实地址（设置页改过地址就用新的）。
+ *
+ * 自建 worker 换域名比公共代理勤，所以站点表允许把 id=zjkl 的地址改掉；
+ * 下载候选表必须跟着走，否则会出现「地址改完了，下载还在走旧域名」。
+ */
+export function selfMirrorBase(): string {
+  const hit =
+    REGISTRY.find((m) => m.id === 'zjkl' && m.base) ??
+    BUILTIN_MIRRORS.find((m) => m.id === 'zjkl')
+  return normalizeBase(hit?.base ?? '') || DEFAULT_MIRROR
+}
+
+/** 保序去重（大小写不敏感），地址列表通用 */
+function uniqUrls(list: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const url of list) {
+    const key = (url ?? '').toLowerCase()
+    if (!url || seen.has(key)) continue
+    seen.add(key)
+    out.push(url)
+  }
+  return out
+}
+
 export const OFFICIAL_MIRROR: MirrorDef = {
   id: 'official',
   label: '官方直连',
@@ -337,11 +363,11 @@ export function releasePageUrl(base: string, owner: string, repo: string, tag?: 
  *   ghfast.top          3.28s
  *   ghproxy.net         3.46s
  *
- * 只放前两条是给官方直连留位置，官方却是「首包快、后段慢」，所以候选表
- * 反过来做：先把能吃包的代理铺满，官方排在最后。gitproxy.click 实测对同一
- * 资产回 `200` 但只有 195 字节（是错误页），不能进表。
+ * gitproxy.click 实测对同一资产回 `200` 但只有 195 字节（是错误页），
+ * 不能进表。
  *
- * 自建站不在此列：它把资产 302 到 `release-assets-…` 子域，那条链路返回 522。
+ * 自建站同样不在这个表里 —— 它由 releaseCandidates() 单独、无条件地插进
+ * 候选（见该函数注释），不用公共代理表兜。
  */
 export const KNOWN_RELEASE_PROXIES = [
   'https://ghproxy.imciel.com',
@@ -353,15 +379,22 @@ export const KNOWN_RELEASE_PROXIES = [
 /**
  * 下载候选：能吃包的代理排前面，官方直连永远垫底。
  *
- * 两件事共同决定这个顺序：
+ * 三件事共同决定这个顺序：
  *
  * - 用户选中的站排最前 —— 站点修好之后必须立刻恢复默认线路，不能因为兜底表
  *   存在就永久绕开它。它真的坏了也不会卡住，探活会跳过。
+ * - **自建站固定占一位，紧跟在选中站后面**。这不是冗余：开了「自动选最快」
+ *   之后 selected 会在后台被换成某条公共代理，自建站就不再是 selected，
+ *   于是从表里整个消失 —— 用户看到的就是「我的加速站不见了」。它现在是好的
+ *   （2026-11-20 实测：APK 走 Range 回 `206`、`content-range: 0-1023/21253906`
+ *   与发布包一致；拉 3 MB 约 3.9 s；源码 ZIP 直接 `200` + `content-type: zip`），
+ *   理应永远在候选里，只是排位交给测速决定。
  * - **官方直连不进前三**。它建连快、首包快，256 KB 测速常年第一，但长时段
  *   吞吐会掉下来（跨境链路 + 无缓存），几百 KB 的探针根本反映不出这一点。
  *   所以这里把它固定在末尾：只有代理全挂时才轮到它。
  *
- * 当前镜像本身就是官方时不再重复占位，直接走最后那一条。
+ * 上限 7 条 = 选中 1 + 自建 1 + 公共代理 4 + 官方 1，正好装得下，但截断时
+ * 仍然单独保护官方那一条，避免以后加代理把它挤掉。
  */
 export function releaseCandidates(
   base: string,
@@ -370,23 +403,23 @@ export function releaseCandidates(
   tag: string,
   asset: string,
   proxies: string[] = KNOWN_RELEASE_PROXIES,
+  selfBase: string = selfMirrorBase(),
 ): string[] {
   const official = 'https://github.com'
   const path = `${seg(owner)}/${seg(repo)}/releases/download/${seg(tag)}/${seg(asset)}`
-  const out: string[] = []
-  if (base && normalizeBase(base) !== official) out.push(githubUrlAt(base, path))
-  for (const p of proxies) if (p) out.push(githubUrlAt(p, path))
-  out.push(githubUrlAt(official, path))
+  const officialUrl = githubUrlAt(official, path)
+  const chosen = normalizeBase(base)
+  const self = normalizeBase(selfBase)
 
-  const seen = new Set<string>()
-  const uniq: string[] = []
-  for (const url of out) {
-    const key = url.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    uniq.push(url)
+  const head: string[] = []
+  if (chosen && chosen !== official) head.push(githubUrlAt(chosen, path))
+  if (self && self !== official && self.toLowerCase() !== chosen.toLowerCase()) {
+    head.push(githubUrlAt(self, path))
   }
-  return uniq.slice(0, 6)
+  for (const p of proxies) if (p) head.push(githubUrlAt(p, path))
+
+  const others = uniqUrls(head).filter((u) => u !== officialUrl)
+  return [...others.slice(0, 6), officialUrl]
 }
 
 /** 探活回调：true 表示这条线路能下 */

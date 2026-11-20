@@ -12,15 +12,18 @@
  * 所以这里产出的是「候选列表」，按最可能通的顺序排列，交给调用方探活，
  * 第一个能通的才真正交给浏览器。
  */
-import { githubUrlAt, mirrorDefFor, normalizeBase } from './mirrors'
+import { githubUrlAt, mirrorDefFor, normalizeBase, selfMirrorBase } from './mirrors'
 
 export const CODELOAD_BASE = 'https://codeload.github.com'
 
 /**
- * 实测（2026-11）能吃 codeload 的反代只有 gh-proxy.com：
- * ghfast.top / ghproxy.net 直接 403，ghproxy.imciel.com 404，
- * 自建站只代理 github.com，302 出去还是让浏览器连 codeload。
+ * 实测（2026-11）能吃 codeload 的公共反代只有 gh-proxy.com：
+ * ghfast.top / ghproxy.net 直接 403，ghproxy.imciel.com 404。
  * 所以它要排在「当前镜像」后面单独占一位，不能指望运气。
+ *
+ * 自建站曾经也只代理 github.com（302 出去让浏览器自己连 codeload，国内常失败），
+ * 但 2026-11-20 复查已能自己把 zip 取回来（`200` + `content-type: zip`，
+ * 带 etag / cache-control），所以它作为独立候选固定留在表里。
  */
 export const KNOWN_CODELOAD_PROXIES = ['https://gh-proxy.com']
 
@@ -65,11 +68,13 @@ export function archiveViaMirror(mirror: string, owner: string, repo: string, re
  * 候选地址，按「最可能通」排序。顺序是踩出来的，不是拍脑袋：
  *
  * 1. 当前镜像是 url 型 → 先让它试 codeload（成了最快，一步到位）；
- * 2. 已知能吃 codeload 的反代（gh-proxy.com）—— 自建站 302 出去连不上时全靠它；
- * 3. 当前镜像的 github archive 路径 —— 它只是个 302，能否成功取决于浏览器能不能直连 codeload；
- * 4. 官方 codeload 兜底（能直连 GitHub 的环境走这条）。
+ * 2. 已知能吃 codeload 的公共反代（gh-proxy.com）；
+ * 3. 自建站 —— 和 release 候选同理，不能只在「当前镜像就是它」时才出现，
+ *    否则后台自动选最快一切换，用户自己的加速站就从列表里消失了；
+ * 4. 当前镜像的 github archive 路径 —— 能通就通，通不了还有下一条；
+ * 5. 官方 codeload 兜底（能直连 GitHub 的环境走这条）。
  *
- * 去重，最多四条：探活是一条条等的，再多就要等到用户以为没反应。
+ * 去重，最多五条：探活是一条条等的，再多就要等到用户以为没反应。
  */
 export function archiveCandidates(
   mirror: string,
@@ -77,13 +82,18 @@ export function archiveCandidates(
   repo: string,
   ref: string,
   proxies: string[] = KNOWN_CODELOAD_PROXIES,
+  selfBase: string = selfMirrorBase(),
 ): string[] {
   const def = mirrorDefFor(mirror)
+  const self = normalizeBase(selfBase)
   const out: string[] = []
 
   if (def.base && def.style === 'url') out.push(codeloadViaProxy(def.base, owner, repo, ref))
   for (const base of proxies) {
     if (base) out.push(codeloadViaProxy(base, owner, repo, ref))
+  }
+  if (self && self !== normalizeBase(def.base)) {
+    out.push(archiveViaMirror(self, owner, repo, ref))
   }
   out.push(archiveViaMirror(mirror, owner, repo, ref))
   out.push(`${CODELOAD_BASE}/${codeloadPath(owner, repo, ref)}`)
@@ -96,7 +106,7 @@ export function archiveCandidates(
     seen.add(key)
     uniq.push(url)
   }
-  return uniq.slice(0, 4)
+  return uniq.slice(0, 5)
 }
 
 export type ArchiveProbe = (url: string) => Promise<boolean>

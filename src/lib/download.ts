@@ -343,22 +343,33 @@ export async function measureRoutes(
  * 所有可用代理之后 —— 探针只拉 256 KB，测的是建连与首包，而官方直连真正
  * 难受的地方在于拉长之后的吞吐衰减，那一段测速根本看不见。
  */
+/**
+ * 排序：成功的按速度降序，失败沉底，**官方直连永远垫底**。
+ *
+ * 以前只把官方排在「成功组」的末尾，于是它一旦测速成功、而别的线路失败，
+ * 官方就会被顶到前面去 —— 256 KB 的探针测不出「首包快、后段慢」。
+ * 用户的要求也很明确：官方排在所有代理之后。所以这里把它整组摘出来放最后，
+ * 跟成败无关。
+ */
 export function rankRoutes(entries: SpeedEntry[]): SpeedEntry[] {
-  const ok = entries.filter((e) => e.result.status === 'ok')
-  const bad = entries.filter((e) => e.result.status !== 'ok')
-  ok.sort(
-    (a, b) =>
-      Number(!!a.route.official) - Number(!!b.route.official) ||
-      b.result.kbps - a.result.kbps ||
-      a.result.ms - b.result.ms,
-  )
-  return [...ok, ...bad]
+  const official = entries.filter((e) => e.route.official)
+  const rest = entries.filter((e) => !e.route.official)
+  const ok = rest.filter((e) => e.result.status === 'ok')
+  ok.sort((a, b) => b.result.kbps - a.result.kbps || a.result.ms - b.result.ms)
+  const bad = rest.filter((e) => e.result.status !== 'ok')
+  return [...ok, ...bad, ...official]
 }
 
-/** 最快的一条；一条都不通返回 null，由调用方回退到「按顺序探活」 */
+/**
+ * 最快的一条：在所有「测通了」的线路里取排第一的那个。
+ *
+ * 不能直接取 rankRoutes 的第一条 —— 官方被固定摘到最后，如果代理全挂，
+ * 第一条反而是那个失败的代理，会得出「没有可用线路」的错误结论。
+ * 所以这里跳过失败项去找：官方虽然排在最后，真到只剩它时仍然会被选中。
+ */
 export function fastestRoute(entries: SpeedEntry[]): DownloadRoute | null {
-  const [first] = rankRoutes(entries)
-  return first && first.result.status === 'ok' ? first.route : null
+  const hit = rankRoutes(entries).find((e) => e.result.status === 'ok')
+  return hit?.route ?? null
 }
 
 /* ---------------- 测速看板：一天只测一次 ---------------- */

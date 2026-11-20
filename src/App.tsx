@@ -113,6 +113,7 @@ import {
   type TranslationStore,
 } from './lib/translate'
 import { APP_VERSION, checkForUpdate, UPDATE_OWNER, UPDATE_REPO, type UpdateCheckResult } from './lib/update'
+import { readUpdateHint, writeUpdateHint } from './lib/update-pref'
 import {
   apkTarget,
   archiveTarget,
@@ -395,7 +396,14 @@ export default function App() {
   probeRef.current = probe
   const mirrorAutoRef = useRef(mirrorAuto)
   mirrorAutoRef.current = mirrorAuto
-  const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('checking')
+  const [updateHint, setUpdateHint] = useState(readUpdateHint)
+  /*
+   * 关了更新提示就别停在 'checking'：后台测速在等这个状态结束，
+   * 一直 checking 会让它永远不跑（而测速跟提示是两回事）。
+   */
+  const [updatePhase, setUpdatePhase] = useState<UpdatePhase>(() =>
+    readUpdateHint() ? 'checking' : 'latest',
+  )
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [updateCheckedAt, setUpdateCheckedAt] = useState<number | null>(null)
@@ -1523,12 +1531,38 @@ export default function App() {
     }
   }, [unlocked, client])
 
-  // 解锁后静默查一次：有新版本只在列表顶部提示，不打断使用
+  // 解锁后静默查一次：有新版本只在列表顶部提示，不打断使用。
+  // 关掉「更新提示」就一次都不查 —— 省请求，也省掉那个红点。
   useEffect(() => {
     if (!unlocked || silentChecked.current) return
+    if (!updateHint) {
+      setUpdatePhase((cur) => (cur === 'checking' ? 'latest' : cur))
+      return
+    }
     silentChecked.current = true
     void runCheck(false)
-  }, [unlocked, runCheck])
+  }, [unlocked, runCheck, updateHint])
+
+  /**
+   * 开关「更新提示」。
+   *
+   * 关掉时顺手把结果清空：红点/横幅的数据源就是它，不清会留一条旧提示在界面上。
+   * 重新打开时如果这次会话还没查过，立刻补查一次，免得要等重启才生效。
+   */
+  const changeUpdateHint = useCallback(
+    (on: boolean) => {
+      setUpdateHint(on)
+      writeUpdateHint(on)
+      if (!on) {
+        setUpdateResult(null)
+        setUpdateError(null)
+        setUpdatePhase('latest')
+        return
+      }
+      if (!updateResultRef.current) void runCheck(false)
+    },
+    [runCheck],
+  )
 
   /** 手动指定加速站：同时关掉自动测速，免得下次启动又被覆盖 */
   const useMirror = useCallback(
@@ -2329,6 +2363,8 @@ export default function App() {
           updateCheckedAt={updateCheckedAt}
           latestVersion={updateResult?.latest ?? null}
           hasUpdate={!!updateResult?.hasUpdate}
+          updateHint={updateHint}
+          onUpdateHint={changeUpdateHint}
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}

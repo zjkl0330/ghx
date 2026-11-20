@@ -239,7 +239,7 @@ describe('测速与选线', () => {
    *
    * 只按 kbps 排是不够的：探针只拉 256 KB，测的是建连与首包。官方直连这一段
    * 常年第一，但拉长之后吞吐会掉 —— 用户看到「官方最快」选了它，几 MB 的包
-   * 下到一半变成几 KB/s。所以排序先分档（代理 0 / 官方 1），档内才比速度。
+   * 下到一半变成几 KB/s。所以排序把官方整组摘出来固定放最后，跟成败无关。
    */
   function mkEntry(url: string, kbps: number, official = false, status: 'ok' | 'fail' = 'ok'): SpeedEntry {
     return {
@@ -270,6 +270,19 @@ describe('测速与选线', () => {
       mkEntry('https://github.com/o/r/a.apk', 80, true),
     ]
     expect(fastestRoute(entries)?.official).toBe(true)
+  })
+
+  /*
+   * 回归：以前只把官方排在「成功组」末尾，代理一失败，官方就跑到第一位，
+   * 看起来像「官方线路被优先推荐」。现在整组摘到最后，失败项也只能排在它前面。
+   */
+  it('代理全挂时官方仍显示在最后一行', () => {
+    const entries = [
+      mkEntry('https://gh-proxy.com/https://github.com/o/r/a.apk', 0, false, 'fail'),
+      mkEntry('https://github.com/o/r/a.apk', 80, true),
+    ]
+    const ranked = rankRoutes(entries)
+    expect(ranked[ranked.length - 1].route.official).toBe(true)
   })
 
   it('官方自己挂掉时不会被选中', () => {

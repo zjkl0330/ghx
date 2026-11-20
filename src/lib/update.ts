@@ -112,6 +112,14 @@ interface RawRelease {
 export function parseRelease(raw: RawRelease, mirror: string): ReleaseInfo | null {
   if (!raw.tag_name) return null
   if (raw.draft) return null
+  /*
+   * 预发布不提示更新。
+   *
+   * /releases/latest 本身就不返回预发布，但这条判断留着当双保险：
+   * 开发期间发的包统一标 prerelease（见 CI 的 prerelease: true），
+   * 有人改成列表接口或手动传 raw 时，预览版也不会被当成「该升级了」。
+   */
+  if (raw.prerelease) return null
   const version = parseVersion(raw.tag_name)
   if (!version) return null
   const asset = pickApk(raw.assets ?? [])
@@ -163,7 +171,17 @@ export async function checkForUpdate(
       signal: controller.signal,
     })
     if (res.status === 404) {
-      return { result: null, error: '尚未发布任何版本' }
+      /*
+       * 404 = 这个仓库还没有「正式版」。
+       *
+       * 开发期间的包全标了预发布，GitHub 的 /releases/latest 只认正式版，
+       * 所以这里 404 属于常态，不能当错误弹给用户。按「无需更新」处理，
+       * 用户主动检查时看到的是「已是最新版本 · 当前 vX」。
+       */
+      return {
+        result: { hasUpdate: false, current, latest: null, info: null, checkedAt: Date.now() },
+        error: null,
+      }
     }
     if (!res.ok) {
       const limited = res.headers.get('x-ratelimit-remaining') === '0'
@@ -173,6 +191,17 @@ export async function checkForUpdate(
       }
     }
     const raw = (await res.json()) as RawRelease
+    /*
+     * 预发布一律不当更新。正常情况下 /releases/latest 根本不会返回它，
+     * 但接口口径万一变、或者以后换成列表接口，这里兜住：宁可少提示一次，
+     * 也不拿开发中的包去催用户升级。
+     */
+    if (raw.prerelease) {
+      return {
+        result: { hasUpdate: false, current, latest: null, info: null, checkedAt: Date.now() },
+        error: null,
+      }
+    }
     const info = parseRelease(raw, mirror)
     if (!info) return { result: null, error: '最新版本信息无法解析' }
     return {

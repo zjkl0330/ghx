@@ -79,13 +79,27 @@ describe('archiveCandidates', () => {
     expect(list[0]).toBe('https://gh-proxy.com/https://codeload.github.com/o/r/zip/refs/heads/main')
   })
 
-  it('自建站不代理 codeload，先交给已知能吃 codeload 的反代', () => {
+  it('自建站占不到 codeload 反代位，但它自己的 archive 路径仍在候选里', () => {
     const list = archiveCandidates(SELF, 'o', 'r', 'main')
     expect(list[0]).toBe('https://gh-proxy.com/https://codeload.github.com/o/r/zip/refs/heads/main')
     expect(list).toContain(`${SELF}/o/r/archive/refs/heads/main.zip`)
     expect(list.indexOf(`${SELF}/o/r/archive/refs/heads/main.zip`)).toBeLessThan(
       list.indexOf('https://codeload.github.com/o/r/zip/refs/heads/main'),
     )
+  })
+
+  /* 自动选最快会在后台把当前镜像换成公共代理，自建站不能因此被挤掉 */
+  it('当前镜像换成公共代理后，自建站仍在 ZIP 候选里', () => {
+    const list = archiveCandidates(PROXY, 'o', 'r', 'main')
+    const self = list.indexOf(`${SELF}/o/r/archive/refs/heads/main.zip`)
+    expect(self).toBeGreaterThan(0)
+    expect(self).toBeLessThan(list.indexOf('https://codeload.github.com/o/r/zip/refs/heads/main'))
+  })
+
+  it('自建站改了地址后，ZIP 候选跟着用新地址', () => {
+    const list = archiveCandidates(PROXY, 'o', 'r', 'main', [PROXY], 'https://new.example.com')
+    expect(list).toContain('https://new.example.com/o/r/archive/refs/heads/main.zip')
+    expect(list).not.toContain(`${SELF}/o/r/archive/refs/heads/main.zip`)
   })
 
   it('官方 codeload 永远沉底', () => {
@@ -104,9 +118,9 @@ describe('archiveCandidates', () => {
     expect(list[0]).toBe('https://my.proxy/https://codeload.github.com/o/r/zip/refs/heads/main')
   })
 
-  it('候选去重且最多四条 — 探活要一条条等，不能无限长', () => {
+  it('候选去重且最多五条 — 探活要一条条等，不能无限长', () => {
     const list = archiveCandidates(SELF, 'o', 'r', 'main', [PROXY, PROXY, 'https://ghfast.top', 'https://ghproxy.net'])
-    expect(list.length).toBeLessThanOrEqual(4)
+    expect(list.length).toBeLessThanOrEqual(5)
     expect(new Set(list.map((u) => u.toLowerCase())).size).toBe(list.length)
   })
 })

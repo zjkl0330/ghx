@@ -32,6 +32,9 @@ interface Props {
   updateCheckedAt: number | null
   latestVersion: string | null
   hasUpdate: boolean
+  /** 是否提示更新（只对正式版生效；关掉后启动不再查） */
+  updateHint: boolean
+  onUpdateHint: (on: boolean) => void
   themePref: ThemePref
   resolvedTheme: ResolvedTheme
   onTheme: (pref: ThemePref) => void
@@ -596,6 +599,21 @@ export function SettingsPage(p: Props) {
               <Icon name={p.hasUpdate ? 'download' : 'refresh'} size={14} />
               {p.hasUpdate ? `发现新版本 v${p.latestVersion}` : '检查更新'}
             </button>
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              更新提示
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              <button className={p.updateHint ? 'on' : ''} onClick={() => p.onUpdateHint(true)}>
+                提示正式版
+              </button>
+              <button className={!p.updateHint ? 'on' : ''} onClick={() => p.onUpdateHint(false)}>
+                关掉
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 8 }}>
+              只提示正式版：开发中的包都标了预发布，不会催你升级。关掉后启动时不再检查更新，也不会出现红点；想查时点上面的按钮即可。
+            </div>
             <div className="tgl-label" style={{ marginTop: 14 }}>
               下载方式
             </div>

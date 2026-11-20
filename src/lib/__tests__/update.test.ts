@@ -164,14 +164,29 @@ describe('checkForUpdate', () => {
     expect(result?.info?.downloadUrl).toBeNull()
   })
 
-  it('404 表示还没发过版本，给出可读文案', async () => {
+  it('404 表示还没有正式版，按「无需更新」处理而不是报错', async () => {
     const fetchImpl = vi.fn(async () => res(404, { message: 'Not Found' }))
     const { result, error } = await checkForUpdate({
       current: '0.2.0',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })
-    expect(result).toBeNull()
-    expect(error).toContain('尚未发布')
+    expect(error).toBeNull()
+    expect(result?.hasUpdate).toBe(false)
+    expect(result?.latest).toBeNull()
+    expect(result?.current).toBe('0.2.0')
+  })
+
+  it('预发布的 release 不算更新', async () => {
+    // 正常情况下 /releases/latest 不会返回预发布，这里防的是接口口径变化
+    expect(parseRelease({ tag_name: 'v9.9.9', prerelease: true, assets: [] }, 'https://x')).toBeNull()
+    const fetchImpl = vi.fn(async () => res(200, { tag_name: 'v9.9.9', prerelease: true, assets: [] }))
+    const { result, error } = await checkForUpdate({
+      current: '0.2.0',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    expect(error).toBeNull()
+    expect(result?.hasUpdate).toBe(false)
+    expect(result?.latest).toBeNull()
   })
 
   it('限流时提示等待，而不是报网络错误', async () => {

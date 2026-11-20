@@ -22,7 +22,7 @@ import {
   type SpeedBoard,
   type SpeedEntry,
 } from '../lib/download'
-import { formatSpeed, pickReachable } from '../lib/mirrors'
+import { formatSpeed, pickReachable, selfMirrorBase } from '../lib/mirrors'
 import { formatBytes, headReachable, openExternal } from '../lib/update'
 import {
   cancelInnerDownload,
@@ -226,6 +226,19 @@ export function DownloadSheet(p: Props) {
       const rankedRoutes = ranked.map((e) => e.route)
       const seen = new Set(rankedRoutes.map((r) => r.url))
       base = [...rankedRoutes, ...all.filter((r) => !seen.has(r.url))]
+    }
+    /*
+     * 自建站钉在第 2 位（它自己最快就留在第 1）。
+     *
+     * 测速只拉 256 KB，CF Worker 冷启动、跨境回源这些开销全算在这一小段里，
+     * 排出来常常比公共代理靠后；但公共代理说挂就挂、说限速就限速，自己的站
+     * 不会。所以位置固定，速度照实显示在旁边，选不选由用户看着办。
+     */
+    const selfBase = selfMirrorBase().toLowerCase()
+    const selfAt = base.findIndex((r) => (r.base ?? '').toLowerCase() === selfBase)
+    if (selfAt > 1) {
+      const [self] = base.splice(selfAt, 1)
+      base.splice(1, 0, self)
     }
     if (!picked) return base
     const hit = all.find((r) => r.url === picked)
