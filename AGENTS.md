@@ -15,16 +15,28 @@ cd /workspace/ghx
 npx tsc -b                 # 类型检查（noUnusedLocals 开着，未用变量会报错）
 npx vitest run             # 单测，必须全绿
 pnpm build                 # vite 构建到 dist/
-npx vite preview --port 5201   # 本地看效果
+
+# 预览端口必须是 4173：scripts/verify-*.py 里硬编码了这个地址，
+# 换成别的端口，所有浏览器验证脚本会连不上、报「connection refused」
+npx vite preview --port 4173
+```
+
+跑浏览器验证（有头 Chromium，headless 不渲染 backdrop-filter，玻璃会拍成色板）：
+
+```bash
+xvfb-run -a python3 scripts/verify-archived.py    # 换你想跑的那个
 ```
 
 打 APK（环境已就绪，不要重新装 SDK）：
 
 ```bash
 cd android && JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug
+# 等价写法：JAVA_HOME=/root/.sdkman/candidates/java/21.0.13.1.2-amzn ./gradlew assembleDebug
 # 产物 android/app/build/outputs/apk/debug/app-debug.apk
 # 对齐/签名：/opt/android-sdk/build-tools/35.0.0/{zipalign,apksigner}
 ```
+
+> 别用 `java -version` 猜 JAVA_HOME：默认 java 可能是 17 或别的，AGP 8.x 要 21。上面两条路径实测都能用。
 
 签名密钥在 `keystore/`，**指纹必须与历史一致**，否则用户覆盖安装会丢本地数据（保险库、缓存、设置全在 App 私有目录）。
 
@@ -42,7 +54,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `cache.ts` | 内存 TTL 缓存。`ttlFor()` 按路径分档，`invalidationPrefixes()` 决定写操作清哪些 |
 | `vault.ts` | 令牌保险库，AES-256-GCM。设备密钥 + 可选口令 guard |
 | `tokens.ts` | 令牌体检：`probeToken`、过期分级、风险 scope |
-| `repos.ts` | 仓库归一化、筛选、批量可见度计划 `buildPlan` / `runBatch` |
+| `repos.ts` | 仓库归一化、筛选（`RepoFilterVisibility` 四档：全部/公开/私有/**归档**）、`countBy`（公开+私有=全部，都不含归档）、批量动作计划 `planBatch` / `runBatchActions` |
 | `sort.ts` `stars.ts` `topics.ts` | 排序、语言分组、话题解析 |
 | `snapshot.ts` | 仓库列表冷启动快照 |
 | `storage.ts` | KV 抽象（Capacitor Preferences / localStorage / 内存） |
@@ -71,6 +83,17 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `appearance.ts` | 外观偏好（强调色 / 底栏形态 / 底栏文字 / 背景 / 玻璃 / 动效）：`normalizeAppearance` 逐字段兜底、`applyAppearance` 只写 `<html data-*>`、`ACCENTS` 色板、`accentSwatch` |
 | `boot.ts` | 首屏遮罩的撤除：给 `#boot` 打 `data-leaving`，`transitionend` + 420ms 超时双保险，重复调用幂等 |
 | `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
+| `download.ts` | 下载域：`DownloadTarget`（apk/asset/archive）、`mirrorOfUrl`、`measureRoutes`（**分批并发**）、`rankRoutes`（先分档再比速度）、`SpeedBoard`（按站点存、按自然日有效）、`parseDlParts` / `PARTS_OF`（分片偏好） |
+| `native-download.ts` | 原生下载桥：`status` / `exists` / `takePending` / `notifyState` / `openNotifySettings`，字段与 `DownloadPlugin.java` 逐项对齐 |
+| `dl-history.ts` | 下载记录：`pushRecord` / `parseHistory` / `removeRecord`，上限 60、去重键 `repo\|kind\|name`、取消不留记录 |
+| `graphql.ts` | 批量查发行版资产（一页仓库一次请求）；`NOT_FOUND` 缓存空、`FORBIDDEN`/`RATE_LIMITED` 不缓存 |
+| `rel-badge.ts` | 仓库行 APK / EXE 标记的判定与缓存键 |
+| `font.ts` | 界面字体偏好：`readFontPref` / `writeFontPref` / `applyFont`（只写 `<html data-font>`） |
+| `update-pref.ts` | 更新提示开关：只有明确存了 `off` 才关，读不到按开 |
+
+> 原生层（`android/app/src/main/java/dev/zjkl/ghx/`）：`MainActivity` · `InsetsBridge` · `ImmersivePlugin` · `DownloadPlugin` · `DownloadHub`（进程级单例，活的下载线程在这里） · `ChunkedFetch` / `ChunkPlan`（4 路分片，**不依赖 android.\***，能在普通 JVM 上真跑） · `NotifText`（通知文案格式化，同样纯 Java） · `DownloadService`（前台服务） · `DownloadActionReceiver`（通知上的取消按钮） · `ApkInstaller`（安装入口，页面与通知共用）。
+
+> 原生逻辑怎么测：`scripts/test-chunked.sh` 会 `javac` 编译 `ChunkPlan` / `ChunkedFetch` / `NotifText` + 三个测试类，在**普通 JVM** 上起本地 HTTP 服务造 206 / 200 / 302 / 限速 / 偶发 503 五种线路，跑 33 + 39 = 72 条断言。CI 里挂在构建 APK 之前，原生逻辑坏了不用等十分钟才红。**沙箱没有模拟器、没有 /dev/kvm，别指望跑 Instrumented Test。**
 
 ### ui（组件）
 
@@ -105,7 +128,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 > 下 zip 的坑：`/archive/refs/heads/<branch>.zip` 只是个 302，真字节在 `codeload.github.com`；自建站是透明路径代理，把 302 交出去就断了，只有 url 型反代能整段代理。实测只有 `gh-proxy.com` 能吃 codeload（`ghfast.top` / `ghproxy.net` 403、`ghproxy.imciel.com` 404），所以候选顺序是「当前镜像 codeload → gh-proxy → 当前镜像 archive → 官方」，并且必须 HEAD 探活（Capacitor 原生 HTTP 支持 HEAD，`HttpRequestHandler` 只在非 GET/HEAD 时才挂 body）。Web 端别探活，CORS 会把 HEAD 全判死。
 
-## 五个核心机制（改之前必须懂）
+## 七个核心机制（改之前必须懂）
 
 ### 1. 返回键（`backnav.ts`）
 
@@ -170,6 +193,18 @@ user / notifications / search / profile / settings / tokens / audit
 | 条件请求 | `{ conditional: true }` 发 `If-None-Match`，304 时 `notModified: true` 并复用缓存 | **条件请求必须绕过缓存读取**（否则直接命中缓存、根本不发请求），但成功响应仍要写回并更新 etag |
 | 纯文本 | `rawText()`（diff、raw 文件），不进 JSON 缓存 | 体积可能很大，默认 2MB 上限并返回 `truncated` |
 
+### 7. 下载链路（`download.ts` + 三个 Java 类）
+
+三段路，各自有独立的坑，别把它们混成「下载」一件事：
+
+**候选表**（`mirrors.ts` 的 `releaseCandidates` / `archive.ts` 的 `archiveCandidates`）—— 顺序是实测出来的，**不要在新模块里重排**。要点：自建站常驻、官方恒沉底、ZIP 只有 `gh-proxy.com` 能吃 codeload。`slice(0, 6)` / `slice(0, 4)` 是探活成本的上限，加条目前先想清楚「多等一条要多久」。
+
+**分片**（`ChunkedFetch`）—— 必须 206 才切；每跳重设 `Range`；`Accept-Encoding: identity`；定位写入；失败降级单连接。`MAX_PARTS = 4` 是实测上限，改大只会更慢。
+
+**通知与前台服务**（`DownloadService`）—— 它是唯一能挡 Android 12+ Cached Apps Freezer 的东西，**不是「顺便加个通知」**。`handleOnDestroy` 只解绑监听、不取消下载；终态通知必须先 `DETACH` 再 `notify`，顺序反了等于没发。
+
+`DownloadHub` 是进程级单例，`SharedPreferences` 里那份 `pending` 结果**取走即清空**，保证「界面已经没了时下载完成」也只记一次。
+
 ## 硬约束（违反就是返工）
 
 1. **只做 Android APK**，不做 Web 版，按 390×844 触摸尺寸设计。
@@ -228,6 +263,15 @@ user / notifications / search / profile / settings / tokens / audit
 - **`git tag -a -F notes.txt` 默认 `--cleanup=strip`，会把以 `#` 开头的行当注释删掉** —— 正文里的 `## 小节标题` 会整行消失，Releases 上只剩连成一片的段落。v0.7.7 与 v0.8.2 都踩过（v0.8.2 事后用 `PATCH /releases/{id}` 补回正文）。要么加 `--cleanup=verbatim`，要么小节标题改用 `**加粗**`。
 - 一旦 tag 推上去，`main` 上的后续文档修正不会进这个 Release 的正文与源码包；要改正文用 `PATCH /repos/{owner}/{repo}/releases/{release_id}`（按 tag 名的端点只支持 GET，会 404）。
 - 推送镜像偶尔 `cannot lock ref`：推临时分支上传对象，再 `PATCH /git/refs/heads/main`（`force:false`）。
+- **当 `github.com:443` 不通时（这个环境长期如此），`git push` / `git fetch` 会超时（22 MB 的字体对象尤其），改走 Git Data API**：
+
+```bash
+TOKEN=<PAT> BASE=<远端当前 main 的前 7 位> python3 scripts/push-via-api.py
+```
+
+  脚本做的是 blobs → trees → commits → `PATCH /git/refs/heads/main`。**结果：本地与远端的树相同、commit hash 不同**，属于预期。等直连恢复后再 `git fetch gh main && git reset --soft gh/main` 对齐。
+- **tag 也要经 API 建**（本地 tag 推不上去）：`POST /git/tags`（附注对象）→ `POST /git/refs`（`refs/tags/vX.Y.Z`）。`object` 必须用**远端** main 的 sha，不是本地 HEAD，否则 CI 检出的是不存在的提交。
+- `git tag -a -F -` 的正文用 heredoc 时加 `--cleanup=verbatim`，否则 `#` 开头的行会被当注释删掉。
 
 ## Copilot 调研结论（2026-11，别再试一遍）
 
@@ -464,6 +508,41 @@ user / notifications / search / profile / settings / tokens / audit
   - **下载面板按 `kind:fileName` 重挂**（App 里的 `key`）。以前在同一个位置换包，React 复用组件实例 —— 上一个包的 `entries`、进度、错误会留在界面上，测速也不会按新包的线路重来。
   - 实测（`scripts/verify-speed.py`，390×844，mock 六条线路各自不同延迟：120/200/300/400/500/900 ms，用 `add_init_script` 包 `window.fetch` 记录每条开始/结束）：峰值 **3 并发**、实测 **1201 ms**（串行 2420 ms / 三并发理论 1200 ms）；关掉重开 **0** 条新请求且六行都有速度；换仓库换包 **0** 条；手动重测 +6；把看板 `at` 改成昨天后 reload 自动重测。单测 1253 → **1262**。
   - **仍未验证**：真机移动网络下并发 3 条会不会互相抢带宽到「名次失真」。沙箱里用的是固定延迟，测不出射频层的争抢；如果真机上出现「同一个站每次排名差很多」，把 `PROBE_CONCURRENCY` 调回 2 即可。
+
+- **v0.9.0**：自建加速站「消失」与更新只提示正式版。
+  - **用户报「我的自建站呢」，它其实没坏**。实测对 v0.8.9 的 APK 发 `Range` 请求，回 `206` + `content-range: 0-1023/21253906`（与发布包一致）+ `ACAO: *`，拉 3 MB 用 3.9 s，源码 ZIP 直接 `200`。消失的原因在 `releaseCandidates` 只把「当前镜像」放进候选：`mirrorAuto` 默认开着，启动后自动选最快会把当前镜像切成公共代理，自建站于是整行不见。
+  - 改法：自建站**常驻**候选表（跟在选中站后面，设置页改过地址会跟着走），展示时钉在第 2 位、速度照实显示 —— 不插队到第一，否则就是在替用户判断「哪个快」。源码 ZIP 候选同样保留它。
+  - **官方直连整组沉底**。原来只把官方排在「成功组」末尾，代理一失败官方就跳到第一行，看起来像在推荐官方线路。现在 `rankRoutes` 先分档（代理 0 / 官方 1）再比速度，官方只在代理全挂时被选中。
+  - **更新只认正式版**：`prerelease` 一律不提示；`/releases/latest` 返回 404（还没有正式版）也按「已是最新」处理，不再弹错。设置里新增「更新提示」开关，关掉后启动不再请求 `/releases/latest`，横幅消失，手动检查照常。
+  - CI 发布的 release 一律 `prerelease: true` —— 开发中的包不该占用 `latest`、也不该在别人手机里催升级。想转正式版去 GitHub 页面取消勾选即可。
+  - 实测：`verify-selfmirror.py`（7 行、自建站第 2、官方末位、无溢出、重开不掉）、`verify-update.py`（正式版提示、关开关后 0 次请求、预发布/404 都不报错）。单测 1262 → 1274。
+
+- **v0.9.1**：应用内下载改 4 路分片并行。
+  - 此前是**一条连接从头拉到尾**：`HttpURLConnection` + 64 KB 缓冲循环，连 `Range` 头都没发过。
+  - 先发 **2 字节探针**（`Range: bytes=0-1`），只有拿回 `206` 且 `Content-Range` 带总长才切片；各片用 `FileChannel.write(buf, pos)` 定位写入（不移动游标，所以不用锁），收尾校验总字节数。
+  - **三个坑**：①线路无视 `Range` 回 200 → 各片写全文互相覆盖，出花文件；②302 到签名地址丢 `Range` → 每片都拿全文，所以每一跳都要重设；③中间层 gzip → 分段偏移按压缩字节算、写入按解压字节算，全错位，必须显式 `Accept-Encoding: identity`。
+  - **并发上限 4**：实测 8 路被 CDN 限流，比单路还慢 8 倍。分片失败删半截改走单连接；已下过大半就不再重来；单片偶发失败重试一次；取消掐断所有在途连接。
+  - 设置里加「分片下载」（4 路 / 单线程），默认开，只作用于应用内下载，进度右侧显示实时路数。
+  - **纯逻辑抽出来就能在没有模拟器的情况下真测**：`ChunkedFetch` / `ChunkPlan` 不 import 任何 `android.*`，`scripts/test-chunked.sh` 在普通 JVM 上起本地 HTTP 服务造五种线路，33 条断言（含 md5 与服务器侧并发峰值）。真线路下整包与单连接**逐字节一致**。
+  - 实测（自建站真下 20.3 MB）：4 路 11.2 s / 单连 10.8 s，**没有变快** —— 沙箱到 CF 的出口带宽本身打满了。分片只在「单连接被窗口/丢包压住」时有效。单测 1274 → 1279，静态检查 20 → 37 条。
+
+- **v0.9.2**：通知栏实时显示下载进度。
+  - **根因不是「没做通知」**：`targetSdk` 早就 35，但 manifest 里**从来没声明 `POST_NOTIFICATIONS`**。Android 13 起缺这条声明，系统把通知直接丢弃；前台服务照跑、下载照走 —— 表现就是「进度只在应用里看得见，消息栏空白」。
+  - **第二个老 bug**：`finishWith` 先 `notify(完成通知)` 再 `stopForeground(REMOVE)`，而 `REMOVE` 按**同一个 NOTIF_ID** 把刚发的通知一并删掉。所以即使有权限，下完一个包通知栏也是瞬间变空。改成先 `DETACH` 再 `notify`。
+  - 通知内容：文件名（截断但保留 `.apk`）、`已下 / 总量`、速度、剩余时间、几路并行、百分比，600 ms 一帧；完成后点通知直接进安装器，另有「安装」按钮；失败显示「下载中断 + 原因」。
+  - 取消按钮走 `BroadcastReceiver` 当场掐断，不用先开界面；取消与失败分开，不再把用户主动取消显示成「下载失败」。
+  - `FOREGROUND_SERVICE_IMMEDIATE`：Android 12+ 前台服务通知默认被压 10 秒再显示，不给这个标志开头一段进度看不见。
+  - 下载发起那一刻申请一次通知权限；拒绝不影响下载，设置页能查到状态并一键跳系统设置。
+  - 格式化逻辑抽成 `NotifText`（纯 Java），`NotifTest` 39 条真跑：除零、99.6% 不能说 100%、扩展名不能被截掉、极慢封顶 24 小时。静态检查 37 → 56 条。单测 1279。
+  - **仍未验证**：真机上通知长什么样、EMUI 会不会折叠成一行。沙箱没有设备。
+
+- **v0.9.3**：归档仓库在列表里找得到。
+  - **根因**：`App.tsx` 把 `includeArchived` 写死成 `false`，界面上又没有对应档位 —— 归档一个仓库就等于把它弄丢了，想取消归档只能去 GitHub 网页。
+  - 新增第四档「归档 N」，**只在真有归档仓库时出现**（绝大多数账号看不到变化）。归档档里能搜索、能批量操作。
+  - **顺手修数字不自洽**：`countBy` 的公开/私有原来把归档算进去，于是「公开 2 + 私有 1」和「全部 2」对不上 —— 第一反应就是仓库丢了。现在公开 + 私有 = 全部，都不含归档；头像旁仍显示含归档的真实总数。
+  - 看板的「N 已归档」可点，直接跳归档档。
+  - 详情页文案方向反了：已归档时副标题还写「归档后仓库只读」（读起来像正要归档），改成「恢复后可继续提交、开 Issue」。
+  - `verify-archived.py` 九段，含完整闭环：详情里归档 →「全部」4 变 3 → 归档档涨到 3 → 里面找得到 → 入口变「取消归档」。单测 1279 → 1285。
 
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
