@@ -49,6 +49,8 @@ def main():
     manifest = read(MANIFEST)
     plugin = read(os.path.join(JAVA, 'DownloadPlugin.java'))
     hub = read(os.path.join(JAVA, 'DownloadHub.java'))
+    plan = read(os.path.join(JAVA, 'ChunkPlan.java'))
+    chunk = read(os.path.join(JAVA, 'ChunkedFetch.java'))
     svc = read(os.path.join(JAVA, 'DownloadService.java'))
 
     # ── 1. 权限与服务声明：少一条，装到手机上就是白改 ──
@@ -99,7 +101,30 @@ def main():
     check('Plugin 提供 takePending()', 'public void takePending(' in plugin)
     check('Hub 落盘待认领结果', 'SP_PENDING' in hub and 'persist(' in hub)
 
-    # ── 6. 产物检查：类真的编进去了、权限真的合进 APK 了 ──
+    # ── 6. 分片下载：探针 → 并发定位写 → 失败降级 ──
+    check('分片核心不依赖 android（能在普通 JVM 上真跑测试）', 'import android' not in chunk)
+    check('并发硬上限 4 路', re.search(r'MAX_PARTS\s*=\s*4\b', plan) is not None,
+          '实测 8 路会被 CDN 限流，比单路还慢')
+    check('单片下限 1 MiB', re.search(r'MIN_PART\s*=\s*1L\s*<<\s*20', plan) is not None)
+    check('发 Range 请求', 'c.setRequestProperty("Range", "bytes=" + start' in chunk)
+    check('探针拿到 206 + Content-Range 才切片',
+          'o.code == 206 && total > 0' in chunk and 'Content-Range' in chunk)
+    check('显式关掉压缩，否则分段偏移会错位', '"Accept-Encoding", "identity"' in chunk)
+    check('重定向每一跳都重设 Range', 'openAt(url, null, start, end' in chunk)
+    check('并发写用定位写而不是各写各的流', 'ch.write(bb, pos)' in chunk)
+    check('支持 Range 才有分片，否则单连接', 'private static Outcome single(' in chunk)
+    check('分片失败会删掉半截、改走单连接', 'deleteQuietly(part)' in chunk
+          and 'catch (Partial pf)' in chunk)
+    check('已经下过大半就不再重下', 'pf.done >= total / 2' in chunk)
+    check('单片失败会重试一次', 'PART_ATTEMPTS' in chunk and 'for (int attempt = 1' in chunk)
+    check('取消掐断所有在途连接', 'static void abortAll()' in chunk
+          and 'ChunkedFetch.abortAll()' in hub)
+    check('Hub 走分片能力', 'ChunkedFetch.fetch(' in hub)
+    check('结束前校验字节数，短了就算失败', 'if (got != total)' in chunk)
+    check('Plugin 把 parts 夹在合法区间', 'Math.min(parts, ChunkPlan.MAX_PARTS)' in plugin)
+    check('状态里带实际并发数', 'put("parts", s.parts)' in plugin)
+
+    # ── 7. 产物检查：类真的编进去了、权限真的合进 APK 了 ──
     if apk and os.path.exists(apk):
         with zipfile.ZipFile(apk) as z:
             dex = b''.join(
@@ -108,6 +133,8 @@ def main():
         text = dex.decode('latin-1')
         check('APK 内含 DownloadHub', 'DownloadHub' in text)
         check('APK 内含 DownloadService', 'DownloadService' in text)
+        check('APK 内含 ChunkedFetch', 'ChunkedFetch' in text)
+        check('APK 内含 ChunkPlan', 'ChunkPlan' in text)
         check('APK 大小在 4 MB 以上（字体仍在包里）', os.path.getsize(apk) > 4 * 1024 * 1024,
               f'{os.path.getsize(apk) / 1048576:.1f} MB')
     elif apk:

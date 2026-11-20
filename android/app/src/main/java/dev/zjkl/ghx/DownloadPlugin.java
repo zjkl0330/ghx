@@ -55,13 +55,18 @@ public class DownloadPlugin extends Plugin {
         String repo = call.getString("repo", "");
         String kind = call.getString("kind", "");
         String tag = call.getString("tag", "");
+        // 分片路数：JS 传 1 表示单线程。夹在 [1, ChunkPlan.MAX_PARTS] 之间，
+        // 免得某个手滑的值把手机的连接数打爆。
+        Integer partsBoxed = call.getInt("parts");
+        int parts = partsBoxed == null ? ChunkPlan.MAX_PARTS : partsBoxed;
+        parts = Math.max(1, Math.min(parts, ChunkPlan.MAX_PARTS));
 
         // 先挂监听再起线程：否则第一帧进度可能早于监听注册
         attachBridge(call);
 
         boolean ok = DownloadHub.start(
                 getContext().getApplicationContext(), url.trim(), fileName, expect, headers,
-                repo == null ? "" : repo, kind == null ? "" : kind, tag == null ? "" : tag);
+                repo == null ? "" : repo, kind == null ? "" : kind, tag == null ? "" : tag, parts);
         if (!ok) {
             detachBridge();
             call.reject("已有下载正在进行");
@@ -99,6 +104,8 @@ public class DownloadPlugin extends Plugin {
         ret.put("kbps", s.kbps);
         ret.put("fileName", s.fileName);
         ret.put("ms", s.ms);
+        ret.put("parts", s.parts);
+        ret.put("chunked", s.chunked);
         if (s.path != null) ret.put("path", s.path);
         if (s.error != null) ret.put("error", s.error);
         call.resolve(ret);
@@ -196,6 +203,8 @@ public class DownloadPlugin extends Plugin {
                 p.put("bytes", bytes);
                 p.put("total", total);
                 p.put("kbps", kbps);
+                // 界面要显示「4 路并行」，探测完才知道实际几路，所以每帧带上
+                p.put("parts", DownloadHub.currentParts());
                 try {
                     notifyListeners("progress", p);
                 } catch (Exception ignored) {

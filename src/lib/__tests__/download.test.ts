@@ -16,6 +16,7 @@ import {
   mirrorOfUrl,
   modeHint,
   parseDownloadMode,
+  parseDlParts,
   parseSpeedBoard,
   progressOf,
   rankRoutes,
@@ -24,6 +25,10 @@ import {
   routesWithoutSample,
   safeFileName,
   serializeDownloadMode,
+  serializeDlParts,
+  PARTS_OF,
+  DL_PARTS_KEY,
+  DOWNLOAD_MODE_KEY,
   toRoutes,
   type SpeedEntry,
 } from '../download'
@@ -595,5 +600,40 @@ describe('CI 产物', () => {
     const t = artifactTarget({ ...base, name: '' })
     expect(t.title).toBe('CI 产物')
     expect(t.fileName).toBe('artifact.zip')
+  })
+})
+
+/*
+ * 分片下载偏好。
+ *
+ * 只有明确存了 'single' 才关 —— 老版本没有这个键，不能因为读不到就当单线程，
+ * 否则升级上来的用户会莫名少掉并行下载。
+ */
+describe('分片下载偏好', () => {
+  it('没有存过时按开处理', () => {
+    expect(parseDlParts(null)).toBe('multi')
+    expect(parseDlParts(undefined)).toBe('multi')
+  })
+
+  it('只认 single，其余一律当开', () => {
+    expect(parseDlParts('single')).toBe('single')
+    expect(parseDlParts('multi')).toBe('multi')
+    expect(parseDlParts('')).toBe('multi')
+    expect(parseDlParts('off')).toBe('multi')
+  })
+
+  it('序列化后能原样读回', () => {
+    expect(parseDlParts(serializeDlParts('single'))).toBe('single')
+    expect(parseDlParts(serializeDlParts('multi'))).toBe('multi')
+  })
+
+  it('两档对应的并发数', () => {
+    expect(PARTS_OF.multi).toBe(4)
+    expect(PARTS_OF.single).toBe(1)
+  })
+
+  it('沿用独立的存储键，不跟下载方式打架', () => {
+    expect(DL_PARTS_KEY).not.toBe(DOWNLOAD_MODE_KEY)
+    expect(DL_PARTS_KEY).toContain('parts')
   })
 })

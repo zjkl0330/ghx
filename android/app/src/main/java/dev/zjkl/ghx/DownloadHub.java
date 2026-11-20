@@ -6,13 +6,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -59,6 +55,9 @@ final class DownloadHub {
         String path;
         String error;
         long ms;
+        /** 本次实际并发数：1 表示单连接（线路不支持分段，或用户选了单线程） */
+        int parts = 1;
+        boolean chunked;
     }
 
     private static final long WAKE_TIMEOUT_MS = 30 * 60 * 1000L;
@@ -76,6 +75,8 @@ final class DownloadHub {
     private static volatile long bytes;
     private static volatile long total;
     private static volatile double kbps;
+    private static volatile int parts = 1;
+    private static volatile boolean chunked;
     private static volatile String fileName = "";
     /** 来源信息，仅用于「界面已销毁时也能补一条下载记录」 */
     private static volatile String repo = "";
@@ -100,6 +101,11 @@ final class DownloadHub {
         return running;
     }
 
+    /** 本次下载实际用了几条连接：1 表示单线程，>1 表示在切片 */
+    static int currentParts() {
+        return parts;
+    }
+
     static synchronized void addListener(Listener l) {
         if (l != null && !LISTENERS.contains(l)) LISTENERS.add(l);
     }
@@ -119,6 +125,8 @@ final class DownloadHub {
         s.path = lastPath;
         s.error = lastError;
         s.ms = lastMs;
+        s.parts = parts;
+        s.chunked = chunked;
         return s;
     }
 
@@ -131,7 +139,7 @@ final class DownloadHub {
      * 而不是悄悄把上一条掐掉 —— 用户可能是从另一个仓库点进来的。
      */
     static boolean start(Context context, String url, String name, long expect, Map<String, String> headers,
-                         String repoName, String kindName, String tagName) {
+                         String repoName, String kindName, String tagName, int wantParts) {
         synchronized (LOCK) {
             if (running) return false;
             app = context.getApplicationContext();
@@ -144,6 +152,8 @@ final class DownloadHub {
             bytes = 0;
             total = expect > 0 ? expect : 0;
             kbps = 0;
+            parts = 1;
+            chunked = false;
             fileName = name;
             repo = repoName == null ? "" : repoName;
             kind = kindName == null ? "" : kindName;
@@ -155,10 +165,11 @@ final class DownloadHub {
         final String fName = name;
         final long fExpect = expect;
         final Map<String, String> fHeaders = headers;
+        final int fParts = wantParts;
 
         worker = new Thread(() -> {
             try {
-                long ms = doDownload(fUrl, fName, fExpect, fHeaders);
+                long ms = doDownload(fUrl, fName, fExpect, fHeaders, fParts);
                 lastPath = outPath;
                 lastBytes = bytes;
                 lastMs = ms;
@@ -182,6 +193,8 @@ final class DownloadHub {
 
     static void cancel() {
         cancelled = true;
+        // 分片模式下可能同时有四条连接在跑，逐个断才停得干净
+        ChunkedFetch.abortAll();
         HttpURLConnection c = conn;
         if (c != null) {
             try {
@@ -336,33 +349,12 @@ final class DownloadHub {
         return dir;
     }
 
-    private static HttpURLConnection open(String url, Map<String, String> headers) throws IOException {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        // 手动跟重定向：GitHub 的产物与附件会 302 到签名地址，
-        // 自动跟随时 Authorization 会被一并带到那个域上去，没必要。
-        c.setInstanceFollowRedirects(false);
-        c.setConnectTimeout(15000);
-        c.setReadTimeout(30000);
-        c.setRequestProperty("User-Agent", "ghx-android/" + versionName());
-        c.setRequestProperty("Accept", "*/*");
-        if (headers != null) {
-            for (Map.Entry<String, String> e : headers.entrySet()) {
-                c.setRequestProperty(e.getKey(), e.getValue());
-            }
-        }
-        return c;
-    }
-
     private static String versionName() {
         try {
             return app.getPackageManager().getPackageInfo(app.getPackageName(), 0).versionName;
         } catch (Exception e) {
             return "0.0.0";
         }
-    }
-
-    private static boolean isRedirect(int code) {
-        return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
     }
 
     private static String safeName(String raw) {
@@ -372,17 +364,8 @@ final class DownloadHub {
         return s.isEmpty() ? "download.bin" : s;
     }
 
-    private static long parseContentLength(String raw) {
-        if (raw == null) return -1L;
-        try {
-            return Long.parseLong(raw.trim());
-        } catch (NumberFormatException e) {
-            return -1L;
-        }
-    }
-
-    private static long doDownload(String url, String rawName, long expect, Map<String, String> headers)
-            throws IOException {
+    private static long doDownload(String url, String rawName, long expect, Map<String, String> headers,
+                                   int wantParts) throws IOException {
         File dir = downloadDir();
         if (dir == null) throw new IOException("无法创建下载目录");
         String fileName = safeName(rawName);
@@ -397,93 +380,34 @@ final class DownloadHub {
         }
         outPath = out.getAbsolutePath();
 
-        long start = System.currentTimeMillis();
-        long done = 0;
-        long len = expect;
-        long lastEmit = 0;
-        long lastBytes = 0;
-        long lastTime = start;
-
-        HttpURLConnection c = null;
-        InputStream in = null;
-        FileOutputStream fos = null;
+        long started = System.currentTimeMillis();
         try {
-            c = open(url, headers);
-            conn = c;
-            int code = c.getResponseCode();
-
-            // 产物下载：api.github.com 返回 302 到 pipelines 的签名地址。
-            // 跟随之后只带 UA，不带鉴权头 —— 签名地址本身不需要，也不该收到令牌。
-            int hops = 0;
-            while (isRedirect(code) && hops < 5) {
-                String loc = c.getHeaderField("Location");
-                if (loc == null || loc.trim().isEmpty()) break;
-                URL next = new URL(new URL(url), loc);
-                c.disconnect();
-                url = next.toString();
-                c = open(url, null);
-                conn = c;
-                code = c.getResponseCode();
-                hops += 1;
-            }
-
-            if (code != HttpURLConnection.HTTP_OK && code != 206) {
-                throw new IOException("HTTP " + code);
-            }
-            long declared = parseContentLength(c.getHeaderField("Content-Length"));
-            if (declared > 0) len = declared;
-            total = len;
-
-            in = new BufferedInputStream(c.getInputStream(), 64 * 1024);
-            fos = new FileOutputStream(part);
-            byte[] buf = new byte[64 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                if (cancelled) throw new IOException("已取消");
-                fos.write(buf, 0, n);
-                done += n;
-                bytes = done;
-
-                long now = System.currentTimeMillis();
-                if (now - lastEmit >= 200) {
-                    long dt = Math.max(1, now - lastTime);
-                    double speed = ((done - lastBytes) / 1024.0) / (dt / 1000.0);
-                    kbps = Math.round(speed * 10) / 10.0;
-                    emitProgress(done, len, kbps);
-                    lastEmit = now;
-                    lastBytes = done;
-                    lastTime = now;
-                }
-            }
-            fos.flush();
-            fos.close();
-            fos = null;
-            in.close();
-            in = null;
-
-            if (done <= 0) throw new IOException("下载到 0 字节");
+            ChunkedFetch.Outcome r = ChunkedFetch.fetch(
+                    url, headers, part, expect, "ghx-android/" + versionName(), wantParts,
+                    new ChunkedFetch.Progress() {
+                        @Override
+                        public void onBytes(long done, long len, double speed, int n) {
+                            bytes = done;
+                            total = len;
+                            kbps = speed;
+                            parts = n;
+                            chunked = n > 1;
+                            emitProgress(done, len, speed);
+                        }
+                    },
+                    new ChunkedFetch.Cancel() {
+                        @Override
+                        public boolean cancelled() {
+                            return DownloadHub.cancelled;
+                        }
+                    });
+            bytes = r.bytes;
+            total = r.bytes;
+            chunked = r.chunked;
+            parts = r.parts;
             if (!part.renameTo(out)) throw new IOException("无法保存文件");
-
-            return System.currentTimeMillis() - start;
+            return System.currentTimeMillis() - started;
         } finally {
-            if (fos != null) {
-                try {
-                    fos.close();
-                } catch (IOException ignored) {
-                    // 收尾失败不覆盖主异常
-                }
-            }
-            if (in != null) {
-                try {
-                    in.close();
-                } catch (IOException ignored) {
-                    // 同上
-                }
-            }
-            if (c != null) {
-                c.disconnect();
-                conn = null;
-            }
             // 中途失败或取消：删掉半截文件，别占着空间
             if (part.exists() && !out.exists()) {
                 //noinspection ResultOfMethodCallIgnored

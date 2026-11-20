@@ -56,6 +56,11 @@ interface Props {
   target: DownloadTarget
   mode: DownloadMode
   onMode: (m: DownloadMode) => void
+  /**
+   * 期望并发数：1 表示单线程。原生侧会先探 Range，服务器不认就自己退回单连接，
+   * 所以这里传大一点最坏也只是没变快。
+   */
+  parts?: number
   onClose: () => void
   onToast: (msg: string) => void
   /** 需要鉴权的资源（CI 产物）才传；传了就会带到请求头里 */
@@ -74,7 +79,13 @@ export function DownloadSheet(p: Props) {
   const [probeTotal, setProbeTotal] = useState(0)
   const [picked, setPicked] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
-  const [progress, setProgress] = useState<{ bytes: number; total: number; kbps: number; startedAt: number } | null>(null)
+  const [progress, setProgress] = useState<{
+    bytes: number
+    total: number
+    kbps: number
+    startedAt: number
+    parts: number
+  } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [savedPath, setSavedPath] = useState<string | null>(null)
   const cancelledRef = useRef(false)
@@ -105,7 +116,7 @@ export function DownloadSheet(p: Props) {
         return
       }
       setPhase('downloading')
-      setProgress({ bytes: s.bytes, total: s.total, kbps: s.kbps, startedAt: Date.now() })
+      setProgress({ bytes: s.bytes, total: s.total, kbps: s.kbps, startedAt: Date.now(), parts: s.parts ?? 1 })
     })()
     return () => {
       stop = true
@@ -131,6 +142,7 @@ export function DownloadSheet(p: Props) {
             bytes: s.bytes,
             total: s.total > 0 ? s.total : p.target.size,
             kbps: s.kbps,
+            parts: s.parts ?? prev?.parts ?? 1,
             startedAt: prev?.startedAt ?? Date.now(),
           }))
           return
@@ -310,7 +322,7 @@ export function DownloadSheet(p: Props) {
       if (cancelledRef.current) break
       const route = tried[i]
       setPhase('downloading')
-      setProgress({ bytes: 0, total: p.target.size, kbps: 0, startedAt: Date.now() })
+      setProgress({ bytes: 0, total: p.target.size, kbps: 0, startedAt: Date.now(), parts: p.parts ?? 1 })
       try {
         const res = await innerDownload({
           url: route.url,
@@ -320,12 +332,14 @@ export function DownloadSheet(p: Props) {
           repo: p.target.repo,
           kind: p.target.kind,
           ...(p.target.tag ? { tag: p.target.tag } : {}),
+          ...(p.parts && p.parts > 1 ? { parts: p.parts } : {}),
           onProgress: (d) => {
             if (!aliveRef.current) return
             setProgress((prev) => ({
               bytes: d.bytes,
               total: d.total > 0 ? d.total : p.target.size,
               kbps: d.kbps,
+              parts: d.parts ?? prev?.parts ?? 1,
               startedAt: prev?.startedAt ?? Date.now(),
             }))
           },
@@ -520,6 +534,7 @@ export function DownloadSheet(p: Props) {
                 {progress.total > 0 ? ` / ${formatBytes(progress.total)}` : ''} · {pct}%
               </span>
               <span>
+                {progress.parts > 1 ? `${progress.parts} 路 · ` : ''}
                 {formatSpeed(progress.kbps)}
                 {eta != null ? ` · ${formatEta(eta)}` : ''}
               </span>

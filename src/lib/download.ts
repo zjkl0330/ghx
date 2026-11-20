@@ -45,6 +45,29 @@ export function serializeDownloadMode(mode: DownloadMode): string {
   return mode === 'inner' ? 'inner' : 'outer'
 }
 
+/**
+ * 分片下载：应用内下载时开几条连接。
+ *
+ * 只在「服务器认 Range」时真正生效 —— 原生侧会先发一个 2 字节的探针，
+ * 拿到 206 才敢切片，否则自动退回单连接。所以这个开关最坏也只是「没变快」，
+ * 不会把本来能下的包下坏。
+ */
+export type DlParts = 'multi' | 'single'
+
+export const DL_PARTS_KEY = 'ghx.download.parts'
+
+/** 每档对应的并发数。原生侧还会按总长与硬上限再夹一次 */
+export const PARTS_OF: Record<DlParts, number> = { multi: 4, single: 1 }
+
+/** 容错解析：只有明确存了 'single' 才关分片，旧版本没有这个键时按开处理 */
+export function parseDlParts(raw: string | null | undefined): DlParts {
+  return raw === 'single' ? 'single' : 'multi'
+}
+
+export function serializeDlParts(v: DlParts): string {
+  return v === 'single' ? 'single' : 'multi'
+}
+
 export interface DownloadRoute {
   url: string
   /** 站点 base，用于显示站名和测速 */

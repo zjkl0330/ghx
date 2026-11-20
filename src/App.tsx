@@ -122,7 +122,12 @@ import {
   DOWNLOAD_MODE_KEY,
   parseDownloadMode,
   serializeDownloadMode,
+  parseDlParts,
+  serializeDlParts,
+  DL_PARTS_KEY,
+  PARTS_OF,
   type DownloadMode,
+  type DlParts,
   type DownloadTarget,
 } from './lib/download'
 import { appendRecord, clearHistory, readHistory, recordFromPending, type DlRecord } from './lib/dl-history'
@@ -380,6 +385,8 @@ export default function App() {
   // ── 统一下载：更新包 / 发行版附件 / 源码 ZIP 共用一个面板 ─────────────
   /** 应用内下载还是交给浏览器。默认交给浏览器：环境不支持时不会卡住 */
   const [downloadMode, setDownloadMode] = useState<DownloadMode>('outer')
+  /** 应用内下载要不要切片并行。默认开：线路不认 Range 时原生侧会自己退回单线程 */
+  const [dlParts, setDlParts] = useState<DlParts>('multi')
   const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(null)
   /** 关掉下载面板后回到哪一层：更新弹层 / 发行版面板 / 仓库详情 */
   const [downloadReturn, setDownloadReturn] = useState<SheetName>('none')
@@ -1062,6 +1069,11 @@ export default function App() {
         if (cancelled) return
         setDownloadMode(parseDownloadMode(savedDownloadMode))
 
+        // 分片下载：老版本没有这个键，按「开」处理
+        const savedDlParts = await kv.get(DL_PARTS_KEY)
+        if (cancelled) return
+        setDlParts(parseDlParts(savedDlParts))
+
         // 剪贴板直达：老版本没有这个键，解析成「开」
         const savedClipOpen = await kv.get(CLIP_OPEN_KEY)
         if (cancelled) return
@@ -1637,6 +1649,15 @@ export default function App() {
       setDownloadMode(mode)
       if (kvRef.current) void kvRef.current.set(DOWNLOAD_MODE_KEY, serializeDownloadMode(mode))
       showToast(mode === 'inner' ? '已改为应用内下载' : '已改为交给浏览器下载')
+    },
+    [showToast],
+  )
+
+  const changeDlParts = useCallback(
+    (v: DlParts) => {
+      setDlParts(v)
+      if (kvRef.current) void kvRef.current.set(DL_PARTS_KEY, serializeDlParts(v))
+      showToast(v === 'multi' ? '下载会切 4 片并行' : '已改为单线程下载')
     },
     [showToast],
   )
@@ -2376,6 +2397,8 @@ export default function App() {
           fullscreen={fullscreen}
           onFullscreen={changeFullscreen}
           downloadMode={downloadMode}
+          dlParts={dlParts}
+          onDlParts={changeDlParts}
           onDownloadMode={changeDownloadMode}
           clipOpen={clipOpen}
           onClipOpen={changeClipOpen}
@@ -3167,6 +3190,7 @@ export default function App() {
           target={downloadTarget}
           mode={downloadMode}
           onMode={changeDownloadMode}
+          parts={PARTS_OF[dlParts]}
           onClose={() => setSheet(downloadReturn)}
           onToast={showToast}
           auth={client?.authToken ?? null}

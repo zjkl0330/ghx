@@ -22,6 +22,8 @@ export interface NativeProgress {
   total: number
   /** 瞬时速度 KB/s，原生侧按最近一秒的滑动窗口算 */
   kbps: number
+  /** 实际并发数：1 表示单连接（线路不支持 Range，或用户选了单线程） */
+  parts?: number
 }
 
 export interface NativeDownloadResult {
@@ -59,6 +61,10 @@ export interface NativeStatus {
   error?: string
   /** 成功时才有：耗时毫秒 */
   ms: number
+  /** 实际并发数，1 表示单连接 */
+  parts?: number
+  /** 这一次有没有真的切片 */
+  chunked?: boolean
 }
 
 interface DownloaderBridge {
@@ -72,6 +78,8 @@ interface DownloaderBridge {
     repo?: string
     kind?: DownloadKind
     tag?: string
+    /** 期望并发数，1 表示单线程。原生侧会按总长与硬上限再夹一次 */
+    parts?: number
   }): Promise<NativeDownloadResult>
   install(o: { path: string }): Promise<InstallResult>
   cancel(): Promise<void>
@@ -113,6 +121,8 @@ export interface InnerDownloadOptions {
   repo?: string
   kind?: DownloadKind
   tag?: string
+  /** 期望并发数，1 表示单线程；不传由原生决定（默认 4 路） */
+  parts?: number
   onProgress?: (p: NativeProgress) => void
 }
 
@@ -141,6 +151,7 @@ export async function innerDownload(o: InnerDownloadOptions): Promise<NativeDown
       ...(o.repo ? { repo: o.repo } : {}),
       ...(o.kind ? { kind: o.kind } : {}),
       ...(o.tag ? { tag: o.tag } : {}),
+      ...(o.parts && o.parts > 1 ? { parts: o.parts } : {}),
     })
   } catch (err) {
     throw new Error(humanError(err))

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
 import { formatSpeed, mirrorLabel } from '../lib/mirrors'
-import { modeHint, type DownloadMode } from '../lib/download'
+import { modeHint, type DownloadMode, type DlParts } from '../lib/download'
 import {
   ACCENTS,
   accentSwatch,
@@ -50,6 +50,9 @@ interface Props {
   /** 下载方式：应用内自己下并调安装器，还是交给系统浏览器 */
   downloadMode: DownloadMode
   onDownloadMode: (m: DownloadMode) => void
+  /** 应用内下载要不要切片并行；线路不认 Range 时原生侧自动退回单线程 */
+  dlParts: DlParts
+  onDlParts: (v: DlParts) => void
   /** 切回前台时读剪贴板，认出 GitHub 地址就直接跳过去 */
   clipOpen: boolean
   onClipOpen: (on: boolean) => void
@@ -634,6 +637,25 @@ export function SettingsPage(p: Props) {
             </div>
             <div className="hint" style={{ marginTop: 6 }}>
               {modeHint(p.downloadMode, p.native)}
+            {p.downloadMode === 'inner' && (
+              <>
+                <div className="tgl-label" style={{ marginTop: 14 }}>
+                  分片下载
+                </div>
+                <div className="seg" style={{ margin: 0 }}>
+                  <button className={p.dlParts === 'multi' ? 'on' : ''} onClick={() => p.onDlParts('multi')}>
+                    4 路并行
+                  </button>
+                  <button className={p.dlParts === 'single' ? 'on' : ''} onClick={() => p.onDlParts('single')}>
+                    单线程
+                  </button>
+                </div>
+                <div className="hint" style={{ marginTop: 8 }}>
+                  把安装包切成 4 段同时下。线路不支持断点分段时会自动退回单线程，不会下坏。
+                  带宽已经跑满时并行不会更快，反而可能被站点限流 —— 那时选单线程。
+                </div>
+              </>
+            )}
             </div>
 
             <div className="field" style={{ marginTop: 14 }}>
