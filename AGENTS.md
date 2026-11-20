@@ -266,10 +266,10 @@ user / notifications / search / profile / settings / tokens / audit
 - **当 `github.com:443` 不通时（这个环境长期如此），`git push` / `git fetch` 会超时（22 MB 的字体对象尤其），改走 Git Data API**：
 
 ```bash
-TOKEN=<PAT> BASE=<远端当前 main 的前 7 位> python3 scripts/push-via-api.py
+TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-api.py
 ```
 
-  脚本做的是 blobs → trees → commits → `PATCH /git/refs/heads/main`。**结果：本地与远端的树相同、commit hash 不同**，属于预期。等直连恢复后再 `git fetch gh main && git reset --soft gh/main` 对齐。
+  脚本做的是 blobs → trees → commits → `PATCH /git/refs/heads/main`。`BASE` 有两个硬条件：①必须是**本地**存在的提交（要 `git rev-parse` 得到，填远端 sha 会抛 `CalledProcessError`）；②它的**树必须与远端 main 的树相同**，脚本会先比对，不一致就退出以防覆盖别人的提交。正常情况就是 `HEAD~1`。**结果：本地与远端的树相同、commit hash 不同**，属于预期。等直连恢复后再 `git fetch gh main && git reset --soft gh/main` 对齐。
 - **tag 也要经 API 建**（本地 tag 推不上去）：`POST /git/tags`（附注对象）→ `POST /git/refs`（`refs/tags/vX.Y.Z`）。`object` 必须用**远端** main 的 sha，不是本地 HEAD，否则 CI 检出的是不存在的提交。
 - `git tag -a -F -` 的正文用 heredoc 时加 `--cleanup=verbatim`，否则 `#` 开头的行会被当注释删掉。
 
