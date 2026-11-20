@@ -223,8 +223,10 @@ user / notifications / search / profile / settings / tokens / audit
 ## 版本与发布
 
 - 版本号在 `package.json`、`android/app/build.gradle`（`versionCode` = 版本×1000）、`README.md`。三处要一致。
-- 流程：改代码 → `tsc -b` → `vitest run` → `pnpm build` → `npx cap sync android` → gradle 打包 → 签名 → `gh release create`。
-- Release 附件是 APK，正文写清这版改了什么、已知问题。
+- 流程：改代码 → `tsc -b` → `vitest run` → `pnpm build` → 提交推 `main` → 打**注解 tag** 推上去。CI 见到 `refs/tags/v*` 才构建签名 APK 并 `softprops/action-gh-release` 发版；普通 push 只留 workflow artifact，**Releases 页不会出现新版本**。
+- 发版说明直接取 tag 注解（`%(contents:subject)` + `%(contents:body)`），所以内容写在 tag 里，不写进代码。
+- **`git tag -a -F notes.txt` 默认 `--cleanup=strip`，会把以 `#` 开头的行当注释删掉** —— 正文里的 `## 小节标题` 会整行消失，Releases 上只剩连成一片的段落。v0.7.7 与 v0.8.2 都踩过（v0.8.2 事后用 `PATCH /releases/{id}` 补回正文）。要么加 `--cleanup=verbatim`，要么小节标题改用 `**加粗**`。
+- 一旦 tag 推上去，`main` 上的后续文档修正不会进这个 Release 的正文与源码包；要改正文用 `PATCH /repos/{owner}/{repo}/releases/{release_id}`（按 tag 名的端点只支持 GET，会 404）。
 - 推送镜像偶尔 `cannot lock ref`：推临时分支上传对象，再 `PATCH /git/refs/heads/main`（`force:false`）。
 
 ## Copilot 调研结论（2026-11，别再试一遍）
