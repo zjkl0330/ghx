@@ -402,7 +402,8 @@ user / notifications / search / profile / settings / tokens / audit
   - 实测（`scripts/verify-dl.py`，mock 24 个仓库）：3 行 APK、2 行 EXE、24 次 `/releases`；徽标 DOM 顺序是 `row-name → badge → badge pkg apk`；线路表 6 条且官方垫底；测速后第一条仍是代理。单测 1176 → 1181（新增 `rel-badge` 23 条，`download`/`mirrors` 各补档位断言）。
 
 - **v0.8.4**：仓库徽标改为 GraphQL 批量，一页 25 个仓库只发 1 次请求。
-  - **为什么必须改**。v0.8.3 是逐仓库 `/releases`，一页 25 个就是 25 次；实测过的令牌额度是 5000/小时，翻二十页归零，期间任何别的功能都会 403。这不是「可以接受」的量级。
+  - **为什么必须改**。v0.8.3 是逐仓库 `/releases`，一页 25 个就是 25 次；REST 的 `core` 额度是 5000/小时，翻二十页归零，期间任何别的功能都会 403。这不是「可以接受」的量级。
+  - **GraphQL 与 REST 是两个独立配额池**。`GET /rate_limit` 的 `resources` 里 `core` 与 `graphql` 各自 5000，实测 core 已用 33 时 graphql 仍是 0，互不扣减。所以批量这条链路现在完全不占 REST 额度 —— 这是比「25 次变 1 次」更强的论据，别只记次数。
   - 实测 2026-11-20：把 N 个 `repository(owner:, name:)` 用别名并进一次 POST `/graphql`，25 个别名 **HTTP 200、0.77s、query cost 仍是 1 点**（`rateLimit { cost }` 查的）。单个别名出错时该别名回 `null`，`errors[].path[0]` 标明是哪个，其余别名照常返回 —— 这是能用批量的前提。
   - CORS 也通：`OPTIONS https://api.github.com/graphql` → `204` + `access-control-allow-origin: *`，`allow-headers` 含 `Authorization, Content-Type`，所以 WebView 里直接 fetch 即可，不需要原生旁路。
   - **`NOT_FOUND` 与其它错误的处理必须分开**。仓库不存在/无权限是确定结论，缓存空数组（否则每次进列表都重问）；`FORBIDDEN`、`RATE_LIMITED` 是暂时的，算「没问到」，不写缓存，交给逐条路径重试。混为一谈会把一次抖动记成 24 小时的「没有安装包」。
