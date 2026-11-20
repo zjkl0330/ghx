@@ -394,6 +394,13 @@ user / notifications / search / profile / settings / tokens / audit
   - **仍未验证**：真机 GPU 下的折射观感。xvfb 是软件合成，`backdrop-filter` 的采样偏弱，整屏缩略图里底栏比真机更像实心块；放大到 2× 才能看清背后的字。
   - 老 WebView 的降级路径同步改了：`@supports not (backdrop-filter)` 里补的是实色 `border`，因为基础样式已经没有边框，只写 `border-color` 不会画出线。
 
+- **v0.8.3**：下载线路扩容 + 官方降档 + 仓库行安装包标记。
+  - **候选从 3 条到 6 条**。`KNOWN_RELEASE_PROXIES` 原来只有 gh-proxy.com / ghfast.top；实测 2026-11-20 对 v0.8.2 的 APK 做 HEAD，ghproxy.imciel.com（1.07s）、gh-proxy.com（2.33s）、ghfast.top（3.28s）、ghproxy.net（3.46s）都是 `200` 且 `content-length: 4392600`（与发布包逐字节一致），四条都能用。上限 `slice(0,4)` → `slice(0,6)`。**gitproxy.click 不能进表**：它回 `200` 但只有 195 字节的错误页，长度是唯一能识破它的信号。
+  - **官方直连不能靠测速排序**。`probeMirror` 只拉 256 KB，测的是建连与首包，官方直连在这段常年第一；真正的差别在几百 KB 之后的吞吐衰减，探针看不见。改法：`DownloadRoute.official`（按 base 域名判定，不按 label —— 同一条线路在 `OFFICIAL_MIRROR` 里叫「官方直连」、在 `mirrorOfUrl` 里叫「GitHub 官方」），`rankRoutes` 先比档位再比 kbps。`releaseCandidates` 里当前镜像若是官方则不重复占位，官方固定最后一条。
+  - **面板渲染顺序要注意测速是流式的**。`entries` 一条条回来，若直接 `ranked.map`，列表会从六行缩到两行。现在的 `order` 是「已测的（按档位/速度）+ 未测的（原顺序）」，行数恒等于候选数。
+  - **仓库行的 APK/EXE 标记**：列表接口不含发行版资产，只能逐仓库查 `/releases?per_page=10`。约束是「只查当前列表、`probedRef` 防重复、结果按 `tokenId + full_name` 存 24 小时、并发 3、游客不查」。游客必须跳过 —— 匿名 60 次/小时，一页 25 个仓库就把配额吃光，热门与搜索会跟着挂。私有仓库不进这个流程（`/releases` 对无权仓库直接 404，不影响其它行）。
+  - 实测（`scripts/verify-dl.py`，mock 24 个仓库）：3 行 APK、2 行 EXE、24 次 `/releases`；徽标 DOM 顺序是 `row-name → badge → badge pkg apk`；线路表 6 条且官方垫底；测速后第一条仍是代理。单测 1176 → 1181（新增 `rel-badge` 23 条，`download`/`mirrors` 各补档位断言）。
+
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）

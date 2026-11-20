@@ -329,18 +329,39 @@ export function releasePageUrl(base: string, owner: string, repo: string, tag?: 
 /**
  * 能吃 release 资产的公共反代。
  *
- * 实测 2026-11-10：对 ghx 的 APK 做 HEAD 都是 `200` 且 `content-length: 4332867`
- * （与本地构建逐字节一致），整包能下完。ghproxy.net 同样可用，只是候选总数要留
- * 位置给官方直连，所以这里只放两个 —— 前两条同时挂掉的概率已经很低。
+ * 实测 2026-11-20（对 ghx 的 v0.8.2 APK 做 HEAD，四种都得 `200` 且
+ * `content-length: 4392600`，与发布包逐字节一致）：
+ *
+ *   ghproxy.imciel.com  1.07s   ← 最快
+ *   gh-proxy.com        2.33s
+ *   ghfast.top          3.28s
+ *   ghproxy.net         3.46s
+ *
+ * 只放前两条是给官方直连留位置，官方却是「首包快、后段慢」，所以候选表
+ * 反过来做：先把能吃包的代理铺满，官方排在最后。gitproxy.click 实测对同一
+ * 资产回 `200` 但只有 195 字节（是错误页），不能进表。
+ *
  * 自建站不在此列：它把资产 302 到 `release-assets-…` 子域，那条链路返回 522。
  */
-export const KNOWN_RELEASE_PROXIES = ['https://gh-proxy.com', 'https://ghfast.top']
+export const KNOWN_RELEASE_PROXIES = [
+  'https://ghproxy.imciel.com',
+  'https://gh-proxy.com',
+  'https://ghfast.top',
+  'https://ghproxy.net',
+]
 
 /**
- * 下载候选，当前镜像排第一。
+ * 下载候选：能吃包的代理排前面，官方直连永远垫底。
  *
- * 把用户选中的站放在最前是刻意的：站点修好之后必须立刻恢复默认线路，
- * 不能因为兜底列表存在就永久绕开自建站。它真的坏了也不会卡住 —— 探活会跳过。
+ * 两件事共同决定这个顺序：
+ *
+ * - 用户选中的站排最前 —— 站点修好之后必须立刻恢复默认线路，不能因为兜底表
+ *   存在就永久绕开它。它真的坏了也不会卡住，探活会跳过。
+ * - **官方直连不进前三**。它建连快、首包快，256 KB 测速常年第一，但长时段
+ *   吞吐会掉下来（跨境链路 + 无缓存），几百 KB 的探针根本反映不出这一点。
+ *   所以这里把它固定在末尾：只有代理全挂时才轮到它。
+ *
+ * 当前镜像本身就是官方时不再重复占位，直接走最后那一条。
  */
 export function releaseCandidates(
   base: string,
@@ -350,10 +371,12 @@ export function releaseCandidates(
   asset: string,
   proxies: string[] = KNOWN_RELEASE_PROXIES,
 ): string[] {
+  const official = 'https://github.com'
   const path = `${seg(owner)}/${seg(repo)}/releases/download/${seg(tag)}/${seg(asset)}`
-  const out: string[] = [githubUrlAt(base, path)]
+  const out: string[] = []
+  if (base && normalizeBase(base) !== official) out.push(githubUrlAt(base, path))
   for (const p of proxies) if (p) out.push(githubUrlAt(p, path))
-  out.push(githubUrlAt('https://github.com', path))
+  out.push(githubUrlAt(official, path))
 
   const seen = new Set<string>()
   const uniq: string[] = []
@@ -363,7 +386,7 @@ export function releaseCandidates(
     seen.add(key)
     uniq.push(url)
   }
-  return uniq.slice(0, 4)
+  return uniq.slice(0, 6)
 }
 
 /** 探活回调：true 表示这条线路能下 */

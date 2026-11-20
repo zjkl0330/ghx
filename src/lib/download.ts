@@ -53,6 +53,14 @@ export interface DownloadRoute {
   style: MirrorStyle
   /** 这条线路要求带令牌（CI 产物），测速与应用外下载都不适用 */
   auth?: boolean
+  /**
+   * 官方直连（github.com / codeload.github.com）。
+   *
+   * 它建连快、首包快，256 KB 探针常年第一，但长时段吞吐会掉 —— 跨境链路、
+   * 无缓存、单连接被限速，几百 KB 的测速反映不出来。所以排序时把它整体
+   * 压到所有代理之后，只有当代理全不可用时才会被选中。
+   */
+  official?: boolean
 }
 
 export interface DownloadTarget {
@@ -107,6 +115,15 @@ export function mirrorOfUrl(url: string): { base: string; label: string; style: 
   }
 }
 
+/** 官方直连的站点名：按域名判定，不按 label —— 同一条线路在两处表里的叫法不同 */
+export function isOfficialBase(base: string): boolean {
+  const b = (base ?? '')
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+  return b === 'github.com' || b === 'codeload.github.com'
+}
+
 /** 地址串 → 线路列表：保持顺序、按 URL 去重 */
 export function toRoutes(urls: string[]): DownloadRoute[] {
   const seen = new Set<string>()
@@ -116,7 +133,13 @@ export function toRoutes(urls: string[]): DownloadRoute[] {
     if (!url || seen.has(key)) continue
     seen.add(key)
     const m = mirrorOfUrl(url)
-    out.push({ url, base: m.base, label: m.label, style: m.style })
+    out.push({
+      url,
+      base: m.base,
+      label: m.label,
+      style: m.style,
+      official: isOfficialBase(m.base) || undefined,
+    })
   }
   return out
 }
@@ -267,12 +290,22 @@ export async function measureRoutes(
   return out
 }
 
-/** 通的按速度降序，失败的沉底（保持原顺序，界面不会跳） */
+/**
+ * 通的按「档位 → 速度」排序，失败的沉底（保持原顺序，界面不会跳）。
+ *
+ * 档位只有两级：代理（0）与官方直连（1）。官方就算测出最高 kbps 也排在
+ * 所有可用代理之后 —— 探针只拉 256 KB，测的是建连与首包，而官方直连真正
+ * 难受的地方在于拉长之后的吞吐衰减，那一段测速根本看不见。
+ */
 export function rankRoutes(entries: SpeedEntry[]): SpeedEntry[] {
-  const ok = entries
-    .filter((e) => e.result.status === 'ok')
-    .sort((a, b) => b.result.kbps - a.result.kbps || a.result.ms - b.result.ms)
+  const ok = entries.filter((e) => e.result.status === 'ok')
   const bad = entries.filter((e) => e.result.status !== 'ok')
+  ok.sort(
+    (a, b) =>
+      Number(!!a.route.official) - Number(!!b.route.official) ||
+      b.result.kbps - a.result.kbps ||
+      a.result.ms - b.result.ms,
+  )
   return [...ok, ...bad]
 }
 

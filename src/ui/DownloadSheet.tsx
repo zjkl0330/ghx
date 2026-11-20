@@ -107,14 +107,25 @@ export function DownloadSheet(p: Props) {
   /** 同一站点可能出现两行（源码 ZIP：codeload 直取 vs github 302），只写站名会分不清 */
   const bestDup = best ? p.target.routes.filter((r) => r.label === best.label).length > 1 : false
 
-  /** 实际下载顺序：手动挑的排第一，其余按测速结果（没测过就按原顺序） */
+  /**
+   * 实际下载顺序：手动挑的排第一，其余按测速结果（没测过就按原顺序）。
+   *
+   * 测速是一条条来的，中途只有前几条有结果。这里把「已测的」放前面、
+   * 「还没测的」接在后面，行数始终等于候选总数 —— 否则测速一开始列表会
+   * 从六行缩成两行，看起来像线路被删了。
+   */
   const order = useMemo(() => {
     const all = p.target.routes
-    const list = entries.length > 0 ? ranked.map((e) => e.route) : [...all]
-    if (!picked) return list
+    let base = [...all]
+    if (entries.length > 0) {
+      const rankedRoutes = ranked.map((e) => e.route)
+      const seen = new Set(rankedRoutes.map((r) => r.url))
+      base = [...rankedRoutes, ...all.filter((r) => !seen.has(r.url))]
+    }
+    if (!picked) return base
     const hit = all.find((r) => r.url === picked)
-    if (!hit) return list
-    return [hit, ...list.filter((r) => r.url !== hit.url)]
+    if (!hit) return base
+    return [hit, ...base.filter((r) => r.url !== hit.url)]
   }, [entries, ranked, picked, p.target.routes])
 
   async function start() {
@@ -283,12 +294,16 @@ export function DownloadSheet(p: Props) {
             ) : null}
           </span>
           <button className="multi-all" disabled={probing || busy} onClick={() => void measure()}>
-            {probing ? '测速中…' : entries.length > 0 ? '重新测速' : '开始测速'}
+            {probing
+              ? `测速中 ${entries.length}/${p.target.routes.length}`
+              : entries.length > 0
+                ? '重新测速'
+                : '开始测速'}
           </button>
         </div>
 
         <div className="multi-list">
-          {p.target.routes.map((r, i) => {
+          {order.map((r, i) => {
             const hit = entries.find((e) => e.route.url === r.url)
             const on = picked ? picked === r.url : best ? best.url === r.url : i === 0
             const speedText = hit
@@ -311,7 +326,17 @@ export function DownloadSheet(p: Props) {
                 </span>
                 <span className="multi-main">
                   <b className="ellipsis">{r.label}</b>
-                  <i className="ellipsis">{routeDetail(r)}</i>
+                  <i
+                    className="ellipsis"
+                    title={
+                      r.official
+                        ? '官方直连建连快、首包快，但长时段吞吐会掉，所以排在所有代理之后'
+                        : undefined
+                    }
+                  >
+                    {routeDetail(r)}
+                    {r.official ? ' · 后段慢' : ''}
+                  </i>
                 </span>
                 <span className={`dl-speed${tone}`}>{speedText}</span>
               </button>

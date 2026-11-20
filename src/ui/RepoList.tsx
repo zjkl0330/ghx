@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { isPinned } from '../lib/pins'
+import type { PkgKind } from '../lib/rel-badge'
 import { snapshotAge } from '../lib/snapshot'
 import type { RepoSort } from '../lib/sort'
 import type { Repo } from '../lib/types'
@@ -88,6 +89,13 @@ interface Props {
   /** 本地置顶的仓库（full_name），排在最前面 */
   pins: string[]
   onTogglePin: (repo: Repo) => void
+  /**
+   * 发行版里有没有安装包，按 full_name 索引。
+   *
+   * 这份数据是异步补上来的：先渲染列表，探测结果回来一条更新一条，
+   * 所以这里允许缺项，缺了就是「还没查到」或「没有」。
+   */
+  pkgBadges?: Record<string, PkgKind[]>
 }
 
 export function RepoList(p: Props) {
@@ -251,6 +259,19 @@ export function RepoList(p: Props) {
                     <span className="row-l1">
                       <span className="row-name">{r.name}</span>
                       <span className="badge">{r.private ? 'Private' : 'Public'}</span>
+                      {(p.pkgBadges?.[r.full_name] ?? []).map((k) => (
+                        <span
+                          key={k}
+                          className={`badge pkg ${k}`}
+                          title={
+                            k === 'apk'
+                              ? '发行版里有 APK 安装包'
+                              : '发行版里有 EXE 安装包'
+                          }
+                        >
+                          {k === 'apk' ? 'APK' : 'EXE'}
+                        </span>
+                      ))}
                       {r.archived && <span className="badge archived">Archived</span>}
                     </span>
                     {(() => {

@@ -731,6 +731,30 @@ textarea {
 }
 
 /*
+ * 发行版里带安装包。
+ *
+ * 只比 Public 重一点，不能抢过仓库名：一行里已经有 Public、Archived 两个标，
+ * 再加两个实色块就成花名册了。所以用描边 + 品牌色字，没有底色。
+ * APK 与 EXE 分开配色，是因为它们在手机上意义不同 —— 前者能直接装，
+ * 后者基本只能看出「这是个 Windows 项目」。
+ */
+.badge.pkg {
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  padding: 0 5px;
+}
+
+.badge.pkg.apk {
+  color: var(--green);
+  border-color: var(--green-line);
+}
+
+.badge.pkg.exe {
+  color: var(--text-dim);
+  border-color: var(--line);
+}
+
+/*
  * 简介一行放下，超出省略；「译」标单独占一格，不能跟着文字一起被裁掉。
  * 之前把标记塞在文本流里，长句子一省略，标就消失在省略号后面了。
  */

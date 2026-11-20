@@ -474,12 +474,28 @@ describe('改地址后全局生效', () => {
 })
 
 describe('安装包下载线路', () => {
-  it('当前镜像排第一，公共反代与官方直连依次兜底', () => {
+  it('当前镜像排第一，反代铺满，官方直连固定垫底', () => {
     const list = releaseCandidates(DEFAULT_MIRROR, 'o', 'r', 'v1', 'a.apk')
     expect(list[0]).toBe('https://gh.zjkl0330.dpdns.org/o/r/releases/download/v1/a.apk')
     expect(list).toContain('https://gh-proxy.com/https://github.com/o/r/releases/download/v1/a.apk')
     expect(list[list.length - 1]).toBe('https://github.com/o/r/releases/download/v1/a.apk')
-    expect(list.length).toBeLessThanOrEqual(4)
+    expect(list.length).toBeGreaterThanOrEqual(5)
+    expect(list.length).toBeLessThanOrEqual(6)
+  })
+
+  it('官方直连不进前三：可用代理有多条时它只当兜底', () => {
+    const list = releaseCandidates(DEFAULT_MIRROR, 'o', 'r', 'v1', 'a.apk')
+    const idx = list.indexOf('https://github.com/o/r/releases/download/v1/a.apk')
+    expect(idx).toBe(list.length - 1)
+    expect(idx).toBeGreaterThanOrEqual(4)
+  })
+
+  it('当前镜像就是官方时只出现一次，仍在末尾', () => {
+    const list = releaseCandidates('https://github.com', 'o', 'r', 'v1', 'a.apk')
+    const official = 'https://github.com/o/r/releases/download/v1/a.apk'
+    expect(list.filter((u) => u === official).length).toBe(1)
+    expect(list[list.length - 1]).toBe(official)
+    expect(list.length).toBeGreaterThanOrEqual(4)
   })
 
   it('当前镜像本身就是公共反代时不重复出现', () => {

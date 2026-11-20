@@ -108,9 +108,12 @@ describe('三类目标', () => {
     expect(t.installable).toBe(true)
     expect(t.subtitle).toBe('zjkl0330/ghx · v0.7.8')
     expect(t.routes[0].base).toBe(DEFAULT_MIRROR)
-    // 自建站 + gh-proxy + ghfast + 官方，最多四条
-    expect(t.routes.length).toBeGreaterThanOrEqual(3)
-    expect(t.routes.length).toBeLessThanOrEqual(4)
+    // 自建站 + 四个能吃 release 的反代 + 官方兜底，最多六条
+    expect(t.routes.length).toBeGreaterThanOrEqual(5)
+    expect(t.routes.length).toBeLessThanOrEqual(6)
+    // 官方直连永远垫底：它首包快、后段慢，不能进候选前排
+    expect(t.routes[t.routes.length - 1].official).toBe(true)
+    expect(t.routes.filter((r) => r.official)).toHaveLength(1)
   })
 
   it('发行版附件：zip 不可安装，但候选与安装包同一套', () => {
@@ -223,6 +226,52 @@ describe('测速与选线', () => {
     const ranked = rankRoutes(entries)
     expect(ranked[0].route.url).toBe(fast)
     expect(fastestRoute(entries)?.url).toBe(fast)
+  })
+
+  /*
+   * 官方直连的档位压制。
+   *
+   * 只按 kbps 排是不够的：探针只拉 256 KB，测的是建连与首包。官方直连这一段
+   * 常年第一，但拉长之后吞吐会掉 —— 用户看到「官方最快」选了它，几 MB 的包
+   * 下到一半变成几 KB/s。所以排序先分档（代理 0 / 官方 1），档内才比速度。
+   */
+  function mkEntry(url: string, kbps: number, official = false, status: 'ok' | 'fail' = 'ok'): SpeedEntry {
+    return {
+      route: {
+        url,
+        base: new URL(url).origin,
+        label: official ? 'GitHub 官方' : '代理',
+        style: 'url',
+        official,
+      },
+      result: { base: '', label: '', style: 'url', status, ms: 100, bytes: 1024, kbps },
+    }
+  }
+
+  it('官方测速最快也排在可用代理之后', () => {
+    const entries = [
+      mkEntry('https://github.com/o/r/a.apk', 900, true),
+      mkEntry('https://gh-proxy.com/https://github.com/o/r/a.apk', 120),
+    ]
+    const ranked = rankRoutes(entries)
+    expect(ranked[0].route.official).toBeFalsy()
+    expect(fastestRoute(entries)?.official).toBeFalsy()
+  })
+
+  it('代理全挂时官方才轮到', () => {
+    const entries = [
+      mkEntry('https://gh-proxy.com/https://github.com/o/r/a.apk', 0, false, 'fail'),
+      mkEntry('https://github.com/o/r/a.apk', 80, true),
+    ]
+    expect(fastestRoute(entries)?.official).toBe(true)
+  })
+
+  it('官方自己挂掉时不会被选中', () => {
+    const entries = [
+      mkEntry('https://gh-proxy.com/https://github.com/o/r/a.apk', 0, false, 'fail'),
+      mkEntry('https://github.com/o/r/a.apk', 0, true, 'fail'),
+    ]
+    expect(fastestRoute(entries)).toBeNull()
   })
 
   it('失败的沉底，全失败时没有最快线路', async () => {

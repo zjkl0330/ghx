@@ -63,6 +63,13 @@ import { GUEST_ID, clearHotCache } from './lib/hotCache'
 import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
 import { applyPins, isPinned, parsePins, pinKey, serializePins, togglePin } from './lib/pins'
 import {
+  BADGE_RELEASE_PAGE,
+  loadBadges,
+  readCachedBadges,
+  runBadgeQueue,
+  type PkgKind,
+} from './lib/rel-badge'
+import {
   dropWorkspace,
   emptyWorkspace,
   restoreWorkspace,
@@ -298,6 +305,15 @@ export default function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   /** 本地置顶的仓库，按账号分开存 */
   const [pins, setPins] = useState<string[]>([])
+  /**
+   * 仓库列表上的「有 APK / 有 EXE」标记，按 full_name 索引。
+   *
+   * 列表接口不带发行版资产，只能一个仓库查一次 `/releases`。所以这份数据
+   * 是异步补上来的：列表先渲染，查到一条更新一条，缺项就当作「还没查到」。
+   */
+  const [pkgBadges, setPkgBadges] = useState<Record<string, PkgKind[]>>({})
+  /** 已经入过队的仓库，避免列表重渲染时重复请求（刷新页面/重进 App 才会重置） */
+  const probedRef = useRef<Set<string>>(new Set())
 
   const [sheet, setSheet] = useState<Sheet>('none')
   const [addBusy, setAddBusy] = useState(false)
@@ -677,6 +693,65 @@ export default function App() {
     if (themePref !== 'system') return
     return watchSystemTheme(apply)
   }, [themePref, fullscreen])
+
+  /*
+   * 仓库列表的「有 APK / 有 EXE」标记。
+   *
+   * 列表接口（`/user/repos`）只给仓库元数据，不含发行版资产，所以只能逐仓库
+   * 查一次 `/releases`。这条链路因此按「只查当前列表、查过就不查、结果存 24 小时」
+   * 来做：一页 25 个仓库就是 25 个请求，有令牌（5000/小时）可以接受；
+   * 游客（60/小时）干脆不查 —— 一页就能把匿名配额吃光，热门和搜索会跟着挂。
+   */
+  useEffect(() => {
+    if (tab !== 'repos' || !client || !activeId) return
+    const names = repos.map((r) => r.full_name).filter(Boolean)
+    if (names.length === 0) return
+
+    const todo: string[] = []
+    for (const name of names) {
+      const k = `${activeId}:${name}`
+      if (probedRef.current.has(k)) continue
+      probedRef.current.add(k)
+      todo.push(name)
+    }
+    if (todo.length === 0) return
+
+    let alive = true
+    void (async () => {
+      // 先把本地 24 小时内的结果贴上去，剩下的才发请求
+      const cached = await readCachedBadges(kvRef.current, activeId, todo)
+      if (!alive) return
+      if (Object.keys(cached).length > 0) setPkgBadges((prev) => ({ ...prev, ...cached }))
+
+      const miss = todo.filter((n) => !(n in cached))
+      if (miss.length === 0) return
+      await runBadgeQueue({
+        names: miss,
+        probe: async (fullName) => {
+          const [owner, name] = fullName.split('/')
+          if (!owner || !name) return null
+          return loadBadges({
+            kv: kvRef.current,
+            tokenId: activeId,
+            fullName,
+            fetchReleases: async () => {
+              const { data } = await client.listReleases(owner, name, 1, BADGE_RELEASE_PAGE)
+              return data
+            },
+          })
+        },
+        onEach: (fullName, kinds) => {
+          if (!kinds || kinds.length === 0) return
+          setPkgBadges((prev) => ({ ...prev, [fullName]: kinds }))
+        },
+        isAlive: () => alive,
+      })
+    })()
+
+    return () => {
+      alive = false
+    }
+  }, [tab, client, activeId, repos])
 
   function changeTheme(pref: ThemePref) {
     writeThemePref(pref)
@@ -2070,6 +2145,7 @@ export default function App() {
           snapshotAt={snapshotAt}
           pins={pins}
           onTogglePin={(r) => void toggleRepoPin(r.full_name)}
+          pkgBadges={pkgBadges}
           onCreate={() => {
             setCreateError(null)
             setSheet('create')
