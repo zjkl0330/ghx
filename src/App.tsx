@@ -67,8 +67,10 @@ import {
   loadBadges,
   readCachedBadges,
   runBadgeQueue,
+  saveBadges,
   type PkgKind,
 } from './lib/rel-badge'
+import { queryRepoPkgs } from './lib/graphql'
 import {
   dropWorkspace,
   emptyWorkspace,
@@ -697,10 +699,13 @@ export default function App() {
   /*
    * 仓库列表的「有 APK / 有 EXE」标记。
    *
-   * 列表接口（`/user/repos`）只给仓库元数据，不含发行版资产，所以只能逐仓库
-   * 查一次 `/releases`。这条链路因此按「只查当前列表、查过就不查、结果存 24 小时」
-   * 来做：一页 25 个仓库就是 25 个请求，有令牌（5000/小时）可以接受；
-   * 游客（60/小时）干脆不查 —— 一页就能把匿名配额吃光，热门和搜索会跟着挂。
+   * 列表接口（`/user/repos`）只给仓库元数据，不含发行版资产。逐仓库补一次
+   * `/releases` 的代价是「一页 25 个仓库 = 25 次请求」，翻二十页就把 5000/小时
+   * 的令牌额度烧光 —— 所以这里先走 GraphQL 批量：25 个别名一个请求（cost 1 点），
+   * 只有当前线路不支持 GraphQL 或批量失败时才逐条回落。
+   *
+   * 另外两层节省不变：结果存 24 小时（含「确实没有包」的空结果，否则空仓库
+   * 每次进列表都会被重问一遍）；游客完全不查 —— 匿名 60 次/小时，一页就吃光。
    */
   useEffect(() => {
     if (tab !== 'repos' || !client || !activeId) return
@@ -725,8 +730,24 @@ export default function App() {
 
       const miss = todo.filter((n) => !(n in cached))
       if (miss.length === 0) return
+
+      // 一次问回来。空结果也要写缓存 —— 「这个仓库没有安装包」同样是有用的结论
+      const batch = await queryRepoPkgs(client, miss)
+      if (!alive) return
+      if (Object.keys(batch.ok).length > 0) {
+        await saveBadges(kvRef.current, activeId, batch.ok)
+        if (!alive) return
+        const shown: Record<string, PkgKind[]> = {}
+        for (const [full, kinds] of Object.entries(batch.ok)) {
+          if (kinds.length > 0) shown[full] = kinds
+        }
+        if (Object.keys(shown).length > 0) setPkgBadges((prev) => ({ ...prev, ...shown }))
+      }
+
+      // 批量没问到的（镜像站没有 /graphql、限流、结构异常）才逐条补
+      if (batch.failed.length === 0) return
       await runBadgeQueue({
-        names: miss,
+        names: batch.failed,
         probe: async (fullName) => {
           const [owner, name] = fullName.split('/')
           if (!owner || !name) return null

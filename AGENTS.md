@@ -401,6 +401,16 @@ user / notifications / search / profile / settings / tokens / audit
   - **仓库行的 APK/EXE 标记**：列表接口不含发行版资产，只能逐仓库查 `/releases?per_page=10`。约束是「只查当前列表、`probedRef` 防重复、结果按 `tokenId + full_name` 存 24 小时、并发 3、游客不查」。游客必须跳过 —— 匿名 60 次/小时，一页 25 个仓库就把配额吃光，热门与搜索会跟着挂。私有仓库不进这个流程（`/releases` 对无权仓库直接 404，不影响其它行）。
   - 实测（`scripts/verify-dl.py`，mock 24 个仓库）：3 行 APK、2 行 EXE、24 次 `/releases`；徽标 DOM 顺序是 `row-name → badge → badge pkg apk`；线路表 6 条且官方垫底；测速后第一条仍是代理。单测 1176 → 1181（新增 `rel-badge` 23 条，`download`/`mirrors` 各补档位断言）。
 
+- **v0.8.4**：仓库徽标改为 GraphQL 批量，一页 25 个仓库只发 1 次请求。
+  - **为什么必须改**。v0.8.3 是逐仓库 `/releases`，一页 25 个就是 25 次；实测过的令牌额度是 5000/小时，翻二十页归零，期间任何别的功能都会 403。这不是「可以接受」的量级。
+  - 实测 2026-11-20：把 N 个 `repository(owner:, name:)` 用别名并进一次 POST `/graphql`，25 个别名 **HTTP 200、0.77s、query cost 仍是 1 点**（`rateLimit { cost }` 查的）。单个别名出错时该别名回 `null`，`errors[].path[0]` 标明是哪个，其余别名照常返回 —— 这是能用批量的前提。
+  - CORS 也通：`OPTIONS https://api.github.com/graphql` → `204` + `access-control-allow-origin: *`，`allow-headers` 含 `Authorization, Content-Type`，所以 WebView 里直接 fetch 即可，不需要原生旁路。
+  - **`NOT_FOUND` 与其它错误的处理必须分开**。仓库不存在/无权限是确定结论，缓存空数组（否则每次进列表都重问）；`FORBIDDEN`、`RATE_LIMITED` 是暂时的，算「没问到」，不写缓存，交给逐条路径重试。混为一谈会把一次抖动记成 24 小时的「没有安装包」。
+  - **`graphqlUrl` 只在 `baseUrl === https://api.github.com` 时非空**。自建镜像与 GHES 没有同构的 `/graphql`，拼过去只会 404；返回 `null` 让整批走原来的逐条路径，别试图嗅探。
+  - 结构归一成 REST 那份 `{ draft, assets }` 再交给同一个 `badgesOfReleases`，两套路径的判定规则只有一份，不会漂移。
+  - 实测（`scripts/verify-batch.py`，mock 24 个仓库、拦真实请求计数）：GraphQL 正常 → `/graphql` **1 次**、`/releases` **0 次**、徽标 3 APK / 2 EXE；GraphQL 回 500 → `/graphql` 1 次 + `/releases` **24 次**回落、徽标仍是 3/2（降级不能变成没有）。单测 1181 → 1210（`graphql` 23 条 + `api` 的 `graphql()` 6 条）。
+  - **仍未验证**：fine-grained 令牌只授 `metadata: read` 时 `releases` 字段的行为（可能回空 nodes，被判成「没有包」）。REST 路径有同样的权限前提，这一版没有额外劣化，但也没实测。
+
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）

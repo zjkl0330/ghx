@@ -106,6 +106,20 @@ export function badgeFresh(e: BadgeEntry | null | undefined, now = Date.now()): 
   return age >= 0 && age < BADGE_TTL
 }
 
+/** 批量落地：一次问回来的整批结果不必逐个走 loadBadges，写一次就够 */
+export async function saveBadges(
+  kv: KV | null,
+  tokenId: string,
+  map: Record<string, PkgKind[]>,
+  now = Date.now(),
+): Promise<void> {
+  if (!kv) return
+  for (const [fullName, kinds] of Object.entries(map)) {
+    if (!fullName) continue
+    await kv.set(badgeKey(tokenId, fullName), serializeBadge({ at: now, kinds })).catch(() => undefined)
+  }
+}
+
 export interface BadgeProbeInput {
   kv: KV | null
   tokenId: string

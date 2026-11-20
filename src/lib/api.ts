@@ -116,6 +116,16 @@ export function describeError(status: number, body: unknown): string {
   }
 }
 
+/**
+ * GraphQL 的「半个错误」：HTTP 200 也可能带 errors，而且常常只针对某几个别名。
+ * `path[0]` 就是别名，据此判断是哪个仓库出的问题。
+ */
+export interface GraphQLError {
+  type?: string
+  message?: string
+  path?: (string | number)[]
+}
+
 export interface ClientOptions {
   token: string
   baseUrl?: string
@@ -284,6 +294,63 @@ export class GitHubClient {
     if (method !== 'GET') this.cache.applyInvalidation(method, path)
 
     return { data: body as T, rate, scopes: this.scopes, link }
+  }
+
+  /**
+   * GraphQL 端点。只有 github.com 官方端点同构可用 —— 自建镜像与 GHES 都没有
+   * `/graphql`，拿 REST 的 baseUrl 拼过去只会 404，所以这里返回 null，
+   * 让调用方退回逐条 REST。
+   */
+  get graphqlUrl(): string | null {
+    return this.baseUrl === DEFAULT_BASE_URL ? `${DEFAULT_BASE_URL}/graphql` : null
+  }
+
+  /**
+   * 发一个 GraphQL 查询。
+   *
+   * 存在的唯一理由是「一次问多个仓库」：REST 没有批量端点，25 个仓库要看发行版
+   * 资产就得 25 次请求；GraphQL 把这些别名塞进一个查询，实测 cost 仍是 1 点。
+   *
+   * 不重试 —— POST 重发在语义上不安全，失败交给调用方整批降级。
+   * HTTP 200 也可能带 errors（部分别名 NOT_FOUND），所以 errors 原样返回，由上层判断。
+   */
+  async graphql<T = unknown>(
+    query: string,
+    variables?: Record<string, unknown>,
+  ): Promise<{ data: T | null; errors: GraphQLError[]; rate: RateLimit | null }> {
+    const url = this.graphqlUrl
+    if (!url) throw new GitHubError('当前线路不支持 GraphQL', 404, null)
+
+    const res = await this.send(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          ...this.authHeaders(),
+        },
+        body: JSON.stringify(variables ? { query, variables } : { query }),
+      },
+      false,
+    )
+
+    const rate = this.readRate(res.headers)
+    this.rate = rate
+    const text = await res.text()
+    const body = text ? safeJson(text) : null
+
+    if (!res.ok) {
+      if (res.status === 403 && rate && rate.remaining === 0) throw new RateLimitError(rate.reset)
+      throw new GitHubError(describeError(res.status, body), res.status, body)
+    }
+
+    const payload = (body ?? {}) as { data?: T; errors?: GraphQLError[] }
+    return {
+      data: payload.data ?? null,
+      errors: Array.isArray(payload.errors) ? payload.errors : [],
+      rate,
+    }
   }
 
   /**

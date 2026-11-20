@@ -468,4 +468,65 @@ describe('网络层失败', () => {
       vi.unstubAllGlobals()
     }
   })
+
+  it('镜像线路没有 /graphql，graphqlUrl 返回 null 让上层回落', () => {
+    const mirror = new GitHubClient({ token: 't', baseUrl: 'https://gh.example.com' })
+    expect(mirror.graphqlUrl).toBeNull()
+    const official = new GitHubClient({ token: 't' })
+    expect(official.graphqlUrl).toBe('https://api.github.com/graphql')
+  })
+
+  it('graphql 发 POST，带令牌与 JSON 类型', async () => {
+    const fn = mockFetch(200, { data: { viewer: { login: 'x' } }, errors: [] })
+    const client = new GitHubClient({ token: 'abc', fetchImpl: fn })
+    const res = await client.graphql('query { viewer { login } }')
+    expect(res.data).toEqual({ viewer: { login: 'x' } })
+    expect(res.errors).toEqual([])
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    expect(call[0]).toBe('https://api.github.com/graphql')
+    expect((call[1] as RequestInit).method).toBe('POST')
+    const headers = (call[1] as RequestInit).headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer abc')
+    expect(headers['Content-Type']).toBe('application/json')
+    expect(String((call[1] as RequestInit).body)).toContain('viewer')
+  })
+
+  it('200 带 errors 原样交回，不当成失败抛出去', async () => {
+    const fn = mockFetch(200, {
+      data: { r0: null },
+      errors: [{ type: 'NOT_FOUND', path: ['r0'], message: 'Could not resolve' }],
+    })
+    const client = new GitHubClient({ token: 'abc', fetchImpl: fn })
+    const res = await client.graphql('query { r0: repository(owner: "a", name: "b") { id } }')
+    expect(res.data).toEqual({ r0: null })
+    expect(res.errors[0].type).toBe('NOT_FOUND')
+  })
+
+  it('匿名客户端不带 Authorization，走匿名额度', async () => {
+    const fn = mockFetch(200, { data: {} })
+    const client = new GitHubClient({ token: '', fetchImpl: fn })
+    await client.graphql('query { rateLimit { limit } }')
+    const call = (fn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    const headers = (call[1] as RequestInit).headers as Record<string, string>
+    expect(headers.Authorization).toBeUndefined()
+  })
+
+  it('镜像站调 graphql 直接报错，不会打到不存在的端点', async () => {
+    const client = new GitHubClient({ token: 't', baseUrl: 'https://gh.example.com' })
+    const err = await client.graphql('query { viewer { login } }').catch((e: unknown) => e)
+    expect((err as GitHubError).message).toContain('GraphQL')
+  })
+
+  it('GraphQL 也认 403 限流', async () => {
+    const client = new GitHubClient({
+      token: 't',
+      fetchImpl: mockFetch(403, { message: 'API rate limit exceeded' }, {
+        'x-ratelimit-limit': '5000',
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': '1800000000',
+      }),
+    })
+    const err = await client.graphql('query { viewer { login } }').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(RateLimitError)
+  })
 })
