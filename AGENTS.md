@@ -431,6 +431,17 @@ user / notifications / search / profile / settings / tokens / audit
   - 实测（`scripts/verify-overflow.py`，390×844，mock 3 个仓库 = 长中文 + 80 字符仓库名 + 长英文，Edge 翻译端点 mock 成长中文以便真的出现「译」标）：A 三页（仓库/星标/热门）文档 390/390、3 行全在屏内、3 行都出现省略、译标 1 个；B 注入 `min-width: auto`（模拟老内核不收缩）仍不溢出；C 旧 flex 写法在同样注入下 3 行被撑到 2018px —— 证明 B 的通过不是假阳性。截图 `docs/screenshots/overflow-085-*.png`。
   - **仍未验证**：真机华为。沙箱只能模拟「min-width 不生效」这一条，模拟不出它其它内核怪癖。
 
+- **v0.8.7**：界面字体可选，默认内置 OPPO Sans 4.0。
+  - **授权决定实现方式，不是「顺手加个字体」**。`OPPO Sans Fonts License Agreement` 原文（`licenses/OPPO Sans 4.0.txt`）：grant 的是 "use, copy, merge, embed, bundle, redistribute and/or sell **unmodified copies** of OPPO Sans Fonts with any software"，条件两条 ——「软件内要有显著声明」「不得对字体或任何组成部分做修改」。所以：①随包打包**合法**；②**子集化违法条款**（删字符就是修改）；③必须写明用了它。设置页那句版权说明不是装饰，是许可条件。
+  - **体积就是代价，别偷偷瘦身**。官方 OPPO Sans 4.0 Regular 单个字重 `22,741,096` 字节，cmap 29197 字（GB2312 6763 字全覆盖，实测缺字 0）。APK 从 4.4 MB → **20.3 MB**（`21,243,324` 字节）。想瘦到 9 MB 只能转 woff2 或子集化，前者是灰色地带、后者明确违规，所以选了最笨但站得住的那个。
+  - **只声明 400 一档**。`@font-face { font-weight: 400 }`，标题要 600 时由浏览器合成加粗；声明成 `100 900` 反而不会合成，粗体看起来没区别，还多骗自己一句「有 Bold」。
+  - **`font-display: swap` 是必须的**。22 MB 字体解析要时间，`block` 会让首屏白字等字体。
+  - **切换只改 `--font-ui` 一个变量**，字号行高一个字不动 —— 否则切换瞬间整页重排、滚动位置跟着跳。
+  - 首屏一致性和主题、外观同一套路：`index.html` 内联脚本读 `ghx.font` 打 `data-font`，React 挂载后 `applyFont` 只做对齐。白名单在两处，改一处要改两处。
+  - 实测（`scripts/verify-font.py`，390×844，mock）：字体文件 21.7 MB、本地请求 29 ms；同一串「设置字体仓库提交 Issue」在 OPPO Sans 下 **330.56px**、系统字体 **343.66px**（差 13px，证明字形真的换了，不是「显示已生效但没换」）；切系统字体后 `data-font=system` 且 `body` 字体族里不再有 OPPO Sans；刷新后保持；切回后恢复。截图 `docs/screenshots/font-086-*.png`。单测 1218 → 1227（`font.test.ts` 9 条）。
+  - **踩过的坑**：第一版用 `canvas.measureText` 量宽度，两种字体都返回 106.68px —— canvas 的 `font` 简写在无头环境里静默回退，量的是同一个 fallback。改成真实 DOM（隐藏 div + `getBoundingClientRect`）才量出差异。以后测字体一律用 DOM。
+  - **仍未验证**：真机 WebView 解析 22 MB 字体的耗时与内存占用。低端机可能要几百毫秒并多吃几十 MB 内存，这一版没有实测数据。
+
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）

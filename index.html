@@ -190,6 +190,10 @@
           root.dataset.bg = pick(ap.bg, ['plain', 'glow'], 'plain')
           root.dataset.glass = pick(ap.glass, ['clear', 'normal', 'thick'], 'normal')
           root.dataset.motion = pick(ap.motion, ['full', 'calm'], 'full')
+
+          // 字体：默认用随包内置的 OPPO Sans，'system' 才回退系统字体。
+          // 白名单和 src/lib/font.ts 保持一致。
+          root.dataset.font = localStorage.getItem('ghx.font') === 'system' ? 'system' : 'sans'
         } catch (e) {}
       })()
     </script>

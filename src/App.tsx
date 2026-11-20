@@ -92,6 +92,7 @@ import {
   type ResolvedTheme,
   type ThemePref,
 } from './lib/theme'
+import { applyFont, readFontPref, writeFontPref, type FontPref } from './lib/font'
 import { probeToken } from './lib/tokens'
 import { dismissBoot } from './lib/boot'
 import { applyAppearance, readAppearance, writeAppearance, type Appearance } from './lib/appearance'
@@ -260,6 +261,8 @@ export default function App() {
   const [guardBusy, setGuardBusy] = useState(false)
   const [guardError, setGuardError] = useState<string | null>(null)
   const [themePref, setThemePref] = useState<ThemePref>(() => readThemePref())
+  /** 界面字体：默认随包内置的 OPPO Sans，可切回系统字体 */
+  const [fontPref, setFontPref] = useState<FontPref>(() => readFontPref())
   /** 外观选项：首屏已由 index.html 应用到 <html>，这里接管后续变更 */
   const [appearance, setAppearance] = useState<Appearance>(() => readAppearance())
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => resolveTheme(readThemePref()))
@@ -681,6 +684,11 @@ export default function App() {
     applyAppearance(appearance)
   }, [appearance])
 
+  /** 字体同理：首屏内联脚本先打上 data-font，这里接管后续切换 */
+  useEffect(() => {
+    applyFont(fontPref)
+  }, [fontPref])
+
   /** 配色：首屏已由 index.html 内联脚本处理，这里负责后续切换与系统监听。 */
   useEffect(() => {
     const apply = () => {
@@ -782,6 +790,12 @@ export default function App() {
     } else {
       showToast(pref === 'dark' ? '已切换深色' : '已切换浅色')
     }
+  }
+
+  function changeFont(pref: FontPref) {
+    writeFontPref(pref)
+    setFontPref(pref)
+    showToast(pref === 'sans' ? '字体：OPPO Sans' : '字体：跟随手机系统')
   }
 
   function changeAppearance(patch: Partial<Appearance>, hint: string) {
@@ -2276,6 +2290,8 @@ export default function App() {
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}
+          fontPref={fontPref}
+          onFont={changeFont}
           appearance={appearance}
           onAppearance={changeAppearance}
           native={Capacitor.isNativePlatform()}

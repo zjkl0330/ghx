@@ -1,10 +1,36 @@
 /*
+ * 界面字体：默认用随包内置的 OPPO Sans，也可以在设置里切回系统字体。
+ *
+ * 这里放的是官方原始 TTF，没有子集化 —— OPPO Sans 的授权允许「随软件原样
+ * 打包与再分发未修改的副本」，明确禁止修改字体，所以不能删字符来瘦身。
+ * 代价是 22 MB，换来的是条款上站得住；`swap` 让系统字体先顶上，字体解析完
+ * 再换过来，首屏不会白屏等字体。
+ *
+ * 只声明 400 一个字重：标题要 600 时由浏览器合成加粗，比再塞一份 20 MB 的
+ * Bold 划算。`font-synthesis` 保持默认的 auto。
+ */
+@font-face {
+  font-family: 'OPPO Sans';
+  src: url('../assets/fonts/OPPOSans4-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
  * 两套配色都基于 GitHub Primer：深色是默认，<html data-theme="light"> 切换浅色。
  * 具体用哪套由 src/lib/theme.ts 决定（跟随系统 / 手动指定），
  * 所以这里不需要 prefers-color-scheme 媒体查询，避免和手动选择打架。
  */
 :root {
   color-scheme: dark;
+
+  /*
+   * 界面字体族。OPPO Sans 排第一，但它只覆盖 400 一档，
+   * 600 由合成加粗顶上；`system` 分支在下面按 data-font 覆盖。
+   */
+  --font-ui: 'OPPO Sans', -apple-system, 'Noto Sans CJK SC', 'PingFang SC',
+    'Microsoft YaHei', system-ui, sans-serif;
 
   --bg: #0d1117;
   --surface: #161b22;
@@ -459,6 +485,13 @@ html[data-motion='calm'] *::after {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 切到系统字体：只换字体族，字号与行高一个字都不动，
+   否则切换瞬间整页会重新排版、滚动位置跟着跳。 */
+html[data-font='system'] {
+  --font-ui: -apple-system, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei',
+    system-ui, sans-serif;
+}
+
 html,
 body,
 #root {
@@ -468,7 +501,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;

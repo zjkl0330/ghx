@@ -10,6 +10,7 @@ import {
   type TabbarShape,
 } from '../lib/appearance'
 import type { ResolvedTheme, ThemePref } from '../lib/theme'
+import type { FontPref } from '../lib/font'
 import { TAB_DEFS, type TabKey } from '../lib/tabs'
 import {
   TARGET_LANGS,
@@ -34,6 +35,8 @@ interface Props {
   themePref: ThemePref
   resolvedTheme: ResolvedTheme
   onTheme: (pref: ThemePref) => void
+  fontPref: FontPref
+  onFont: (pref: FontPref) => void
   appearance: Appearance
   onAppearance: (patch: Partial<Appearance>, hint: string) => void
   /** 是否跑在原生壳里。全屏开关只在原生端有意义 */
@@ -325,6 +328,28 @@ export function SettingsPage(p: Props) {
             </div>
             <div className="hint" style={{ marginTop: 6 }}>
               精简会关掉页面切换、弹层和启动遮罩的动画，省电，也让低端机少掉帧。
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              界面字体
+            </div>
+            <div className="seg" style={{ margin: 0 }}>
+              <button
+                className={p.fontPref === 'sans' ? 'on' : ''}
+                onClick={() => p.onFont('sans')}
+              >
+                OPPO Sans
+              </button>
+              <button
+                className={p.fontPref === 'system' ? 'on' : ''}
+                onClick={() => p.onFont('system')}
+              >
+                系统字体
+              </button>
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              默认是 OPPO Sans 4.0，随包内置、不联网也能用；换系统字体则跟随手机本身的字形。
+              字体版权归 OPPO 广东移动通信有限公司所有，按 OPPO Sans 字体许可随本软件原样分发。
             </div>
 
             {p.native && (
