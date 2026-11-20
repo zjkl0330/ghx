@@ -78,6 +78,12 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      # 分片下载与通知栏文案的真跑测试：本地起 HTTP 服务造 206/200/302/限速/503，
+      # 再用 md5 与并发峰值判定。不依赖 Android SDK，几秒跑完 —— 放在构建 APK 之前，
+      # 原生逻辑真坏了就不用等十分钟才看到红。
+      - name: Native logic tests (JVM)
+        run: bash scripts/test-chunked.sh
+
       - name: Type-check and build web
         run: pnpm build
 
