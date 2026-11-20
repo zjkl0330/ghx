@@ -6,8 +6,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 
-import androidx.core.content.FileProvider;
-
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -72,7 +70,36 @@ public class DownloadPlugin extends Plugin {
             call.reject("已有下载正在进行");
             return;
         }
+        // 通知栏是用户唯一能看见下载的地方，Android 13+ 没授权就什么都看不到，
+        // 所以在真正开始下载这一瞬要一次 —— 此刻用户刚点过下载，上下文最清楚
+        ensureNotifyPermission();
         startKeepAliveService();
+    }
+
+    /**
+     * 要一次通知权限。只发起、不等结果：给了就看得见进度，不给也不影响下载，
+     * 界面下次查 notifyState 就知道到底能不能看见。
+     */
+    private void ensureNotifyPermission() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        try {
+            if (getContext().checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            final android.app.Activity act = getActivity();
+            if (act == null) return;
+            act.runOnUiThread(() -> {
+                try {
+                    act.requestPermissions(
+                            new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 0x6a2);
+                } catch (Exception ignored) {
+                    // 系统拒绝弹窗（比如 Activity 正在销毁）就当没问过
+                }
+            });
+        } catch (Exception ignored) {
+            // 同上
+        }
     }
 
     /**
@@ -136,59 +163,71 @@ public class DownloadPlugin extends Plugin {
     }
 
     /**
-     * 调起系统安装器。
-     *
-     * Android 8 起安装未知来源应用要用户逐应用授权，没授权就直接 startActivity
-     * 会被系统静默丢掉（用户只看到「点了没反应」）。所以先查 canRequestPackageInstalls，
-     * 没有就跳到本应用的「安装未知应用」设置页，并告诉页面 needPermission。
+     * 调起系统安装器。逻辑在 {@link ApkInstaller} —— 通知栏的「安装」按钮走同一份，
+     * 免得两处各写一遍、哪天悄悄漂掉。
      */
     @PluginMethod
     public void install(PluginCall call) {
         String path = call.getString("path");
-        if (path == null || path.trim().isEmpty()) {
-            call.reject("缺少文件路径");
+        ApkInstaller.Result r = ApkInstaller.install(getActivity(), path == null ? null : path.trim());
+        if (r.error != null) {
+            call.reject(r.error);
             return;
         }
-        File f = new File(path);
-        if (!f.exists() || f.length() <= 0) {
-            call.reject("安装包不存在或为空");
-            return;
-        }
-        if (!path.toLowerCase().endsWith(".apk")) {
-            call.reject("不是 APK 文件");
-            return;
-        }
+        JSObject ret = new JSObject();
+        ret.put("opened", r.opened);
+        if (r.needPermission) ret.put("needPermission", true);
+        call.resolve(ret);
+    }
 
+    /**
+     * 通知栏进度能不能看见。
+     *
+     * Android 13 起 POST_NOTIFICATIONS 是运行时权限，没给时前台服务照旧跑、下载照旧，
+     * 但通知被系统丢弃 —— 用户看到的就是「消息栏里什么都没有」。设置页用它来提示。
+     */
+    @PluginMethod
+    public void notifyState(PluginCall call) {
+        JSObject ret = new JSObject();
+        boolean needed = Build.VERSION.SDK_INT >= 33;
+        boolean granted = true;
+        if (needed) {
+            granted = getContext().checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        }
+        // 权限给了但系统里把本应用通知总开关关掉，一样看不见
+        boolean enabled = true;
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                    && !getContext().getPackageManager().canRequestPackageInstalls()) {
-                Intent s = new Intent(
-                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:" + getContext().getPackageName()));
-                s.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                getActivity().startActivity(s);
-                JSObject ret = new JSObject();
-                ret.put("opened", false);
-                ret.put("needPermission", true);
-                call.resolve(ret);
-                return;
+            android.app.NotificationManager nm = (android.app.NotificationManager)
+                    getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) enabled = nm.areNotificationsEnabled();
+        } catch (Exception ignored) {
+            // 查不到就按「能看见」处理，别把正常的机器误报成关了
+        }
+        ret.put("needed", needed);
+        ret.put("granted", granted);
+        ret.put("enabled", enabled);
+        ret.put("visible", granted && enabled);
+        call.resolve(ret);
+    }
+
+    /** 跳到本应用的通知设置页（被用户关掉时给一条自救的路） */
+    @PluginMethod
+    public void openNotifySettings(PluginCall call) {
+        try {
+            Intent i;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                i.putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+            } else {
+                i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                i.setData(Uri.parse("package:" + getContext().getPackageName()));
             }
-
-            Uri uri = FileProvider.getUriForFile(
-                    getContext(),
-                    getContext().getPackageName() + ".fileprovider",
-                    f);
-            Intent i = new Intent(Intent.ACTION_VIEW);
-            i.setDataAndType(uri, "application/vnd.android.package-archive");
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getActivity().startActivity(i);
-
-            JSObject ret = new JSObject();
-            ret.put("opened", true);
-            call.resolve(ret);
+            getContext().startActivity(i);
+            call.resolve();
         } catch (Exception e) {
-            call.reject("无法调起安装器：" + e.getMessage());
+            call.reject("无法打开通知设置：" + e.getMessage());
         }
     }
 

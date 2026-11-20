@@ -178,7 +178,12 @@ final class DownloadHub {
                 persist(true, null);
                 emitDone(lastPath, lastBytes, lastMs);
             } catch (Exception e) {
-                String msg = e.getMessage() == null ? "下载失败" : e.getMessage();
+                // 取消不是故障。用户可能是从通知栏按的「取消」——
+                // 那种情况下界面里的取消标记还是 false，只能靠这里统一成「已取消」，
+                // 否则面板会弹一句「下载失败」，看起来像出错了。
+                String msg = cancelled
+                        ? "已取消"
+                        : (e.getMessage() == null ? "下载失败" : e.getMessage());
                 lastError = msg;
                 hasResult = true;
                 finish();

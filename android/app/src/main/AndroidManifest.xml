@@ -44,6 +44,15 @@
             android:name=".DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!--
+          通知栏「取消」按钮的落点。给 PendingIntent 用，必须是显式的，
+          exported=false 也不会影响 —— 只有本应用能发这个广播。
+          不放进 DownloadService：Service 在下载结束后就停了，按钮必须一直有效。
+        -->
+        <receiver
+            android:name=".DownloadActionReceiver"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->
@@ -68,4 +77,12 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!--
+      通知栏里的下载进度。
+      targetSdk 33 起这是运行时权限；**缺了它连声明都没有，通知会被系统直接丢弃**，
+      前台服务却照常跑 —— 表现就是「下载在走，但消息栏里什么都没有」。
+      下载开始时由 DownloadPlugin 要一次，用户拒绝也不影响下载本身。
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

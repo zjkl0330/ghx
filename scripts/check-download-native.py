@@ -124,6 +124,49 @@ def main():
     check('Plugin 把 parts 夹在合法区间', 'Math.min(parts, ChunkPlan.MAX_PARTS)' in plugin)
     check('状态里带实际并发数', 'put("parts", s.parts)' in plugin)
 
+    # ── 6b. 通知栏：用户唯一能看见下载的地方 ──
+    recv = read(os.path.join(JAVA, 'DownloadActionReceiver.java'))
+    apki = read(os.path.join(JAVA, 'ApkInstaller.java'))
+    main_act = read(os.path.join(JAVA, 'MainActivity.java'))
+
+    check('声明 POST_NOTIFICATIONS（targetSdk 33+ 缺了通知会被丢弃）',
+          'android.permission.POST_NOTIFICATIONS' in manifest)
+    check('下载时主动要一次通知权限',
+          'requestPermissions' in plugin and 'POST_NOTIFICATIONS' in plugin)
+    check('提供通知状态查询（设置页据此提示）', 'public void notifyState(' in plugin)
+    check('提供跳到通知设置页', 'ACTION_APP_NOTIFICATION_SETTINGS' in plugin)
+    check('取消按钮走 BroadcastReceiver（当场生效，不用开界面）',
+          'DownloadHub.cancel()' in recv and 'ACTION_CANCEL' in recv)
+    check('receiver 已在 manifest 注册', '.DownloadActionReceiver' in manifest)
+    check('通知里有取消按钮', 'addAction(0, "取消"' in svc)
+    check('下载完的 APK 通知里有「安装」', 'addAction(0, "安装"' in svc)
+    check('点 APK 完成通知直接进安装',
+          'apk ? installIntent(path) : openApp()' in svc)
+    check('通知带剩余时间', 'etaSeconds(' in svc and '还剩' in svc)
+    check('通知带并发路数', 'DownloadHub.currentParts()' in svc and '路并行' in svc)
+    check('失败时把原因写进通知', 'setContentTitle("下载中断")' in svc and 'BigTextStyle' in svc)
+    check('完成/失败通知节流外单独走一遍', 'notifyProgress(' in svc and 'finishWith(' in svc)
+    check(
+        '先脱离前台再发终态通知（否则 REMOVE 会把完成通知一起删掉）',
+        svc.index('detachForeground()') < svc.index('nm.notify(NOTIF_ID, b.build())', svc.index('private void finishWith')),
+        'STOP_FOREGROUND_REMOVE 与 notify 同 id，顺序反了就等于没发',
+    )
+    check('脱离前台用 DETACH 保留通知',
+          'STOP_FOREGROUND_DETACH' in svc or 'stopForeground(false)' in svc)
+    check('Android 12+ 通知立即显示，不被系统压 10 秒',
+          'FOREGROUND_SERVICE_IMMEDIATE' in svc)
+    check('通知刷新不高于 1 秒（否则进度条看着断续）',
+          re.search(r'NOTIFY_INTERVAL_MS\s*=\s*(\d+)', svc) is not None
+          and int(re.search(r'NOTIFY_INTERVAL_MS\s*=\s*(\d+)', svc).group(1)) <= 1000)
+    check('取消与失败区分开，不显示成「下载失败」', '"已取消"' in hub)
+    check('安装逻辑抽成一份，页面与通知共用',
+          'ApkInstaller.install(' in plugin and 'ApkInstaller.install(' in main_act)
+    check('通知里点安装 → MainActivity 收下路径', 'EXTRA_INSTALL_PATH' in main_act
+          and 'EXTRA_INSTALL_PATH' in svc)
+    check('已在栈里时走 onNewIntent（否则点了没反应）', 'onNewIntent' in main_act)
+    check('授权「安装未知应用」回来后自动续上', 'pendingInstall' in main_act
+          and 'ApkInstaller.canInstall(this)' in main_act)
+
     # ── 7. 产物检查：类真的编进去了、权限真的合进 APK 了 ──
     if apk and os.path.exists(apk):
         with zipfile.ZipFile(apk) as z:
@@ -135,6 +178,8 @@ def main():
         check('APK 内含 DownloadService', 'DownloadService' in text)
         check('APK 内含 ChunkedFetch', 'ChunkedFetch' in text)
         check('APK 内含 ChunkPlan', 'ChunkPlan' in text)
+        check('APK 内含 DownloadActionReceiver', 'DownloadActionReceiver' in text)
+        check('APK 内含 ApkInstaller', 'ApkInstaller' in text)
         check('APK 大小在 4 MB 以上（字体仍在包里）', os.path.getsize(apk) > 4 * 1024 * 1024,
               f'{os.path.getsize(apk) / 1048576:.1f} MB')
     elif apk:

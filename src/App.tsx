@@ -131,7 +131,13 @@ import {
   type DownloadTarget,
 } from './lib/download'
 import { appendRecord, clearHistory, readHistory, recordFromPending, type DlRecord } from './lib/dl-history'
-import { filesExist, installApk, takePendingDownload } from './lib/native-download'
+import {
+  filesExist,
+  installApk,
+  openNotifySettings,
+  readNotifyState,
+  takePendingDownload,
+} from './lib/native-download'
 import type {
   AuditEntry,
   BatchResult,
@@ -387,6 +393,21 @@ export default function App() {
   const [downloadMode, setDownloadMode] = useState<DownloadMode>('outer')
   /** 应用内下载要不要切片并行。默认开：线路不认 Range 时原生侧会自己退回单线程 */
   const [dlParts, setDlParts] = useState<DlParts>('multi')
+  /**
+   * 通知栏进度能不能看见。null=还没查过。
+   * 只在原生壳里有意义：Android 13+ 没给通知权限时，下载照跑但消息栏一片空白，
+   * 设置页要能说清楚「为什么看不见」，并给一条去开启的路。
+   */
+  const [notifyVisible, setNotifyVisible] = useState<boolean | null>(null)
+  const refreshNotify = useCallback(async () => {
+    const st = await readNotifyState()
+    setNotifyVisible(st.visible)
+  }, [])
+
+  useEffect(() => {
+    void refreshNotify()
+  }, [refreshNotify])
+
   const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(null)
   /** 关掉下载面板后回到哪一层：更新弹层 / 发行版面板 / 仓库详情 */
   const [downloadReturn, setDownloadReturn] = useState<SheetName>('none')
@@ -567,7 +588,10 @@ export default function App() {
     let remove: (() => void) | null = null
 
     void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (isActive) void probeClipboard()
+      if (!isActive) return
+      void probeClipboard()
+      // 用户可能刚从系统设置里把通知开关拨开，回来要重新看一眼
+      void refreshNotify()
     }).then((handle) => {
       if (disposed) void handle.remove()
       else remove = () => void handle.remove()
@@ -576,7 +600,7 @@ export default function App() {
       disposed = true
       remove?.()
     }
-  }, [probeClipboard])
+  }, [probeClipboard, refreshNotify])
 
   const requestExit = useCallback(async () => {
     // 网页里没有「退出 App」这回事，只提示，避免按下去毫无反应
@@ -2399,6 +2423,8 @@ export default function App() {
           downloadMode={downloadMode}
           dlParts={dlParts}
           onDlParts={changeDlParts}
+          notifyVisible={notifyVisible}
+          onOpenNotifySettings={() => void openNotifySettings()}
           onDownloadMode={changeDownloadMode}
           clipOpen={clipOpen}
           onClipOpen={changeClipOpen}

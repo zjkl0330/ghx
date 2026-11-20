@@ -86,6 +86,8 @@ interface DownloaderBridge {
   status(): Promise<NativeStatus>
   exists(o: { paths: string[] }): Promise<{ exists: Record<string, boolean> }>
   takePending(): Promise<{ raw?: string }>
+  notifyState(): Promise<{ needed: boolean; granted: boolean; enabled: boolean; visible: boolean }>
+  openNotifySettings(): Promise<void>
   addListener(
     event: 'progress',
     cb: (data: NativeProgress) => void,
@@ -228,5 +230,58 @@ export async function takePendingDownload(): Promise<PendingDownload | null> {
     return parsePendingDownload(r?.raw)
   } catch {
     return null
+  }
+}
+
+/**
+ * 通知栏进度能不能看见。
+ *
+ * Android 13 起 POST_NOTIFICATIONS 是运行时权限，被拒时前台服务照跑、下载照旧，
+ * 但通知被系统丢弃 —— 用户看到的就是「消息栏里一片空白，不知道下到哪了」。
+ * 设置页和下载面板靠这个决定要不要提示「去开启」。
+ */
+export interface NotifyState {
+  /** Android 13+ 才需要运行时授权 */
+  needed: boolean
+  granted: boolean
+  /** 系统设置里本应用的通知总开关 */
+  enabled: boolean
+  /** 实际上能不能在消息栏看到进度 */
+  visible: boolean
+}
+
+const NOTIFY_UNKNOWN: NotifyState = {
+  needed: false,
+  granted: true,
+  enabled: true,
+  visible: true,
+}
+
+export async function readNotifyState(): Promise<NotifyState> {
+  if (!nativeDownloadAvailable()) {
+    // 网页端没有消息栏这回事，交给调用方用 nativeDownloadAvailable 判断要不要显示
+    return { needed: false, granted: true, enabled: true, visible: false }
+  }
+  try {
+    const r = await Downloader.notifyState()
+    return {
+      needed: !!r?.needed,
+      granted: !!r?.granted,
+      enabled: !!r?.enabled,
+      visible: !!r?.visible,
+    }
+  } catch {
+    // 老壳没有这个接口：按「能看见」处理，别把正常的机器误标成关掉了
+    return NOTIFY_UNKNOWN
+  }
+}
+
+/** 跳到本应用的通知设置页，让用户自己把开关打开 */
+export async function openNotifySettings(): Promise<void> {
+  if (!nativeDownloadAvailable()) return
+  try {
+    await Downloader.openNotifySettings()
+  } catch {
+    // 跳不过去就只能作罢，不弹错误打断下载
   }
 }

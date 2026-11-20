@@ -29,7 +29,15 @@ trap 'rm -rf "$OUT"' EXIT
   android/app/src/main/java/dev/zjkl/ghx/ChunkedFetch.java \
   android/test-jvm/dev/zjkl/ghx/ChunkTest.java
 
+"$JAVAC" -encoding UTF-8 -d "$OUT" \
+  android/app/src/main/java/dev/zjkl/ghx/NotifText.java \
+  android/test-jvm/dev/zjkl/ghx/NotifTest.java
+
 "$JAVA" -cp "$OUT" dev.zjkl.ghx.ChunkTest
+
+echo
+echo "=== 通知栏文案 ==="
+"$JAVA" -cp "$OUT" dev.zjkl.ghx.NotifTest
 
 if [ "${1:-}" = "--live" ]; then
   "$JAVAC" -encoding UTF-8 -d "$OUT" \

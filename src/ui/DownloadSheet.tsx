@@ -366,11 +366,13 @@ export function DownloadSheet(p: Props) {
         return
       } catch (e) {
         lastError = (e as Error).message || '下载失败'
-        if (cancelledRef.current) break
+        // 「已取消」可能是原生侧告诉我们的：用户从通知栏按了取消，
+        // 那时本组件的 cancelledRef 还是 false，不能当成失败往下试下一线路
+        if (cancelledRef.current || lastError === '已取消') break
       }
     }
 
-    if (cancelledRef.current) {
+    if (cancelledRef.current || lastError === '已取消') {
       // 取消不留记录，但要清掉上一条线路失败时留下的待认领，免得下次启动冒出来
       void takePendingDownload()
       if (!aliveRef.current) return

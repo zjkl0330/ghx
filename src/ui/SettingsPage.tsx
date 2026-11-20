@@ -53,6 +53,12 @@ interface Props {
   /** 应用内下载要不要切片并行；线路不认 Range 时原生侧自动退回单线程 */
   dlParts: DlParts
   onDlParts: (v: DlParts) => void
+  /**
+   * 通知栏进度能不能看见。null 表示还没查到 —— 查不到就别吓唬用户，
+   * 只有明确 false 时才显示「去开启」。
+   */
+  notifyVisible?: boolean | null
+  onOpenNotifySettings?: () => void
   /** 切回前台时读剪贴板，认出 GitHub 地址就直接跳过去 */
   clipOpen: boolean
   onClipOpen: (on: boolean) => void
@@ -637,6 +643,8 @@ export function SettingsPage(p: Props) {
             </div>
             <div className="hint" style={{ marginTop: 6 }}>
               {modeHint(p.downloadMode, p.native)}
+            </div>
+
             {p.downloadMode === 'inner' && (
               <>
                 <div className="tgl-label" style={{ marginTop: 14 }}>
@@ -654,9 +662,26 @@ export function SettingsPage(p: Props) {
                   把安装包切成 4 段同时下。线路不支持断点分段时会自动退回单线程，不会下坏。
                   带宽已经跑满时并行不会更快，反而可能被站点限流 —— 那时选单线程。
                 </div>
+
+                <div className="tgl-label" style={{ marginTop: 14 }}>
+                  通知栏进度
+                </div>
+                <div className="hint" style={{ marginTop: 6 }}>
+                  下载时在消息栏实时显示文件名、已下 / 总量、速度与剩余时间，可以直接在通知上取消，
+                  下完也能从那里点「安装」。
+                </div>
+                {p.native && p.notifyVisible === false && (
+                  <button
+                    className="btn block ghost"
+                    style={{ marginTop: 8 }}
+                    onClick={p.onOpenNotifySettings}
+                  >
+                    <Icon name="warn" size={14} />
+                    通知被关闭了，去开启
+                  </button>
+                )}
               </>
             )}
-            </div>
 
             <div className="field" style={{ marginTop: 14 }}>
               <label>下载加速</label>

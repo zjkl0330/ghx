@@ -1,5 +1,6 @@
 package dev.zjkl.ghx;
 
+import android.content.Intent;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -16,6 +17,12 @@ import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+
+    /** 通知栏「安装」按钮带过来的安装包路径 */
+    static final String EXTRA_INSTALL_PATH = "dev.zjkl.ghx.INSTALL_PATH";
+
+    /** 待安装的包：授权「安装未知应用」会离开本页，回来时要接着装 */
+    private String pendingInstall;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -114,6 +121,45 @@ public class MainActivity extends BridgeActivity {
         webView.postDelayed(() -> InsetsBridge.sync(this, true), 900);
         webView.postDelayed(() -> InsetsBridge.sync(this, true), 2000);
         webView.postDelayed(() -> InsetsBridge.sync(this, true), 4000);
+
+        // 从通知栏的「安装」进来的
+        handleInstallIntent(getIntent());
+    }
+
+    /**
+     * 通知栏点「安装」时，Activity 已经在栈里，走的是 onNewIntent 而不是 onCreate。
+     * 不处理这一条，用户点了安装会「什么都没发生」。
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleInstallIntent(intent);
+    }
+
+    private void handleInstallIntent(Intent intent) {
+        if (intent == null) return;
+        String path = intent.getStringExtra(EXTRA_INSTALL_PATH);
+        if (path == null || path.isEmpty()) return;
+        // 消费掉：旋转屏幕、再次进前台都会重新派发 intent，不摘掉会反复弹安装器
+        intent.removeExtra(EXTRA_INSTALL_PATH);
+        pendingInstall = path;
+        tryInstallPending();
+    }
+
+    private void tryInstallPending() {
+        if (pendingInstall == null) return;
+        ApkInstaller.Result r = ApkInstaller.install(this, pendingInstall);
+        if (r.opened) {
+            pendingInstall = null;
+        } else if (r.needPermission) {
+            // 用户被送到「安装未知应用」设置页，回来在 onResume 里重试
+        } else {
+            pendingInstall = null;
+            if (r.error != null) {
+                android.widget.Toast.makeText(this, r.error, android.widget.Toast.LENGTH_SHORT).show();
+            }
+        }
     }
 
     /**
@@ -135,5 +181,10 @@ public class MainActivity extends BridgeActivity {
         window.setStatusBarColor(Color.TRANSPARENT);
         window.setNavigationBarColor(Color.TRANSPARENT);
         InsetsBridge.sync(this, true);
+
+        // 刚从「安装未知应用」设置页回来：放行了就接着装，不用用户再点一次
+        if (pendingInstall != null && ApkInstaller.canInstall(this)) {
+            tryInstallPending();
+        }
     }
 }
