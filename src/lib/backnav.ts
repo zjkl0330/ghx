@@ -150,6 +150,23 @@ export function resolveBack(state: BackState): BackAction {
 export const EXIT_WINDOW_MS = 2000
 
 /**
+ * 软键盘是否真开着：可视视口比布局视口矮超过阈值即认为键盘弹出。
+ *
+ * WebView 里输入框的焦点在键盘收起后经常残留（点过搜索框、之后点别处，
+ * `activeElement` 还是那个 input），如果返回键见到输入框就只 blur，
+ * 用户就得按两下才真的退一层 ——「部分地方点一下、全部都得点两下」。
+ * 所以键盘状态改用视口高度差判断：键盘弹起会把 visualViewport 压矮几百像素，
+ * 没弹起时两者相等，焦点残留不算数。
+ */
+export function softKeyboardOpen(
+  viewportHeight: number,
+  innerHeight: number,
+  threshold: number = 120,
+): boolean {
+  return innerHeight - viewportHeight >= threshold
+}
+
+/**
  * 根层的退出确认：第一次只提示，窗口内第二次才真退。
  * lastAt 为 0 表示还没按过。
  */

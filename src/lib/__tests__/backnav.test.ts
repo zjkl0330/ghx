@@ -4,6 +4,7 @@ import {
   exitDecision,
   resolveBack,
   sheetBackTarget,
+  softKeyboardOpen,
   type BackState,
   type SheetName,
 } from '../backnav'
@@ -191,5 +192,28 @@ describe('exitDecision 双击退出', () => {
 
   it('时间回拨不误判为退出', () => {
     expect(exitDecision(5_000, 4_000)).toBe('arm')
+  })
+})
+
+describe('softKeyboardOpen 软键盘启发式', () => {
+  it('视口与布局等高 → 键盘没开，焦点残留不吃返回', () => {
+    expect(softKeyboardOpen(844, 844)).toBe(false)
+    expect(softKeyboardOpen(800, 844)).toBe(false)
+  })
+
+  it('视口被压矮超过阈值 → 键盘开着，第一下只收键盘', () => {
+    expect(softKeyboardOpen(500, 844)).toBe(true)
+    expect(softKeyboardOpen(300, 844)).toBe(true)
+  })
+
+  it('阈值边界与自定义阈值', () => {
+    expect(softKeyboardOpen(844 - 120, 844)).toBe(true)
+    expect(softKeyboardOpen(844 - 120 + 1, 844)).toBe(false)
+    expect(softKeyboardOpen(800, 844, 40)).toBe(true)
+  })
+
+  it('极端输入不误报：全屏、负差（时钟式异常高度）', () => {
+    expect(softKeyboardOpen(1000, 844)).toBe(false)
+    expect(softKeyboardOpen(0, 844)).toBe(true)
   })
 })

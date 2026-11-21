@@ -64,7 +64,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block（含参考式链接展开 `expandLinkRefs`）、图片路径与镜像 |
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键，`translateBlocks` 支持 guard 钩子（翻译前改写/还原）；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
 | `linkguard.ts` | 机翻保链接：链接标签换成 ⟦⟧ 占位符（实测 Edge 幸存 6/6 且标签被顺便翻译），译文按出现顺序回填 spans；通道吞掉占位符时退回纯译文 |
-| `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策、审计、领域类型 |
+| `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策（软键盘视口启发式 `softKeyboardOpen`）、审计、领域类型 |
 | `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 精选应用目录（静态 JSON，非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h、`avatarSources` 头像多线路回退（原图 → url 风格代理改写 → 首字母）、`apkPlatforms` 平台归属（hasInstallers* / platformReleases，缺省兜 android）、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
 | `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
@@ -565,6 +565,12 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - **头像多线路**（`avatarSources`）：原图队首 → avatars.githubusercontent.com 判定时按 url 风格公共代理逐个改写垫后（2026-11-21 实测 gh-proxy.com 代理头像 200、ghfast/ghproxy.net 403、imciel 404）→ 全阵亡才首字母。每条线路 6s 超时；原图已被自建站改写成镜像域名时直接单线返回，不二次包壳。
   - **平台归属**（`apkPlatforms`）：feed 的 `hasInstallersAndroid/Windows/Macos/Linux` 四布尔 + `platformReleases` 键兜底，全缺按 android feed 本来面目兜 `['android']`；落盘缓存往返认解析后的 `platforms` 字段。卡片带平台小标，弹层加平台筛选 tabs（全部/安卓/Win/macOS/Linux 带计数），与名称/简介过滤可叠加。2026-11-21 真实 feed 分布：安卓 150 / Win 60 / macOS 57 / Linux 66。
   - `verify-apkstore.py` 扩成十段：头像原图线路掐死后 gh-proxy 线路接管（10/10 出 `<img>` 无首字母）、平台 tabs 计数与切换、平台+关键词叠加过滤。单测 1345 → 1352。
+
+- **v0.9.8**：返回键一下就退 —— 用户反馈「部分地方点一下就能返回上一级，你这全部都要点两下」。
+  - **根因是焦点残留吃掉第一次返回**：`applyBack` 见到 `activeElement` 是输入框就只 blur —— 这是给「键盘开着先收键盘」设计的，但 WebView 里键盘收起后输入框焦点经常残留（点过搜索框之后再点别处，焦点还在），于是每次返回都被白吃一下，感觉处处要点两下；没碰过输入框的层级自然点一下就退，观感就是「不区分」。
+  - **修复**：`softKeyboardOpen(vh, innerHeight)`（阈值 120px）用视口高度差确认键盘**真的开着**才只收键盘；焦点残留时收掉焦点 + 这次返回继续往下走，一下就是一层。视觉视口取不到时（web）按键盘没开处理。
+  - 各层语义不变：弹层一下收、路由栈一下退、非首页页签根层返回回首页页签、根层连按两次退出、批量执行中返回仍拦截。
+  - `verify-backkey.py` 五段（焦点残留一下收弹层、模拟键盘开着第一下只收键盘、商店详情弹层/路由栈单按语义、根层 home 语义）。单测 1352 → 1356。
 
   - **为什么改**：v0.9.4 把商店横滑区插在筛选区和榜单之间，三张大卡占掉半屏，榜单被挤得看不见 —— 用户原话「丑成这个屌样了，入口放在这里不尴尬吗」。热门页的本职是看榜单，商店不该抢屏。
   - **现在的编排**：标题栏（刷新按钮左侧）一个包裹图标入口；点开是全屏弹层（`ApkStoreSheet`，新弹层类型 `apkstore`，返回键直接收起）：头部来源 + rotation 日期 + 总数，过滤框按名称/简介即时过滤，两列网格卡片（头像/名称/星数语言/版本 tag/两行简介），点应用收弹层、进现有仓库详情。

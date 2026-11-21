@@ -16,7 +16,7 @@ import {
   serializeClipOpen,
 } from './lib/clipboard-link'
 import { pickDescItems } from './lib/desc'
-import { exitDecision, resolveBack, type BackState, type SheetName } from './lib/backnav'
+import { exitDecision, resolveBack, softKeyboardOpen, type BackState, type SheetName } from './lib/backnav'
 import {
   DEFAULT_MIRROR,
   EMPTY_STORE,
@@ -637,11 +637,16 @@ export default function App() {
   }, [])
 
   const applyBack = useCallback(() => {
-    // 软键盘开着时先收键盘，这是安卓上最符合直觉的第一层返回
+    // 软键盘开着时先收键盘，这是安卓上最符合直觉的第一层返回。
+    // 但键盘收起后输入框的焦点经常残留 —— 只看 activeElement 是不是 input
+    // 会让用户点两下才能退一层，所以用视口高度差确认键盘真的开着
     const el = document.activeElement
     if (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
       el.blur()
-      return
+      if (softKeyboardOpen(window.visualViewport?.height ?? window.innerHeight, window.innerHeight)) {
+        return
+      }
+      // 键盘没开，只是焦点残留：收掉焦点，这次返回继续往下走
     }
 
     const action = resolveBack(backStateRef.current)
