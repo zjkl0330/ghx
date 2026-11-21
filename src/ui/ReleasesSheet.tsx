@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { deleteTag } from '../lib/refs'
 import { deleteAsset, publishRelease, updateRelease } from '../lib/release-ext'
+import { parseMarkdown } from '../lib/markdown'
+import type { LinkContext } from '../lib/mdlink'
+import type { Route } from '../lib/routes'
+import type { TargetLang, TranslateChannel, TranslationStore } from '../lib/translate'
 import {
   assetKind,
-  excerpt,
   pickAsset,
   releaseDate,
   releaseTitle,
@@ -16,11 +19,21 @@ import {
 import type { Release, ReleaseAsset, Repo } from '../lib/types'
 import { formatBytes, openExternal } from '../lib/update'
 import { Icon } from './icons'
+import { MarkdownView } from './MarkdownView'
+import { useDocTranslation } from './useDocTranslation'
 
 interface Props {
   repo: Repo
   client: GitHubClient | null
   mirror: string
+  /** 设置里的「发行版说明」开关：开了就展开发行版时顺手翻 */
+  autoTranslate: boolean
+  channel: TranslateChannel
+  target: TargetLang
+  azureKey: string
+  store: TranslationStore | null
+  /** GitHub 链接 App 内打开；不传则走外部浏览器 */
+  onOpenRoute?: (r: Route) => void
   onClose: () => void
   onToast: (msg: string) => void
   onAudit: (detail: string) => void
@@ -30,6 +43,96 @@ interface Props {
 
 /** 附件上限给个软提醒：超过这个体积在手机上走内存缓冲容易失败 */
 const BIG_ASSET = 100 * 1024 * 1024
+
+/**
+ * 发行说明正文。
+ *
+ * 以前这里是 `excerpt(body, 600)` 纯文本直出 —— GitHub 的发行说明是 Markdown，
+ * 结果 `<h2 id="…">` 和 `**粗体**` 全裸着给用户看，更别说中文化。
+ * 现在按 Markdown 渲染，并跟「发行版说明」翻译开关联动：
+ * 展开就翻、边翻边显示，用 ⟦⟧ 占位保住链接，可切回原文对照。
+ */
+function ReleaseNotes({
+  body,
+  repo,
+  mirror,
+  autoTranslate,
+  channel,
+  target,
+  azureKey,
+  store,
+  onOpenRoute,
+}: {
+  body: string
+  repo: Repo
+  mirror: string
+  autoTranslate: boolean
+  channel: TranslateChannel
+  target: TargetLang
+  azureKey: string
+  store: TranslationStore | null
+  onOpenRoute?: (r: Route) => void
+}) {
+  const [view, setView] = useState<'zh' | 'src'>('zh')
+  const blocks = useMemo(() => parseMarkdown(body, { maxBlocks: 300 }), [body])
+  const trans = useDocTranslation({ enabled: autoTranslate, channel, target, azureKey, store })
+
+  // 展开这一条就翻这一条；正文换了先取消在途任务，免得前一条的译文糊上来
+  useEffect(() => {
+    trans.reset()
+    if (autoTranslate) void trans.translate(blocks)
+    // translate 随 opts 变化换新引用，但 body 才是「换文档」的信号
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [body, autoTranslate])
+
+  const ctx: LinkContext = {
+    owner: repo.owner || repo.full_name.split('/')[0],
+    repo: repo.name,
+    branch: repo.default_branch || 'main',
+    basePath: '',
+    mirror,
+  }
+
+  const zhReady = !!trans.zh
+  const shown = view === 'zh' && trans.zh ? trans.zh : blocks
+  /** 只有真的翻出东西才给切换按钮；没翻成时只剩原文，按钮是噪音 */
+  const canToggle = zhReady
+
+  return (
+    <div className="rel-notes">
+      <div className="rel-notes-head">
+        <span className="rel-notes-label">
+          发行说明
+          {view === 'zh' && zhReady ? <span className="tr-mark">译</span> : null}
+        </span>
+        <span className="rel-notes-acts">
+          {trans.busy ? <span className="rel-notes-state">翻译中…</span> : null}
+          {canToggle ? (
+            <button className="linkbtn" onClick={() => setView((v) => (v === 'zh' ? 'src' : 'zh'))}>
+              {view === 'zh' ? '看原文' : '看译文'}
+            </button>
+          ) : null}
+          {!trans.busy && autoTranslate && !zhReady ? (
+            <button className="linkbtn" onClick={() => void trans.translate(blocks)}>
+              翻译
+            </button>
+          ) : null}
+        </span>
+      </div>
+      <MarkdownView
+        blocks={shown}
+        mirror={mirror}
+        ctx={ctx}
+        onRoute={onOpenRoute}
+        onAnchor={(id) => {
+          // 双语目录（[中文](#cn-v1.3.10)）靠这个跳；找不到就安静地不动
+          document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }}
+      />
+      {trans.error ? <div className="hint rel-notes-err">{trans.error}</div> : null}
+    </div>
+  )
+}
 
 export function ReleasesSheet(p: Props) {
   const [list, setList] = useState<Release[]>([])
@@ -422,7 +525,17 @@ export function ReleasesSheet(p: Props) {
                     ) : (
                       <>
                         {r.body ? (
-                          <div className="rel-notes">{excerpt(r.body, 600)}</div>
+                          <ReleaseNotes
+                            body={r.body}
+                            repo={p.repo}
+                            mirror={p.mirror}
+                            autoTranslate={p.autoTranslate}
+                            channel={p.channel}
+                            target={p.target}
+                            azureKey={p.azureKey}
+                            store={p.store}
+                            onOpenRoute={p.onOpenRoute}
+                          />
                         ) : (
                           <div className="hint">没有填写说明。</div>
                         )}

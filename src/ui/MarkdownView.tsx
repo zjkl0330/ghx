@@ -141,7 +141,9 @@ export function MarkdownView({
         switch (b.kind) {
           case 'h':
             return (
-              <div className={`md-h md-h${Math.min(b.level, 4)}`} key={i} id={tocAnchor(i)}>
+              // 优先用文档自带的锚点（`<h2 id="en-v1.3.10">` 或 GitHub slug），
+              // 发行说明里的 [English](#en-v1.3.10) 才跳得过去；没有才退回下标式
+              <div className={`md-h md-h${Math.min(b.level, 4)}`} key={i} id={b.anchor ?? tocAnchor(i)}>
                 {rich(b)}
               </div>
             )

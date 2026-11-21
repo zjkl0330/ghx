@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { mirrorImage, rawBase } from '../lib/images'
-import { guardLinks, unguardLinks } from '../lib/linkguard'
+import { guardInline, unguardInline } from '../lib/linkguard'
 import { parseMarkdown, type Block } from '../lib/markdown'
 import type { LinkContext } from '../lib/mdlink'
 import type { Route } from '../lib/routes'
@@ -223,11 +223,11 @@ export function ReadmeSheet(p: Props) {
           guard: {
             protect: (b) => {
               if (!('spans' in b)) return null
-              const g = guardLinks(b.spans)
-              return g ? { text: g.text, ctx: g.hrefs } : null
+              const g = guardInline(b.spans)
+              return g ? { text: g.text, ctx: g.ctx } : null
             },
             restore: (b, translated, ctx) => {
-              const res = unguardLinks(translated, (ctx as string[]) ?? [])
+              const res = unguardInline(translated, ctx)
               if (!res) return null
               return { ...b, text: res.text, spans: res.spans, spansFor: res.text }
             },

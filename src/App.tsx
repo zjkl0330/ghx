@@ -3042,6 +3042,16 @@ export default function App() {
           repo={detailRepo}
           client={client}
           mirror={mirror}
+          autoTranslate={scope.release}
+          channel={translateChannel}
+          target={translateTarget}
+          azureKey={azureKey}
+          store={translateStore}
+          onOpenRoute={(r) => {
+            // 和自述一样：收掉弹层再压路由，否则弹层盖在详情页上看不见
+            setSheet('none')
+            pushTo(r)
+          }}
           onClose={() => setSheet(subReturn)}
           onToast={showToast}
           onAudit={(detail) => void logAudit('release', detailRepo.full_name, detail)}

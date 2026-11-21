@@ -32,7 +32,7 @@ export type Span =
  * translate.ts 里的 `BlockLike`（那边靠 `[key: string]: unknown` 遍历字段）。
  */
 export type Block =
-  | { kind: 'h'; level: number; text: string; spans?: Span[]; spansFor?: string }
+  | { kind: 'h'; level: number; text: string; spans?: Span[]; spansFor?: string; anchor?: string }
   | { kind: 'p'; text: string; spans?: Span[]; spansFor?: string }
   | {
       kind: 'li'
@@ -278,6 +278,26 @@ function textWithoutImages(raw: string): string {
 const HR = /^ {0,3}([-*_])\s*(\1\s*){2,}$/
 const HEADING = /^ {0,3}(#{1,6})\s+(.*)$/
 /**
+ * 标题的锚点。
+ *
+ * GitHub 的发行说明爱写 `[English](#en-v1.3.10) | [中文](#cn-v1.3.10)`
+ * 这种双语目录，配上 `<h2 id="en-v1.3.10">`。以前这些锚点全点不动：
+ * 标题渲染成 `md-h-<下标>`，`#en-v1.3.10` 在页面里根本不存在。
+ * 现在显式 id 原样留着；普通 Markdown 标题按 GitHub 的规则生成 slug，
+ * 文档内重名时依次加 `-1`、`-2`。
+ */
+export function slugifyHeading(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[\u0000-\u001f]/g, '')
+    // 反引号与常见行内标记去掉，标点按 GitHub 的脾气直接删
+    .replace(/[`*_~]/g, '')
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s+/g, '-')
+}
+const HTML_ID = /\bid\s*=\s*["']([^"']+)["']/i
+/**
  * 独占一行的 HTML 标题：`<h1 align="center">标题</h1>`。
  * GitHub 上大量个人主页自述就是这么写标题的，按普通段落处理会丢掉层级，
  * 一整页看起来全是等大的正文。只认「整行一个标签」这种最常见的形式，
@@ -424,6 +444,20 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
   const lines = md.replace(/\r\n?/g, '\n').split('\n')
   const blocks: Block[] = []
 
+  /** 文档内锚点去重：GitHub 对重名标题依次加 -1、-2 */
+  const anchors = new Set<string>()
+  const uniqAnchor = (base: string): string => {
+    const root = base || 'section'
+    let id = root
+    let n = 1
+    while (anchors.has(id)) {
+      id = `${root}-${n}`
+      n += 1
+    }
+    anchors.add(id)
+    return id
+  }
+
   let i = 0
   let para: string[] = []
 
@@ -502,7 +536,10 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
     if (htmlHeading) {
       flushPara()
       const r = rich(htmlHeading[2])
-      if (r.text) blocks.push({ kind: 'h', level: Number(htmlHeading[1]), ...r })
+      if (r.text) {
+        const explicit = HTML_ID.exec(htmlHeading[0])?.[1] ?? slugifyHeading(r.text)
+        blocks.push({ kind: 'h', level: Number(htmlHeading[1]), ...r, anchor: uniqAnchor(explicit) })
+      }
       i += 1
       continue
     }
@@ -511,7 +548,9 @@ export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
     if (heading) {
       flushPara()
       const r = rich(heading[2])
-      if (r.text) blocks.push({ kind: 'h', level: heading[1].length, ...r })
+      if (r.text) {
+        blocks.push({ kind: 'h', level: heading[1].length, ...r, anchor: uniqAnchor(slugifyHeading(r.text)) })
+      }
       i += 1
       continue
     }

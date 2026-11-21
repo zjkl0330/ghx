@@ -63,7 +63,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `releases.ts` `forks.ts` `workflows.ts` | 发行版/复刻/工作流的状态与校验 |
 | `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block（含参考式链接展开 `expandLinkRefs`）、图片路径与镜像 |
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键，`translateBlocks` 支持 guard 钩子（翻译前改写/还原）；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
-| `linkguard.ts` | 机翻保链接：链接标签换成 ⟦⟧ 占位符（实测 Edge 幸存 6/6 且标签被顺便翻译），译文按出现顺序回填 spans；通道吞掉占位符时退回纯译文 |
+| `linkguard.ts` | 机翻保行内格式：链接/粗体/斜体/删除线一律换成 ⟦内容⟧ 占位符（实测 Edge 幸存 6/6，9 个连续 token 也 9/9），token 类型与地址按出现顺序存 ctx，译文回来逐 token 回填；token 数与 ctx 不符时整段降级纯文字（错位比丢失更糟）。缓存命名空间 `.g2` |
+| `useDocTranslation.ts` | 一段 Markdown（发行说明等）的整块机翻 hook：guard 保链接/粗体、边翻边显示、失败如实报数、换文档先 cancel 防串台 |
 | `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策（软键盘视口启发式 `softKeyboardOpen`）、审计、领域类型 |
 | `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 三源合并目录（feed 轮换精选 + most-popular + new-releases，去重 ~174+，静态 JSON 非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h（缓存键 v2）、`avatarSources` 头像多线路回退（原图 → 自建站头像域名 → url 风格代理改写 → 首字母）、新旧 schema 双认（stargazersCount/stars、owner.avatarUrl/顶层 avatarUrl）、`apkPlatforms` 平台归属、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
@@ -99,7 +100,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 ### ui（组件）
 
-`RepoList` 主列表 · `RepoDetailSheet` 仓库详情动作 · `ReadmeSheet` 自述阅读+机翻 · `StarsPage` 星标 · `HotPage` 热门/搜索 · `PipelinesPage` 流水线二级页 · `WorkflowSheet`/`RunSheet` 工作流与运行 · `LogSheet` **日志与产物** · `ReleasesSheet` · `ForksSheet` · `VisibilitySheet` 批量可见度 · `CreateRepoSheet` · `SortSheet` · `MirrorSheet` **加速站管理** · `ProfilePage` 个人页 · `SettingsPage` 设置 · `TokenVault` 令牌库 · `AuditLog` · `GuardSheet`/`UnlockScreen`/`LockedScreen` 口令三件套 · `UpdateSheet` · `RepoPickerSheet` · `useDescTranslation` 简介批量机翻 hook · `icons.tsx`
+`RepoList` 主列表 · `RepoDetailSheet` 仓库详情动作 · `ReadmeSheet` 自述阅读+机翻 · `StarsPage` 星标 · `HotPage` 热门/搜索 · `PipelinesPage` 流水线二级页 · `WorkflowSheet`/`RunSheet` 工作流与运行 · `LogSheet` **日志与产物** · `ReleasesSheet` **发行版列表 + 说明渲染与机翻** · `ForksSheet` · `VisibilitySheet` 批量可见度 · `CreateRepoSheet` · `SortSheet` · `MirrorSheet` **加速站管理** · `ProfilePage` 个人页 · `SettingsPage` 设置 · `TokenVault` 令牌库 · `AuditLog` · `GuardSheet`/`UnlockScreen`/`LockedScreen` 口令三件套 · `UpdateSheet` · `RepoPickerSheet` · `useDescTranslation` 简介批量机翻 hook · `icons.tsx`
 
 第二批（v0.5.3）：`RepoPage` 仓库主页（自述/发行版/分支/流水线/复刻/设置 chips + 代码/Issues/PR/动作页签）· `IssuesPage`/`IssuePage` · `PullsPage`（含 `PullPage`）/`DiffView` · `CodePage`（含 `FileEditor`）· `CommitsPage`（含 `CommitPage`）· `RefsPage` · `NotificationsPage` · `SearchPage` · `UserPage` · `RepoAdminPage` · `ComposeSheet` 新建 Issue/PR · `MarkdownView` 通用渲染（表格/任务列表）· `PageHeader`+`PageState` 统一顶栏与状态 · `useLoad` 统一加载 hook
 
@@ -160,6 +161,8 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 - **链接保活（v0.9.6）**：机翻只换 `block.text`，spans 一失效整段链接变死文字。解法在 `linkguard.ts`：翻译前把链接标签换成 ⟦标签⟧（U+27E6/27E7，实测 Edge 通道整存整取、标签还会被顺便翻译；**不要用数字序号**，会被中文化成「1个」），地址按出现顺序存数组，译文回来按出现顺序回填。占位符被通道吞掉时退回纯译文，不更糟。
 - **参考式链接（v0.9.6）**：`expandLinkRefs` 在解析前把 `[文字][ref]`、`[文字][]`、`![alt][ref]`、快捷式 `[ref]` 展开成行内链接，`[ref]: url` 定义行收集后从正文剔除；围栏代码块内的定义与引用原样保留。LocalSend、SoftEther 这类 README 以前会吐一屏 URL。
 - **GitHub 链接 App 内打开（v0.9.6）**：`mdlink.routeForGithubPath` 把 github.com 路径映射成 App 内 Route（repo/code/issues/pull/commits/actions/user），`SpanText` 有 `onRoute` 时优先 App 内跳转（收弹层、压路由），App 没有的页面（releases/wiki/discussions）与外站仍走外部浏览器。
+- **行内格式保活（v1.0.1）**：以前 `guardLinks` 只保链接，粗体/斜体在 `block.text` 里连标记都没有，译文一替换格式全丢（发行说明里 `**OpenAI Codex**` 变普通文字）。现在 `guardInline` 把 link/strong/em/del 统一换成 ⟦内容⟧，ctx 变成 `{ tokens: [{kind, href?}] }` 按出现顺序配对；code 不保护（通道会把命令当正文翻，语义本就不保）。token 数与 ctx 不符就整段降级 —— 宁可少格式，不可错配。
+- **标题锚点（v1.0.1）**：发行说明爱写 `[English](#en-v1.3.10) | [中文](#cn-v1.3.10)` 配 `<h2 id="…">`。`parseMarkdown` 现在把显式 id 原样留下、普通标题按 GitHub 规则生成 slug（重名加 `-1`），`MarkdownView` 用它当元素 id，`onAnchor` 才能 scrollIntoView。以前标题 id 是下标式 `md-h-<i>`，这类目录全是死链。
 - **名字不翻**：`needsTranslation()` 先问 `isNameLike()`。单段纯字母、无空格、且（camelCase / 带数字下划线 / 能按拼音音节表切完 / 三字母内无元音）就判定为名字，直接返回 false。原因：机翻拿到纯拼音会按音硬凑，`MiyoQian` 被翻成「美代倩」；这类简介翻了只会得到一句不存在的中文。`looksLikePinyin()` 用 DP 逐段切音节（拼音没有词边界，正则不可靠），会有误伤（`case` = ca+se），代价只是少一次没必要的翻译，可以接受。
 
 ### 4. 加速站（`mirrors.ts`）
@@ -586,6 +589,12 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - `verify-apkstore.py` 十二段重写（三源合并 13 应用、旧 schema 条目解析、简介 URL 渲染成链接）。单测 1356 → 1366。
 
 - **v1.0.0**：下载选线不再跳动 —— 用户反馈「下载链接加速选择页点一个他会跳到第一个展示，有点难判断」。`DownloadSheet` 的 `order` 以前把手动挑中的线路 splice 到第一行，列表当场重排，刚点的行窜去顶部。修复：**选线只做高亮**（`picked` 只控制 `.on`），顺序完全交给测速排序 + 自建站钉位维持稳定。`verify-dl.py` 补第 3 段：点倒数第二行断言整表顺序不变、有且只有该行高亮。
+
+- **v1.0.1**：发行说明渲染 + 机翻 —— 用户截图里展开发行版，`<h2 id="…">` 与 `**粗体**` 源码全裸、整段英文。根因有两个：说明区一直是 `excerpt(body, 600)` 纯文本截断；`scope.release` 开关有类型、有默认值，但设置页没 UI、组件没接线，等于从没实现过。
+  - `ReleasesSheet` 的说明改用 `parseMarkdown` + `MarkdownView` 渲染，展开即翻（新 hook `useDocTranslation`），右上角「看原文/看译文」对照，「译」标与简介一致。
+  - **顺带挖出真 bug：翻译会丢粗体**。`block.text` 里没有 `**`，spans 一失效格式全没 —— 现在 `guardInline` 把 strong/em/del 与链接一起占位保护；缓存命名空间升 `.g2`。
+  - **双语目录锚点以前全是死链**：标题 id 是下标式 `md-h-<i>`，`#en-v1.3.10` 根本不存在。现在保留显式 id、普通标题生成 GitHub slug，`onAnchor` 滚动到位（实测 scrollTop 0 → 285）。
+  - 设置页补「发行版说明」开关，`DEFAULT_SCOPE.release` 默认开。`verify-relnotes.py` 六段；单测 1369 → 1373。
 
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 

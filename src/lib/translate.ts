@@ -68,7 +68,13 @@ export interface TranslateScope {
   release: boolean
 }
 
-export const DEFAULT_SCOPE: TranslateScope = { readme: true, desc: true, release: false }
+/**
+ * 默认翻哪些内容。
+ *
+ * `release` 默认开：发行说明是最该中文化的地方 —— 一屏英文 changelog
+ * 翻不翻的体验差距最大，而且只有展开某一条时才发请求，成本可控。
+ */
+export const DEFAULT_SCOPE: TranslateScope = { readme: true, desc: true, release: true }
 
 export function normalizeTarget(raw: string | null | undefined): TargetLang {
   const v = (raw ?? '').trim()
@@ -921,8 +927,9 @@ export async function translateBlocks<B extends BlockLike>(
       const guarded = opts.guard?.protect(blocks[idx]) ?? null
       // 缓存键带 guard 命名空间：无 guard 时代的旧缓存存的是纯译文，
       // 拿来 restore 会因为找不到 ⟦⟧ 而退回死链接文字（v0.9.9 真机踩到）。
-      // 带 guard 的译文另开一块缓存空间，旧条目自然过期。
-      const key = cacheKeyFor(opts, plainSrc) + (guarded ? '.g' : '')
+      // v1.0.1 起 guard 也保粗体/斜体，token 数量变了，旧 `.g` 条目会让
+      // 整段降级（丢链接），所以命名空间再升一档 `.g2`。
+      const key = cacheKeyFor(opts, plainSrc) + (guarded ? '.g2' : '')
       const src = guarded ? guarded.text : plainSrc
       const finish = (translated: string): B => {
         if (!guarded) return { ...blocks[idx], text: translated }

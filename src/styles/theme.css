@@ -2471,11 +2471,51 @@ h1.title {
 }
 
 .rel-notes {
-  font-size: 11px;
-  color: var(--text-3);
-  line-height: 1.65;
-  white-space: pre-wrap;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.7;
   word-break: break-word;
+}
+
+/* 说明正文用 MarkdownView 渲染：这里只摆头部一行（标签 + 译标 + 原文/译文切换） */
+.rel-notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+  min-height: 20px;
+}
+
+.rel-notes-label {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.rel-notes-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rel-notes-state {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.rel-notes .md {
+  font-size: 12px;
+}
+
+.rel-notes .md > :first-child {
+  margin-top: 4px;
+}
+
+.rel-notes-err {
+  margin-top: 6px;
 }
 
 .asset-list {

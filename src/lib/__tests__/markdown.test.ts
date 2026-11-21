@@ -9,7 +9,8 @@ import { blocksToText, expandLinkRefs, inline, parseMarkdown, parseInline, spans
  */
 function bare(blocks: readonly unknown[]): Record<string, unknown>[] {
   return blocks.map((b) => {
-    const { spans: _s, spansFor: _f, ...rest } = b as Record<string, unknown>
+    // 标题的 anchor 由「标题锚点」那组用例单独断言，其余用例只看结构
+    const { spans: _s, spansFor: _f, anchor: _a, ...rest } = b as Record<string, unknown>
     return rest
   })
 }
@@ -459,5 +460,32 @@ describe('参考式链接', () => {
     expect(allText).not.toContain('https://www.microsoft.com')
     // 链接文字保留
     expect(allText).toContain('windows store')
+  })
+})
+
+describe('标题锚点', () => {
+  it('HTML 标题的显式 id 原样保留 —— 发行说明的双语目录靠它跳', () => {
+    const blocks = parseMarkdown('<h2 id="en-v1.3.10">Highlights</h2>')
+    const h = blocks.find((b) => b.kind === 'h') as Extract<typeof blocks[number], { kind: 'h' }>
+    expect(h.anchor).toBe('en-v1.3.10')
+    expect(h.text).toBe('Highlights')
+  })
+
+  it('普通 Markdown 标题按 GitHub 规则生成 slug', () => {
+    const blocks = parseMarkdown('## Hello World!\n\n### 更新亮点（v1.0）')
+    const hs = blocks.filter((b) => b.kind === 'h') as Extract<typeof blocks[number], { kind: 'h' }>[]
+    expect(hs[0].anchor).toBe('hello-world')
+    expect(hs[1].anchor).toBe('更新亮点v10')
+  })
+
+  it('同名标题依次加 -1、-2，不会互相抢锚点', () => {
+    const blocks = parseMarkdown('# Notes\n\n## Notes\n\n### Notes')
+    const hs = blocks.filter((b) => b.kind === 'h') as Extract<typeof blocks[number], { kind: 'h' }>[]
+    expect(hs.map((h) => h.anchor)).toEqual(['notes', 'notes-1', 'notes-2'])
+  })
+
+  it('没有显式 id 也没有文字时给个兜底锚点，不产出空 id', () => {
+    const blocks = parseMarkdown('<h2 id=""> </h2>\n\n##  ')
+    expect(blocks.filter((b) => b.kind === 'h')).toHaveLength(0)
   })
 })

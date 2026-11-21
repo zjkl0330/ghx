@@ -426,6 +426,12 @@ export function SettingsPage(p: Props) {
               on={p.scope.desc}
               onChange={(v) => p.onScope({ ...p.scope, desc: v })}
             />
+            <SwitchRow
+              label="发行版说明"
+              hint="展开某条发行版时翻它的更新说明，Markdown 排版保留"
+              on={p.scope.release}
+              onChange={(v) => p.onScope({ ...p.scope, release: v })}
+            />
 
             <div className="tgl-label" style={{ marginTop: 14 }}>
               翻译通道
