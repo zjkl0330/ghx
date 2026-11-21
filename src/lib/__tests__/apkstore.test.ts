@@ -5,9 +5,11 @@ import {
   APK_STORE_MAX_AGE,
   APK_STORE_OFFICIAL_URL,
   apkAppToRepo,
+  apkPlatforms,
   apkStoreCandidates,
   apkStoreFresh,
   apkStoreUsable,
+  avatarSources,
   defaultApkStoreHttp,
   fetchApkStore,
   loadApkStore,
@@ -18,6 +20,7 @@ import {
   resetApkStoreMemory,
   sanitizeApkApps,
   serializeApkStore,
+  urlProxyBases,
 } from '../apkstore'
 import type { ApkStore, ApkStoreHttp } from '../apkstore'
 
@@ -98,6 +101,31 @@ describe('sanitizeApkApps', () => {
     expect(a.latestTag).toBe('v1.17.0')
     expect(a.pushedAt).toBe('2026-11-20T14:36:03.000Z')
     expect(a.topics).toEqual(['share', 'cross-platform'])
+    expect(a.platforms).toEqual(['android'])
+  })
+
+  it('平台归属：按 hasInstallers* 布尔解析，恒 android 在前', () => {
+    expect(
+      apkPlatforms({ hasInstallersAndroid: true, hasInstallersWindows: true, hasInstallersMacos: false, hasInstallersLinux: true }),
+    ).toEqual(['android', 'windows', 'linux'])
+    expect(apkPlatforms({ hasInstallersWindows: true })).toEqual(['windows'])
+  })
+
+  it('平台归属：installers 缺失时退到 platformReleases 键；全缺兜 android', () => {
+    expect(apkPlatforms({ platformReleases: { android: { tag: 'v1' }, macos: { tag: 'v1' } } })).toEqual([
+      'android',
+      'macos',
+    ])
+    expect(apkPlatforms({})).toEqual(['android'])
+    expect(apkPlatforms({ hasInstallersAndroid: false, hasInstallersMacos: false })).toEqual(['android'])
+  })
+
+  it('平台归属：落盘缓存往返后保留（认 platforms 字段，不做二次兜底）', () => {
+    const store = parseApkFeed(feedText([feedItem({ hasInstallersWindows: true, hasInstallersMacos: true })]), NOW)
+    const round = parseApkStore(serializeApkStore(store!))
+    expect(round?.apps[0].platforms).toEqual(['android', 'windows', 'macos'])
+    // 旧缓存没有 platforms 字段：按 android feed 兜底，不崩
+    expect(apkPlatforms({})).toEqual(['android'])
   })
 
   it('fullName 缺失或不含「/」的条目直接丢弃', () => {
@@ -225,6 +253,44 @@ describe('apkStoreCandidates', () => {
     expect(urls.some((u) => u.startsWith('https://github.com/'))).toBe(false)
     expect(urls.length).toBeGreaterThan(2)
     expect(urls[1]).toBe(APK_STORE_OFFICIAL_URL)
+  })
+})
+
+describe('avatarSources', () => {
+  it('裸头像域名：原图队首，url 风格代理逐个垫后', () => {
+    const list = avatarSources('https://avatars.githubusercontent.com/u/1?v=4', [
+      'https://gh-proxy.com',
+      'https://ghfast.top',
+    ])
+    expect(list[0]).toBe('https://avatars.githubusercontent.com/u/1?v=4')
+    expect(list[1]).toBe('https://gh-proxy.com/https://avatars.githubusercontent.com/u/1?v=4')
+    expect(list[2]).toBe('https://ghfast.top/https://avatars.githubusercontent.com/u/1?v=4')
+  })
+
+  it('默认代理来自 urlProxyBases()，与 feed 候选同一来源', () => {
+    expect(urlProxyBases().length).toBeGreaterThan(0)
+    const list = avatarSources('https://avatars.githubusercontent.com/u/2?v=4')
+    expect(list.length).toBe(1 + urlProxyBases().length)
+    expect(list[1].startsWith(urlProxyBases()[0])).toBe(true)
+  })
+
+  it('已改写成镜像域名的头像不再二次包壳；空值返回空表', () => {
+    const mirrored = avatarSources(
+      'https://avatars-githubusercontent-com-gh.zjkl0330.dpdns.org/u/1?v=4',
+      ['https://gh-proxy.com'],
+    )
+    expect(mirrored).toEqual(['https://avatars-githubusercontent-com-gh.zjkl0330.dpdns.org/u/1?v=4'])
+    expect(avatarSources('')).toEqual([])
+    expect(avatarSources('  ')).toEqual([])
+    expect(avatarSources(undefined as unknown as string)).toEqual([])
+  })
+
+  it('代理与原图同域名时去重；候选保序无重复', () => {
+    const list = avatarSources('https://avatars.githubusercontent.com/u/3?v=4', [
+      'https://gh-proxy.com',
+      'https://gh-proxy.com/',
+    ])
+    expect(new Set(list).size).toBe(list.length)
   })
 })
 

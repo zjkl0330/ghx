@@ -65,7 +65,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键，`translateBlocks` 支持 guard 钩子（翻译前改写/还原）；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
 | `linkguard.ts` | 机翻保链接：链接标签换成 ⟦⟧ 占位符（实测 Edge 幸存 6/6 且标签被顺便翻译），译文按出现顺序回填 spans；通道吞掉占位符时退回纯译文 |
 | `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策、审计、领域类型 |
-| `apkstore.ts` | 热门页「APK 商店」横滑区：komi-store 精选安卓应用目录（静态 JSON，非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h、`apkAppToRepo` 复用仓库详情链路 |
+| `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 精选应用目录（静态 JSON，非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h、`avatarSources` 头像多线路回退（原图 → url 风格代理改写 → 首字母）、`apkPlatforms` 平台归属（hasInstallers* / platformReleases，缺省兜 android）、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
 | `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
 | `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked` |
@@ -560,6 +560,12 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
 
 - **v0.9.5**：APK 商店重排 —— 页内横滑卡撤掉，收进标题栏入口 + 全屏弹层。
 - **v0.9.6**：翻译链接三连修复 —— 参考式链接支持（原文视图 + 定义行剔除）、机翻保链接（⟦⟧ 占位符方案，`translateBlocks` 加 guard 钩子）、GitHub 链接映射 App 内路由（不再跳系统浏览器）。`verify-trlink.py` 五段。
+- **v0.9.7**：商店图标复活 + 平台归属 —— 用户反馈「图标怎么变成 ls 字母了」「它是 EXE 的还是 macOS 的还是安卓的」。
+  - **图标根因是个渲染死锁**：v0.9.5 的 `ShopAvatar` 把 `<img>` 的渲染条件写成 `ok` 为真才挂载，而 `ok` 只在 `onLoad` 里置真 —— **img 不挂载就永远不会触发 onLoad**，头像从头到尾没被加载过，全部走首字母兜底。教训：`<img>` 的失败兜底要按「候选线路逐个换」来写，不能按「加载成功才显示」来写。
+  - **头像多线路**（`avatarSources`）：原图队首 → avatars.githubusercontent.com 判定时按 url 风格公共代理逐个改写垫后（2026-11-21 实测 gh-proxy.com 代理头像 200、ghfast/ghproxy.net 403、imciel 404）→ 全阵亡才首字母。每条线路 6s 超时；原图已被自建站改写成镜像域名时直接单线返回，不二次包壳。
+  - **平台归属**（`apkPlatforms`）：feed 的 `hasInstallersAndroid/Windows/Macos/Linux` 四布尔 + `platformReleases` 键兜底，全缺按 android feed 本来面目兜 `['android']`；落盘缓存往返认解析后的 `platforms` 字段。卡片带平台小标，弹层加平台筛选 tabs（全部/安卓/Win/macOS/Linux 带计数），与名称/简介过滤可叠加。2026-11-21 真实 feed 分布：安卓 150 / Win 60 / macOS 57 / Linux 66。
+  - `verify-apkstore.py` 扩成十段：头像原图线路掐死后 gh-proxy 线路接管（10/10 出 `<img>` 无首字母）、平台 tabs 计数与切换、平台+关键词叠加过滤。单测 1345 → 1352。
+
   - **为什么改**：v0.9.4 把商店横滑区插在筛选区和榜单之间，三张大卡占掉半屏，榜单被挤得看不见 —— 用户原话「丑成这个屌样了，入口放在这里不尴尬吗」。热门页的本职是看榜单，商店不该抢屏。
   - **现在的编排**：标题栏（刷新按钮左侧）一个包裹图标入口；点开是全屏弹层（`ApkStoreSheet`，新弹层类型 `apkstore`，返回键直接收起）：头部来源 + rotation 日期 + 总数，过滤框按名称/简介即时过滤，两列网格卡片（头像/名称/星数语言/版本 tag/两行简介），点应用收弹层、进现有仓库详情。
   - feed 拉不到时入口整个不出现，热门页无痕；单测净 +1（backnav 补 `apkstore` 层级）。`verify-apkstore.py` 九段重写（含「页内无内嵌区块」「feed 404 入口隐藏」「返回键收弹层」）。

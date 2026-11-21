@@ -6117,6 +6117,65 @@ button.ustat:active {
   white-space: nowrap;
 }
 
+/* 平台归属筛选 tabs（全部/安卓/Win/macOS/Linux，带计数） */
+.shop-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 0 8px;
+  flex: none;
+}
+
+.shop-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.shop-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.shop-tab.on {
+  color: var(--text);
+  background: var(--blue-soft-2);
+  border-color: var(--blue-line-soft);
+}
+
+.shop-tab-n {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 卡片平台小标（安卓 / Win / macOS / Linux） */
+.shop-plats {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.shop-plat {
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
 .shop-desc {
   font-size: 11px;
   line-height: 1.35;

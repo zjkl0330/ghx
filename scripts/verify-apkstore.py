@@ -1,14 +1,18 @@
-"""验证：APK 商店收进热门页标题栏入口 + 全屏清单弹层（v0.9.5 重排）。
+"""验证：APK 商店平台归属 + 头像多线路回退（v0.9.7）。
 
-上一版把商店横滑卡插在筛选区与榜单之间，喧宾夺主 —— 重排后热门页只留
-标题栏一个「包裹」图标入口，内容收进全屏弹层（两列网格 + 过滤）。要证：
+用户反馈：图标全成了首字母（旧代码 ok 初始为 false、img 不渲染就永远
+不触发 onLoad，头像从未真正加载过）；且没有平台归属（EXE/macOS/安卓/Linux）。
+v0.9.7 要证：
 
+  · 卡片头像真的加载出 <img>（原图线路被掐死后，gh-proxy 改写线路接管）；
+  · 卡片带平台小标（安卓/Win/macOS/Linux），feed 的 hasInstallers* 解析正确；
+  · 弹层有平台筛选 tabs（全部/安卓/Win/macOS/Linux，带计数），点切生效；
   · 热门页内不再有内嵌商店区块，标题栏出现入口按钮（feed 可用时）；
   · 点入口拉起弹层：标题、来源副标题（含 rotation 日期与应用总数）、
     两列网格卡片渲染名称 / 版本 tag / 星数；
-  · 过滤框按名称/简介即时过滤，清空恢复；
+  · 名称/简介过滤与平台筛选可叠加，清空恢复；
   · 点应用：弹层关、仓库详情开（走现有链路）；
-  · 页面 390 宽不溢出；弹层卡片网格不出屏；
+  · 页面 390 宽不溢出；
   · feed 拉不到：入口按钮不出现，热门页完全无痕；
   · console 无 store 相关报错。
 
@@ -16,6 +20,7 @@
     pnpm build && npx vite preview --port 4173
     xvfb-run -a python3 scripts/verify-apkstore.py
 """
+import base64
 import json
 import re
 
@@ -27,10 +32,18 @@ OWNER = 'zjkl0330'
 FEED_URL = re.compile(
     r'.*komi-store-backend-data.*cached-data/feed/android\.json'
 )
+AVATAR_ORIGINAL = re.compile(r'^https://avatars\.githubusercontent\.com/')
+AVATAR_PROXY = re.compile(r'^https://gh-proxy\.com/https://avatars\.githubusercontent\.com/')
+
+# 1x1 透明 PNG —— 充当代理线路成功返回的头像
+TINY_PNG = base64.b64decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+)
 
 
-def item(i, full, name, stars, tag, desc, lang):
+def item(i, full, name, stars, tag, desc, lang, plats):
     owner = full.split('/')[0]
+    flags = {f'hasInstallers{p.capitalize()}': (p in plats) for p in ('android', 'windows', 'macos', 'linux')}
     return {
         'id': 100 + i,
         'name': name,
@@ -48,23 +61,26 @@ def item(i, full, name, stars, tag, desc, lang):
         'latestReleaseTag': tag,
         'latestReleaseDate': '2026-11-18 10:00:00+00',
         'downloadCount': stars * 7,
-        'hasInstallersAndroid': True,
         'platformReleases': {'android': {'tag': tag, 'publishedAt': '2026-11-18T10:00:00Z'}},
+        **flags,
     }
 
 
+ALL4 = ('android', 'windows', 'macos', 'linux')
+
 APPS = [
-    item(0, 'localsend/localsend', 'localsend', 60000, 'v1.17.0', '跨设备互传文件与消息', 'Dart'),
-    item(1, 'immich-app/immich', 'immich', 55000, 'v2.2.0', '自托管照片备份', 'TypeScript'),
-    item(2, 'topjohnwu/Magisk', 'Magisk', 50000, 'v29.0', '安卓 root 套件', 'Kotlin'),
-    item(3, 'TeamNewPipe/NewPipe', 'NewPipe', 35000, 'v0.27.0', '轻量 YouTube 前端', 'Java'),
-    item(4, 'rustdesk/rustdesk', 'rustdesk', 90000, '1.4.3', '开源远程桌面', 'Rust'),
-    item(5, 'godotengine/godot', 'godot', 120000, '4.5.1', '跨平台游戏引擎', 'C++'),
-    item(6, 'chen08209/FlClash', 'FlClash', 20000, 'v0.9.0', '多平台代理客户端', 'Dart'),
-    item(7, 'logseq/logseq', 'logseq', 33000, '0.11.9', '本地优先的知识库', 'Clojure'),
-    item(8, 'SagerNet/sing-box', 'sing-box', 25000, 'v1.13.0', '通用代理平台', 'Go'),
-    item(9, 'AppFlowy-IO/AppFlowy', 'AppFlowy', 61000, 'v0.9.5', '开源 Notion 替代', 'Rust'),
+    item(0, 'localsend/localsend', 'localsend', 60000, 'v1.17.0', '跨设备互传文件与消息', 'Dart', ALL4),
+    item(1, 'immich-app/immich', 'immich', 55000, 'v2.2.0', '自托管照片备份', 'TypeScript', ('android', 'linux')),
+    item(2, 'topjohnwu/Magisk', 'Magisk', 50000, 'v29.0', '安卓 root 套件', 'Kotlin', ('android',)),
+    item(3, 'TeamNewPipe/NewPipe', 'NewPipe', 35000, 'v0.27.0', '轻量 YouTube 前端', 'Java', ('android',)),
+    item(4, 'rustdesk/rustdesk', 'rustdesk', 90000, '1.4.3', '开源远程桌面', 'Rust', ALL4),
+    item(5, 'godotengine/godot', 'godot', 120000, '4.5.1', '跨平台游戏引擎', 'C++', ALL4),
+    item(6, 'chen08209/FlClash', 'FlClash', 20000, 'v0.9.0', '多平台代理客户端', 'Dart', ALL4),
+    item(7, 'logseq/logseq', 'logseq', 33000, '0.11.9', '本地优先的知识库', 'Clojure', ('android', 'windows')),
+    item(8, 'SagerNet/sing-box', 'sing-box', 25000, 'v1.13.0', '通用代理平台', 'Go', ALL4),
+    item(9, 'AppFlowy-IO/AppFlowy', 'AppFlowy', 61000, 'v0.9.5', '开源 Notion 替代', 'Rust', ALL4),
 ]
+# 平台计数（断言 tabs 用）：android 10 / windows 7 / macos 6 / linux 7
 
 FEED_BODY = json.dumps({'category': 'feed', 'platform': 'android', 'rotation': '2026-11-20', 'repositories': APPS})
 
@@ -154,12 +170,22 @@ def store_errors(errors):
     ]
 
 
+def avatar_routes(pg):
+    """头像线路编排：原图域名一律掐死（模拟国内直连 avatars 不通），
+    gh-proxy 改写线路返回 1x1 PNG（模拟代理成功）。后注册的规则优先。"""
+    pg.route(AVATAR_ORIGINAL, lambda r: r.abort())
+    pg.route(AVATAR_PROXY, lambda r: r.fulfill(status=200, content_type='image/png', body=TINY_PNG))
+
+
 MEASURE = """() => {
   const de = document.documentElement;
   const cards = [...document.querySelectorAll('.shop-card:not(.shop-skel)')].map((n) => ({
     name: (n.querySelector('.shop-name') || {}).textContent || '',
     tag: (n.querySelector('.shop-tag') || {}).textContent || '',
     meta: (n.querySelector('.shop-meta') || {}).textContent || '',
+    plats: [...n.querySelectorAll('.shop-plat')].map((x) => x.textContent),
+    imgSrc: (n.querySelector('img.shop-avatar') || {}).src || '',
+    letter: !!n.querySelector('.shop-letter'),
   }));
   const grid = document.querySelector('.shop-grid');
   return {
@@ -171,6 +197,11 @@ MEASURE = """() => {
     title: (document.querySelector('.sheet-head h3') || {}).textContent || '',
     sub: (document.querySelector('.sheet-sub') || {}).textContent || '',
     hasFilter: !!document.querySelector('.sheet .search input'),
+    tabs: [...document.querySelectorAll('.shop-tab')].map((x) => ({
+      text: x.textContent,
+      on: x.classList.contains('on'),
+    })),
+    activeTab: (document.querySelector('.shop-tab.on') || {}).textContent || '',
     cards,
     gridCols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
     gridOverflow: grid ? grid.getBoundingClientRect().right <= window.innerWidth + 1 : true,
@@ -191,6 +222,7 @@ def new_page(b, handle_feed=True):
     else:
         pg.route(FEED_URL, lambda r: r.fulfill(status=404, content_type='text/plain', body='not found'))
     pg.route(re.compile(r'.*\.(png|jpg|jpeg|svg|webp)(\?.*)?$'), lambda r: r.abort())
+    avatar_routes(pg)
     pg.goto(BASE)
     pg.wait_for_timeout(600)
     login(pg)
@@ -223,7 +255,7 @@ def main():
         assert m['sheetOpen'], '弹层没打开'
         assert 'APK 商店' in m['title'], f'弹层标题不对：{m["title"]}'
         assert 'komi-store' in m['sub'] and '2026-11-20' in m['sub'], f'副标题应含来源与 rotation：{m["sub"]}'
-        assert '10 个安卓应用' in m['sub'], f'副标题应含总数：{m["sub"]}'
+        assert '10 个应用' in m['sub'], f'副标题应含总数：{m["sub"]}'
         assert len(m['cards']) == 10, f'应 10 张卡，实际 {len(m["cards"])}'
         assert m['gridCols'] == 2, f'网格应 2 列，实际 {m["gridCols"]}'
         assert m['gridOverflow'], '网格卡片溢出屏幕'
@@ -232,48 +264,80 @@ def main():
         assert first['name'] == 'localsend', f'第一张卡应是 localsend：{first}'
         assert first['tag'] == 'v1.17.0', f'版本 tag 应来自 feed：{first["tag"]}'
         assert '60k' in first['meta'], f'星数应紧凑显示：{first["meta"]}'
-        pg.screenshot(path=f'{OUT}/apkstore-095-sheet.png')
-        print(f'[2] 弹层：{m["title"]} · {m["sub"]}；2 列网格 10 张卡，未溢出')
-        print(f'[3] 前 3 张卡：{[(c["name"], c["tag"], c["meta"]) for c in m["cards"][:3]]}')
+        # 平台小标：localsend 是 ALL4，恒安卓在前
+        assert first['plats'] == ['安卓', 'Win', 'macOS', 'Linux'], f'平台小标不对：{first["plats"]}'
+        magisk = next(c for c in m['cards'] if c['name'] == 'Magisk')
+        assert magisk['plats'] == ['安卓'], f'Magisk 应只有安卓：{magisk["plats"]}'
+        # 平台筛选 tabs：全部 10 / 安卓 10 / Win 8 / macOS 7 / Linux 8
+        tab_texts = [t['text'] for t in m['tabs']]
+        expect_tabs = ['全部10', '安卓10', 'Win7', 'macOS6', 'Linux7']
+        assert tab_texts == expect_tabs, f'tabs 应为 {expect_tabs}：{tab_texts}'
+        assert m['activeTab'].startswith('全部'), f'默认应选中「全部」：{m["activeTab"]}'
+        pg.screenshot(path=f'{OUT}/apkstore-097-sheet.png')
+        print(f'[2] 弹层：{m["title"]} · {m["sub"]}；2 列网格 10 张卡，平台小标/tabs 就位')
+        print(f'[3] 前 3 张卡：{[(c["name"], c["plats"]) for c in m["cards"][:3]]}')
 
-        # ── 3. 过滤 ──
+        # ── 3. 头像多线路：原图被掐死，gh-proxy 改写线路接管 ──
+        pg.wait_for_timeout(1500)
+        m = pg.evaluate(MEASURE)
+        imgs = [c for c in m['cards'] if c['imgSrc']]
+        assert len(imgs) == 10, f'10 张卡都该出 <img> 头像（走代理线路），实际 {len(imgs)}'
+        assert all(c['imgSrc'].startswith('https://gh-proxy.com/') for c in imgs), (
+            f'头像应走 gh-proxy 改写线路：{[c["imgSrc"] for c in imgs[:3]]}'
+        )
+        assert not any(c['letter'] for c in m['cards']), '代理线路可用时不应出现首字母兜底'
+        pg.screenshot(path=f'{OUT}/apkstore-097-avatars.png')
+        print('[4] 头像回退链生效：原图线路失败 → gh-proxy 改写线路全部接管，无首字母兜底')
+
+        # ── 4. 平台筛选与名称过滤叠加 ──
+        pg.click('.shop-tab:has-text("Win")')
+        pg.wait_for_timeout(400)
+        m = pg.evaluate(MEASURE)
+        names = [c['name'] for c in m['cards']]
+        assert len(names) == 7, f'Win 筛选应剩 7 个（Magisk/NewPipe/immich 被滤掉），实际 {len(names)}：{names}'
+        assert 'Magisk' not in names and 'NewPipe' not in names and 'immich' not in names, f'非 Win 应用该滤掉：{names}'
+        assert m['activeTab'].startswith('Win'), 'Win tab 应高亮'
         pg.fill('.sheet .search input', 'godot')
         pg.wait_for_timeout(400)
-        f = pg.evaluate(MEASURE)
-        assert len(f['cards']) == 1 and f['cards'][0]['name'] == 'godot', (
-            f'按名称过滤应剩 godot：{[c["name"] for c in f["cards"]]}'
-        )
-        pg.fill('.sheet .search input', '照片备份')
-        pg.wait_for_timeout(400)
-        f = pg.evaluate(MEASURE)
-        assert len(f['cards']) == 1 and f['cards'][0]['name'] == 'immich', (
-            f'按简介过滤应剩 immich：{[c["name"] for c in f["cards"]]}'
-        )
+        m = pg.evaluate(MEASURE)
+        assert [c['name'] for c in m['cards']] == ['godot'], f'平台+关键词应叠加：{[c["name"] for c in m["cards"]]}'
         pg.fill('.sheet .search input', '')
-        pg.wait_for_timeout(300)
-        f = pg.evaluate(MEASURE)
-        assert len(f['cards']) == 10, '清空过滤应恢复全量'
-        print('[4] 过滤：按名称/简介即时生效，清空恢复全量')
+        pg.click('.shop-tab:has-text("macOS")')
+        pg.wait_for_timeout(400)
+        m = pg.evaluate(MEASURE)
+        assert len(m['cards']) == 6, f'macOS 筛选应剩 6 个，实际 {len(m["cards"])}'
+        pg.click('.shop-tab:has-text("Linux")')
+        pg.wait_for_timeout(400)
+        m = pg.evaluate(MEASURE)
+        assert len(m['cards']) == 7, f'Linux 筛选应剩 7 个，实际 {len(m["cards"])}'
+        assert next(c for c in m['cards'] if c['name'] == 'immich')['plats'] == ['安卓', 'Linux'], (
+            'immich 应标注 安卓+Linux'
+        )
+        pg.click('.shop-tab:has-text("全部")')
+        pg.wait_for_timeout(400)
+        m = pg.evaluate(MEASURE)
+        assert len(m['cards']) == 10, '回「全部」应恢复全量'
+        print('[5] 平台筛选：Win 7 / macOS 6 / Linux 7 各自生效，与名称过滤可叠加，全部恢复')
 
-        # ── 4. 点应用 → 弹层收、详情开 ──
+        # ── 5. 点应用 → 弹层收、详情开 ──
         pg.locator('.shop-card:not(.shop-skel)', has_text='localsend').first.click()
         pg.wait_for_timeout(900)
         d = pg.evaluate(MEASURE)
         assert 'localsend/localsend' in d['body'], '点应用没有打开仓库详情'
         assert '发行版' in d['body'] or 'Releases' in d['body'], '详情里应能看到发行版入口'
-        pg.screenshot(path=f'{OUT}/apkstore-095-detail.png')
-        print('[5] 点应用收商店弹层、开仓库详情（现有链路）')
+        pg.screenshot(path=f'{OUT}/apkstore-097-detail.png')
+        print('[6] 点应用收商店弹层、开仓库详情（现有链路）')
         pg.keyboard.press('Escape')
         pg.wait_for_timeout(500)
         after = pg.evaluate(MEASURE)
         assert after['shopEntry'], '回到热门页后入口还在'
-        print('[6] Esc 关详情后回到热门页，入口无损')
+        print('[7] Esc 关详情后回到热门页，入口无损')
 
         assert store_errors(errors) == [], f'store 相关报错：{store_errors(errors)[:5]}'
-        print('[7] console 无 store 相关报错')
+        print('[8] console 无 store 相关报错')
         pg.context.close()
 
-        # ── 5. feed 拉不到：入口不出现 ──
+        # ── 6. feed 拉不到：入口不出现 ──
         pg2, errors2 = new_page(b, handle_feed=False)
         pg2.wait_for_timeout(4000)
         f = pg2.evaluate(MEASURE)
@@ -281,9 +345,9 @@ def main():
         assert not f['shopEntry'], 'feed 404 时入口按钮不该出现'
         assert 'APK 商店' not in f['body'], '热门页不应出现商店字样'
         assert not store_errors(errors2), f'失败路径不该报错：{store_errors(errors2)[:5]}'
-        print('[8] feed 拉不到时入口隐藏，热门页完全无痕')
+        print('[9] feed 拉不到时入口隐藏，热门页完全无痕')
 
-        # ── 6. 弹层开着按 Esc（返回键）直接收弹层 ──
+        # ── 7. 弹层开着按 Esc（返回键）直接收弹层 ──
         # 上面那个 context 是 feed-404 场景（入口本来就被隐藏），换一个正常场景
         pg3, _ = new_page(b, handle_feed=True)
         pg3.wait_for_selector('button[aria-label="APK 商店"]', timeout=15000)
@@ -294,7 +358,7 @@ def main():
         e = pg3.evaluate(MEASURE)
         assert not e['sheetOpen'], '返回键应直接收商店弹层'
         assert e['shopEntry'], '收起弹层后应回到热门页'
-        print('[9] 返回键语义正确：商店弹层一按就收，回热门榜单')
+        print('[10] 返回键语义正确：商店弹层一按就收，回热门榜单')
         pg3.context.close()
 
         b.close()

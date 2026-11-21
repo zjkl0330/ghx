@@ -29,6 +29,11 @@ const FEED_PATH = 'cached-data/feed/android.json'
 export const APK_STORE_OFFICIAL_URL =
   `https://raw.githubusercontent.com/${FEED_OWNER}/${FEED_REPO}/${FEED_REF}/${FEED_PATH}`
 
+/** 内置 url 风格公共代理（不含官方直连），头像改写与 feed 候选共用 */
+export function urlProxyBases(): string[] {
+  return BUILTIN_MIRRORS.filter((m) => m.style === 'url' && m.id !== 'official').map((m) => m.base)
+}
+
 /**
  * 候选线路：自建站 → 官方 raw → 公共代理，保序去重。
  *
@@ -38,9 +43,7 @@ export const APK_STORE_OFFICIAL_URL =
  * 略慢但更不容易被代理站限流；真机网络差时自建站已经兜住绝大多数场景。
  */
 export function apkStoreCandidates(
-  proxies: string[] = BUILTIN_MIRRORS.filter((m) => m.style === 'url' && m.id !== 'official').map(
-    (m) => m.base,
-  ),
+  proxies: string[] = urlProxyBases(),
   selfBase: string = selfMirrorBase(),
 ): string[] {
   const urls: string[] = []
@@ -71,6 +74,25 @@ export function apkStoreCandidates(
 
 /* ------------------------------- 数据模型 ------------------------------- */
 
+/** 平台归属：komi-store 按各平台是否有安装包（apk/exe/dmg/包）来标注 */
+export type ApkPlatform = 'android' | 'windows' | 'macos' | 'linux'
+
+/** 平台字段名：feed 用 hasInstallersAndroid/Windows/Macos/Linux 四个布尔 */
+const PLATFORM_FLAG: Record<ApkPlatform, string> = {
+  android: 'hasInstallersAndroid',
+  windows: 'hasInstallersWindows',
+  macos: 'hasInstallersMacos',
+  linux: 'hasInstallersLinux',
+}
+
+/** 卡片/筛选用的短标签 */
+export const APK_PLATFORM_LABEL: Record<ApkPlatform, string> = {
+  android: '安卓',
+  windows: 'Win',
+  macos: 'macOS',
+  linux: 'Linux',
+}
+
 export interface ApkApp {
   fullName: string
   name: string
@@ -84,6 +106,8 @@ export interface ApkApp {
   latestTag: string | null
   pushedAt: string | null
   topics: string[]
+  /** 平台归属（android 恒在；其余按上游 installers 标志 / platformReleases 推断） */
+  platforms: ApkPlatform[]
 }
 
 export interface ApkStore {
@@ -120,6 +144,53 @@ function num(v: unknown): number {
 }
 
 /**
+ * 平台归属：优先 hasInstallers* 布尔，缺了退到 platformReleases 的键。
+ * 全部缺失（旧缓存、上游改版）按 android feed 的本来面目兜成 ['android']，
+ * 绝不让一条应用空着归属 —— 界面的平台筛选靠它分组。
+ */
+export function apkPlatforms(d: Record<string, unknown>): ApkPlatform[] {
+  const all: ApkPlatform[] = ['android', 'windows', 'macos', 'linux']
+  // 落盘缓存里存的是解析后的 platforms 字段，先认它
+  if (Array.isArray(d.platforms)) {
+    const hit = d.platforms.filter((p): p is ApkPlatform => all.includes(p as ApkPlatform))
+    if (hit.length > 0) return all.filter((p) => hit.includes(p))
+  }
+  const releases =
+    d.platformReleases && typeof d.platformReleases === 'object'
+      ? (d.platformReleases as Record<string, unknown>)
+      : null
+  const out: ApkPlatform[] = []
+  for (const p of all) {
+    if (d[PLATFORM_FLAG[p]] === true || (releases && releases[p] != null)) out.push(p)
+  }
+  return out.length > 0 ? out : ['android']
+}
+
+/**
+ * 头像候选线路：原图恒在队首（海外/能直连时最准），
+ * avatars.githubusercontent.com 在国内经常整站不通，所以按 url 风格
+ * 公共代理逐个改写垫后（2026-11-21 实测 gh-proxy.com 代理头像 200）。
+ * 原图若已被自建站改写成镜像域名就直接单线返回，不再二次包壳。
+ */
+export function avatarSources(url: string, proxies: string[] = urlProxyBases()): string[] {
+  const u = (url ?? '').trim()
+  if (!u) return []
+  const out: string[] = [u]
+  if (/^https?:\/\/avatars\.githubusercontent\.com\//i.test(u)) {
+    const seen = new Set([u.toLowerCase()])
+    for (const p of proxies) {
+      const base = p.replace(/\/+$/, '')
+      const candidate = base ? `${base}/${u}` : ''
+      if (candidate && !seen.has(candidate.toLowerCase())) {
+        seen.add(candidate.toLowerCase())
+        out.push(candidate)
+      }
+    }
+  }
+  return out
+}
+
+/**
  * 容错清洗：fullName 必须带「/」才算一条有效应用；同仓去重保首条；
  * 头像与简介缺失不拦 —— 界面有首字母兜底。
  */
@@ -152,6 +223,7 @@ export function sanitizeApkApps(raw: unknown): ApkApp[] {
       latestTag: tag,
       pushedAt: normalizeTs(d.pushedAt),
       topics: Array.isArray(d.topics) ? d.topics.filter((t): t is string => typeof t === 'string') : [],
+      platforms: apkPlatforms(d),
     })
   }
   return out
