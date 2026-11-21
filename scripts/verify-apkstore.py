@@ -1,16 +1,16 @@
-"""验证：热门页顶部的「APK 商店」横滑区。
+"""验证：APK 商店收进热门页标题栏入口 + 全屏清单弹层（v0.9.5 重排）。
 
-数据源是 komi-store 维护的公开精选目录（komi-store-backend-data 仓库的
-raw JSON），不是 GitHub API。这一层要证：
+上一版把商店横滑卡插在筛选区与榜单之间，喧宾夺主 —— 重排后热门页只留
+标题栏一个「包裹」图标入口，内容收进全屏弹层（两列网格 + 过滤）。要证：
 
-  · 热门模式（非搜索）出现「APK 商店」区块，卡片数与 feed 条数一致；
-  · 卡片渲染名称 / 星数 / 最新版本 tag，版本 tag 来自 feed 的
-    latestReleaseTag（含 komi-store 的非 ISO 时间格式，顺带证解析）；
-  · 点卡片打开的是现有仓库详情链路（不另起炉灶），Esc 能关掉；
-  · 输入搜索关键词后区块隐藏，清空后回来 —— 搜索时不占屏；
-  · 390 宽下页面不横向溢出，横滑轨道本身可横滚；
-  · 网络失败（feed 404）时区块整块隐藏，不出破图或空壳；
-  · console 无报错。
+  · 热门页内不再有内嵌商店区块，标题栏出现入口按钮（feed 可用时）；
+  · 点入口拉起弹层：标题、来源副标题（含 rotation 日期与应用总数）、
+    两列网格卡片渲染名称 / 版本 tag / 星数；
+  · 过滤框按名称/简介即时过滤，清空恢复；
+  · 点应用：弹层关、仓库详情开（走现有链路）；
+  · 页面 390 宽不溢出；弹层卡片网格不出屏；
+  · feed 拉不到：入口按钮不出现，热门页完全无痕；
+  · console 无 store 相关报错。
 
 用法：
     pnpm build && npx vite preview --port 4173
@@ -28,7 +28,7 @@ FEED_URL = re.compile(
     r'.*komi-store-backend-data.*cached-data/feed/android\.json'
 )
 
-# 10 条按真实 feed 结构造的条目（字段与 komi-store 上游一致，含非 ISO 时间）
+
 def item(i, full, name, stars, tag, desc, lang):
     owner = full.split('/')[0]
     return {
@@ -156,21 +156,24 @@ def store_errors(errors):
 
 MEASURE = """() => {
   const de = document.documentElement;
-  const cards = [...document.querySelectorAll('.store-card:not(.store-card-skel)')].map((n) => ({
-    name: (n.querySelector('.store-name') || {}).textContent || '',
-    tag: (n.querySelector('.store-tag') || {}).textContent || '',
-    meta: (n.querySelector('.store-meta') || {}).textContent || '',
+  const cards = [...document.querySelectorAll('.shop-card:not(.shop-skel)')].map((n) => ({
+    name: (n.querySelector('.shop-name') || {}).textContent || '',
+    tag: (n.querySelector('.shop-tag') || {}).textContent || '',
+    meta: (n.querySelector('.shop-meta') || {}).textContent || '',
   }));
-  const rail = document.querySelector('.store-rail');
+  const grid = document.querySelector('.shop-grid');
   return {
     width: de.scrollWidth,
     client: de.clientWidth,
-    hasStore: !!document.querySelector('.store'),
-    title: (document.querySelector('.store-title') || {}).textContent || '',
-    sub: (document.querySelector('.store-sub') || {}).textContent || '',
+    shopEntry: !!document.querySelector('button[aria-label="APK 商店"]'),
+    inlineStore: !!document.querySelector('.store, .store-rail, .store-card'),
+    sheetOpen: !!document.querySelector('.sheet'),
+    title: (document.querySelector('.sheet-head h3') || {}).textContent || '',
+    sub: (document.querySelector('.sheet-sub') || {}).textContent || '',
+    hasFilter: !!document.querySelector('.sheet .search input'),
     cards,
-    railScrollable: rail ? rail.scrollWidth > rail.clientWidth + 1 : false,
-    railOverflowHidden: rail ? rail.scrollWidth <= rail.clientWidth + 200 : true,
+    gridCols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
+    gridOverflow: grid ? grid.getBoundingClientRect().right <= window.innerWidth + 1 : true,
     body: document.body.innerText,
   };
 }"""
@@ -204,66 +207,95 @@ def main():
             args=['--no-sandbox', '--force-color-profile=srgb', '--hide-scrollbars'],
         )
 
-        # ── 1. 区块出现、卡片齐全 ──
+        # ── 1. 热门页干净：没有内嵌区块，标题栏有入口 ──
         pg, errors = new_page(b)
-        pg.wait_for_selector('.store-card:not(.store-card-skel)', timeout=15000)
+        pg.wait_for_selector('button[aria-label="APK 商店"]', timeout=15000)
         m = pg.evaluate(MEASURE)
-        assert m['hasStore'], '热门页没有出现 APK 商店区块'
-        assert 'APK 商店' in m['title'], f'标题不对：{m["title"]}'
-        assert 'komi-store' in m['sub'], f'副标题没写来源：{m["sub"]}'
-        assert len(m['cards']) == 10, f'应 10 张卡，实际 {len(m["cards"])}'
+        assert not m['inlineStore'], '热门页里不该再有内嵌商店区块'
+        assert m['shopEntry'], '标题栏应有商店入口按钮'
         assert m['width'] <= m['client'] + 1, f'页面被撑宽：{m["width"]} > {m["client"]}'
-        assert m['railScrollable'], '横滑轨道应当可横滚（10 张卡 390 宽必然放不下）'
-        print(f'[1] 区块出现：{m["title"]} · {m["sub"]}；{len(m["cards"])} 张卡，页面未溢出')
-        print(f'[2] 前 3 张卡：{[(c["name"], c["tag"], c["meta"]) for c in m["cards"][:3]]}')
+        print('[1] 热门页干净：无内嵌区块，标题栏入口就位，页面未溢出')
 
-        # ── 2. 卡片内容：版本 tag 与星数 ──
+        # ── 2. 点入口拉起弹层 ──
+        pg.click('button[aria-label="APK 商店"]')
+        pg.wait_for_selector('.shop-card:not(.shop-skel)', timeout=10000)
+        m = pg.evaluate(MEASURE)
+        assert m['sheetOpen'], '弹层没打开'
+        assert 'APK 商店' in m['title'], f'弹层标题不对：{m["title"]}'
+        assert 'komi-store' in m['sub'] and '2026-11-20' in m['sub'], f'副标题应含来源与 rotation：{m["sub"]}'
+        assert '10 个安卓应用' in m['sub'], f'副标题应含总数：{m["sub"]}'
+        assert len(m['cards']) == 10, f'应 10 张卡，实际 {len(m["cards"])}'
+        assert m['gridCols'] == 2, f'网格应 2 列，实际 {m["gridCols"]}'
+        assert m['gridOverflow'], '网格卡片溢出屏幕'
+        assert m['width'] <= m['client'] + 1, f'弹层把页面撑宽：{m["width"]}'
         first = m['cards'][0]
         assert first['name'] == 'localsend', f'第一张卡应是 localsend：{first}'
         assert first['tag'] == 'v1.17.0', f'版本 tag 应来自 feed：{first["tag"]}'
         assert '60k' in first['meta'], f'星数应紧凑显示：{first["meta"]}'
-        assert any(c['tag'] == '4.5.1' for c in m['cards']), 'godot 的无 v 前缀 tag 应原样显示'
-        pg.screenshot(path=f'{OUT}/apkstore-094-rail.png')
-        print('[3] 卡片渲染名称 / 版本 tag / 星数正确')
+        pg.screenshot(path=f'{OUT}/apkstore-095-sheet.png')
+        print(f'[2] 弹层：{m["title"]} · {m["sub"]}；2 列网格 10 张卡，未溢出')
+        print(f'[3] 前 3 张卡：{[(c["name"], c["tag"], c["meta"]) for c in m["cards"][:3]]}')
 
-        # ── 3. 点卡片进现有仓库详情链路 ──
-        pg.locator('.store-card:not(.store-card-skel)', has_text='localsend').first.click()
+        # ── 3. 过滤 ──
+        pg.fill('.sheet .search input', 'godot')
+        pg.wait_for_timeout(400)
+        f = pg.evaluate(MEASURE)
+        assert len(f['cards']) == 1 and f['cards'][0]['name'] == 'godot', (
+            f'按名称过滤应剩 godot：{[c["name"] for c in f["cards"]]}'
+        )
+        pg.fill('.sheet .search input', '照片备份')
+        pg.wait_for_timeout(400)
+        f = pg.evaluate(MEASURE)
+        assert len(f['cards']) == 1 and f['cards'][0]['name'] == 'immich', (
+            f'按简介过滤应剩 immich：{[c["name"] for c in f["cards"]]}'
+        )
+        pg.fill('.sheet .search input', '')
+        pg.wait_for_timeout(300)
+        f = pg.evaluate(MEASURE)
+        assert len(f['cards']) == 10, '清空过滤应恢复全量'
+        print('[4] 过滤：按名称/简介即时生效，清空恢复全量')
+
+        # ── 4. 点应用 → 弹层收、详情开 ──
+        pg.locator('.shop-card:not(.shop-skel)', has_text='localsend').first.click()
         pg.wait_for_timeout(900)
-        body = pg.evaluate('() => document.body.innerText')
-        assert 'localsend/localsend' in body, '点卡片没有打开仓库详情'
-        assert '发行版' in body or 'Releases' in body, '详情里应能看到发行版入口'
-        pg.screenshot(path=f'{OUT}/apkstore-094-detail.png')
+        d = pg.evaluate(MEASURE)
+        assert 'localsend/localsend' in d['body'], '点应用没有打开仓库详情'
+        assert '发行版' in d['body'] or 'Releases' in d['body'], '详情里应能看到发行版入口'
+        pg.screenshot(path=f'{OUT}/apkstore-095-detail.png')
+        print('[5] 点应用收商店弹层、开仓库详情（现有链路）')
         pg.keyboard.press('Escape')
         pg.wait_for_timeout(500)
         after = pg.evaluate(MEASURE)
-        assert after['hasStore'], '关掉详情后商店区块应还在'
-        print('[4] 点卡片打开的是现有仓库详情（含发行版入口），Esc 关闭后区块无损')
-
-        # ── 4. 搜索时隐藏，清空后回来 ──
-        pg.fill('.search input', 'flutter')
-        pg.wait_for_timeout(700)
-        s = pg.evaluate(MEASURE)
-        assert not s['hasStore'], '搜索模式下商店区块不该出现'
-        print('[5] 搜索模式下区块隐藏')
-        pg.fill('.search input', '')
-        pg.wait_for_timeout(500)
-        s = pg.evaluate(MEASURE)
-        assert s['hasStore'] and len(s['cards']) == 10, '清空搜索后区块应恢复'
-        print('[6] 清空搜索后区块恢复，无需重新取数')
+        assert after['shopEntry'], '回到热门页后入口还在'
+        print('[6] Esc 关详情后回到热门页，入口无损')
 
         assert store_errors(errors) == [], f'store 相关报错：{store_errors(errors)[:5]}'
         print('[7] console 无 store 相关报错')
         pg.context.close()
 
-        # ── 5. feed 拉不到：整块隐藏，不出空壳 ──
+        # ── 5. feed 拉不到：入口不出现 ──
         pg2, errors2 = new_page(b, handle_feed=False)
         pg2.wait_for_timeout(4000)
         f = pg2.evaluate(MEASURE)
-        assert not f['hasStore'], 'feed 404 时区块应整块隐藏'
-        assert '正在装填' not in f['body'], 'feed 404 时不该留下骨架占位'
-        assert store_errors(errors2) == [], f'失败路径不该报错：{store_errors(errors2)[:5]}'
-        print('[8] feed 拉不到时区块整块隐藏，热门榜单不受影响')
-        pg2.context.close()
+        assert not f['inlineStore'], 'feed 404 时更不该有内嵌区块'
+        assert not f['shopEntry'], 'feed 404 时入口按钮不该出现'
+        assert 'APK 商店' not in f['body'], '热门页不应出现商店字样'
+        assert not store_errors(errors2), f'失败路径不该报错：{store_errors(errors2)[:5]}'
+        print('[8] feed 拉不到时入口隐藏，热门页完全无痕')
+
+        # ── 6. 弹层开着按 Esc（返回键）直接收弹层 ──
+        # 上面那个 context 是 feed-404 场景（入口本来就被隐藏），换一个正常场景
+        pg3, _ = new_page(b, handle_feed=True)
+        pg3.wait_for_selector('button[aria-label="APK 商店"]', timeout=15000)
+        pg3.click('button[aria-label="APK 商店"]')
+        pg3.wait_for_selector('.shop-card:not(.shop-skel)', timeout=10000)
+        pg3.keyboard.press('Escape')
+        pg3.wait_for_timeout(500)
+        e = pg3.evaluate(MEASURE)
+        assert not e['sheetOpen'], '返回键应直接收商店弹层'
+        assert e['shopEntry'], '收起弹层后应回到热门页'
+        print('[9] 返回键语义正确：商店弹层一按就收，回热门榜单')
+        pg3.context.close()
 
         b.close()
         print('全部断言通过')

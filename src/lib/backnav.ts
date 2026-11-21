@@ -34,6 +34,8 @@ export type SheetName =
   | 'download'
   /** 下载记录（设置 → 本机数据） */
   | 'dlHistory'
+  /** APK 商店（热门页入口的全屏清单） */
+  | 'apkstore'
 
 /** 首页页签：底栏第一项就是「首页」，返回时回到它 */
 export const HOME_TAB = 'repos'

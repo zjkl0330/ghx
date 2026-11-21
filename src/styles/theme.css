@@ -6023,92 +6023,69 @@ button.ustat:active {
   color: var(--text-dim);
 }
 
-/* ================= 热门页 APK 商店（komi-store 精选目录） ================= */
+/* ============ APK 商店清单弹层（komi-store 精选目录） ============ */
 
-.store {
-  flex: none;
-}
-
-.store-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 10px 16px 6px;
-}
-
-.store-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.store-sub {
-  font-size: 11px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.store-rail {
-  display: flex;
+.shop-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
-  overflow-x: auto;
-  padding: 2px 16px 10px;
-  scroll-snap-type: x proximity;
-  scrollbar-width: none;
 }
 
-.store-rail::-webkit-scrollbar {
-  display: none;
-}
-
-.store-card {
-  scroll-snap-align: start;
-  flex: none;
-  width: 128px;
+.shop-card {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-  padding: 10px;
+  align-items: stretch;
+  gap: 6px;
+  padding: 11px;
   text-align: left;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
-  min-height: 96px;
 }
 
-.store-card:active {
+.shop-card:active {
   background: var(--surface-2);
 }
 
-.store-card-skel {
+.shop-skel {
   pointer-events: none;
 }
 
-.store-avatar {
-  width: 36px;
-  height: 36px;
+.shop-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.shop-avatar {
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
   object-fit: cover;
   background: var(--surface-2);
   flex: none;
 }
 
-.store-letter {
+.shop-letter {
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 16px;
+  font-size: 14px;
   color: var(--text);
   text-transform: uppercase;
   background: linear-gradient(135deg, #1f6feb, #8957e5);
 }
 
-.store-name {
-  max-width: 100%;
+.shop-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.shop-name {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
@@ -6117,7 +6094,17 @@ button.ustat:active {
   white-space: nowrap;
 }
 
-.store-tag {
+.shop-meta {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-tag {
+  align-self: flex-start;
   max-width: 100%;
   padding: 1px 6px;
   border-radius: 20px;
@@ -6130,14 +6117,7 @@ button.ustat:active {
   white-space: nowrap;
 }
 
-.store-meta {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.store-desc {
-  width: 100%;
+.shop-desc {
   font-size: 11px;
   line-height: 1.35;
   color: var(--text-dim);

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  APK_RAIL_COUNT,
   APK_STORE_FRESH,
   APK_STORE_MAX_AGE,
   APK_STORE_OFFICIAL_URL,
@@ -16,7 +15,6 @@ import {
   parseApkFeed,
   parseApkStore,
   peekApkStore,
-  railApps,
   resetApkStoreMemory,
   sanitizeApkApps,
   serializeApkStore,
@@ -190,15 +188,6 @@ describe('新鲜度', () => {
     expect(apkStoreFresh(null)).toBe(false)
     // 时钟回拨按未过期处理，不出负年龄崩溃
     expect(apkStoreUsable(store, NOW - 1000)).toBe(true)
-  })
-
-  it('railApps 截到 12 条且过期目录返回空', () => {
-    const items = Array.from({ length: 30 }, (_, i) => feedItem({ fullName: `o/r${i}`, id: i }))
-    const store = parseApkFeed(feedText(items), NOW) as ApkStore
-    expect(APK_RAIL_COUNT).toBe(12)
-    expect(railApps(store, NOW)).toHaveLength(12)
-    expect(railApps(store, NOW + APK_STORE_MAX_AGE + 1)).toEqual([])
-    expect(railApps(null)).toEqual([])
   })
 })
 

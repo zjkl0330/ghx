@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
-import {
-  railApps,
-  apkAppToRepo,
-  loadApkStore,
-  type ApkApp,
-  type ApkStore,
-} from '../lib/apkstore'
-import { compactNumber } from '../lib/format'
+import { loadApkStore, type ApkStore } from '../lib/apkstore'
 import { descText, pickDescItems } from '../lib/desc'
 import {
   HOT_FRESH,
@@ -49,6 +42,8 @@ interface Props {
   tokenId: string | null
   descOpts: DescOptions
   onOpenRepo: (repo: Repo) => void
+  /** 打开 APK 商店清单（内容收进全屏弹层，不占榜单的屏） */
+  onOpenShop: () => void
   onToast: (msg: string) => void
   /**
    * 匿名浏览：没导入令牌也能看公开榜单，但 star 这类写操作要登录。
@@ -86,54 +81,12 @@ function SkeletonRows({ count }: { count: number }) {
 }
 
 /**
- * 商店卡片：komi-store 目录里的一条安卓应用。
- * 头像加载失败回退首字母 —— 国内 avatars.githubusercontent.com 经常不可达；
- * 且 <img> 等待响应期间不触发 onerror（RULES 记过的坑），挂起同样按失败算，
- * 8 秒没加载出来就换首字母，不让空白方块挂在热门页最顶上。
- */
-function StoreCard({ app, onOpen }: { app: ApkApp; onOpen: (r: Repo) => void }) {
-  const [avatarFailed, setAvatarFailed] = useState(false)
-  const [avatarOk, setAvatarOk] = useState(false)
-  useEffect(() => {
-    if (avatarOk || avatarFailed || !app.avatarUrl) return
-    const timer = window.setTimeout(() => setAvatarFailed(true), 8000)
-    return () => window.clearTimeout(timer)
-  }, [avatarOk, avatarFailed, app.avatarUrl])
-  const showAvatar = !!app.avatarUrl && !avatarFailed && avatarOk
-  return (
-    <button
-      className="store-card"
-      onClick={() => onOpen(apkAppToRepo(app))}
-      aria-label={`打开 ${app.fullName}`}
-    >
-      {showAvatar ? (
-        <img
-          className="store-avatar"
-          src={app.avatarUrl}
-          alt=""
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onLoad={() => setAvatarOk(true)}
-          onError={() => setAvatarFailed(true)}
-        />
-      ) : (
-        <div className="store-avatar store-letter">{app.name.charAt(0)}</div>
-      )}
-      <span className="store-name">{app.name}</span>
-      {app.latestTag && <span className="store-tag">{app.latestTag}</span>}
-      <span className="store-meta">★ {compactNumber(app.stars)}</span>
-      {app.description && <span className="store-desc">{app.description}</span>}
-    </button>
-  )
-}
-
-/**
  * 热门 / 仓库搜索。
  *
  * 空关键词时走 trending 查询（最近创建 + 日均涨星排序）；
  * 输入关键词后切到 GitHub 全区搜索，可按相关度 / 星数 / 更新时间排序。
- * 榜单上方挂一条「APK 商店」横滑区：komi-store 维护的精选安卓应用目录，
- * 点卡片进仓库详情，装包走现有的发行版下载链路。
+ * 「APK 商店」收在标题栏的入口按钮里：点开是全屏清单（komi-store 精选
+ * 安卓应用目录），不占榜单的屏 —— 热门页的本职是看榜单。
  *
  * 两种模式都先吃缓存：热门按 (range, lang) 存快照，十分钟内连请求都不发；
  * 超过十分钟先把旧的贴上来再静默刷新，切组合时列表原地换掉，不用干等。
@@ -169,9 +122,8 @@ export function HotPage(p: Props) {
   const seq = useRef(0)
   const lastToken = useRef(p.tokenId)
 
-  /** APK 商店目录（komi-store 精选）。独立于账号与热门缓存，游客也能看 */
+  /** APK 商店目录（komi-store 精选）。只决定入口显隐，内容在弹层里 */
   const [store, setStore] = useState<ApkStore | null>(null)
-  /** 目录取数是否已结束：没结束时画骨架，结束且为空就整块隐藏 */
   const [storeDone, setStoreDone] = useState(false)
 
   useEffect(() => {
@@ -187,7 +139,7 @@ export function HotPage(p: Props) {
   }, [p.kv])
 
   const searchMode = hasKeyword(query)
-  const storeApps = useMemo(() => (searchMode ? [] : railApps(store)), [store, searchMode])
+  const storeOk = storeDone && store !== null
 
   // 热门列表基本都是英文简介，逐行机翻后读起来快很多；只翻当前这一页可见的几十行
   const descItems = useMemo(() => pickDescItems(repos, 30), [repos])
@@ -427,6 +379,11 @@ export function HotPage(p: Props) {
           <div className="page-sub ellipsis">{subtitle}</div>
         </div>
         <div className="spacer" />
+        {storeOk && (
+          <button className="icon-btn" onClick={p.onOpenShop} aria-label="APK 商店">
+            <Icon name="package" size={17} />
+          </button>
+        )}
         <button className="icon-btn" onClick={() => void load({ fresh: true })} aria-label="刷新">
           <Icon name="refresh" size={17} />
         </button>
@@ -485,35 +442,6 @@ export function HotPage(p: Props) {
 
       <div className="page" style={{ marginTop: 0 }}>
         {refreshing && <div className="refresh-bar" />}
-
-        {/* APK 商店横滑区：只在热门模式出现，搜索时不占屏 */}
-        {!searchMode && (storeApps.length > 0 || !storeDone) && (
-          <section className="store" aria-label="APK 商店">
-            <div className="store-head">
-              <span className="store-title">APK 商店</span>
-              <span className="store-sub">
-                {storeApps.length > 0 ? 'komi-store 精选 · 点开装 APK' : '正在装填…'}
-              </span>
-            </div>
-            {storeApps.length > 0 ? (
-              <div className="store-rail">
-                {storeApps.map((a) => (
-                  <StoreCard key={a.fullName} app={a} onOpen={p.onOpenRepo} />
-                ))}
-              </div>
-            ) : (
-              <div className="store-rail" aria-hidden>
-                {Array.from({ length: 4 }, (_, i) => (
-                  <div className="store-card store-card-skel" key={i}>
-                    <span className="skel store-avatar" />
-                    <span className="skel skel-bar" style={{ width: '72%' }} />
-                    <span className="skel skel-bar sm" style={{ width: '92%' }} />
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
 
         {p.readOnly && (
           <div className="page-sub guest-tip" style={{ padding: '2px 16px 6px' }}>

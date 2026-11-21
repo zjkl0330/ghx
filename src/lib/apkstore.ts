@@ -204,9 +204,6 @@ export const APK_STORE_FRESH = 6 * 60 * 60_000
 /** 超过 3 天的缓存不再展示：商店目录过期了还挂着就是误导 */
 export const APK_STORE_MAX_AGE = 3 * 24 * 60 * 60_000
 
-/** 横滑轨道展示条数。上游 150 条全塞进内存没必要，前 12 张滑两屏够了 */
-export const APK_RAIL_COUNT = 12
-
 export function apkStoreFresh(store: ApkStore | null, now: number = Date.now()): boolean {
   if (!store) return false
   // 设备时钟回拨时年龄是负数：按刚确认过处理，别让时间错乱弄没整个区块
@@ -218,12 +215,6 @@ export function apkStoreUsable(store: ApkStore | null, now: number = Date.now())
   if (!store) return false
   const age = Math.max(0, now - store.at)
   return age < APK_STORE_MAX_AGE
-}
-
-/** 横滑区实际展示的条目 */
-export function railApps(store: ApkStore | null, now: number = Date.now()): ApkApp[] {
-  if (!store || !apkStoreUsable(store, now)) return []
-  return store.apps.slice(0, APK_RAIL_COUNT)
 }
 
 /* ------------------------------- 缓存与拉取 ------------------------------ */

@@ -61,6 +61,7 @@ import {
 } from './lib/notifications'
 import { loadSnapshot, saveSnapshot, type Snapshot } from './lib/snapshot'
 import { GUEST_ID, clearHotCache } from './lib/hotCache'
+import { apkAppToRepo } from './lib/apkstore'
 import { DEFAULT_SORT, normalizeSort, sortRepos, type RepoSort } from './lib/sort'
 import { applyPins, isPinned, parsePins, pinKey, serializePins, togglePin } from './lib/pins'
 import {
@@ -205,6 +206,7 @@ import { UnlockScreen } from './ui/UnlockScreen'
 import { UpdateSheet, type UpdatePhase } from './ui/UpdateSheet'
 import { DownloadSheet } from './ui/DownloadSheet'
 import { DlHistorySheet } from './ui/DlHistorySheet'
+import { ApkStoreSheet } from './ui/ApkStoreSheet'
 import { BatchSheet } from './ui/BatchSheet'
 import { BatchPickSheet } from './ui/BatchPickSheet'
 import { WorkflowSheet } from './ui/WorkflowSheet'
@@ -2367,6 +2369,7 @@ export default function App() {
             setDetailRepo(r)
             setSheet('detail')
           }}
+          onOpenShop={() => setSheet('apkstore')}
           onToast={showToast}
         />
       )}
@@ -3257,6 +3260,17 @@ export default function App() {
             clearHistory()
             setDlHistory([])
             showToast('下载记录已清空')
+          }}
+        />
+      )}
+
+      {sheet === 'apkstore' && (
+        <ApkStoreSheet
+          kv={kvRef.current}
+          onClose={() => setSheet('none')}
+          onOpenApp={(app) => {
+            setDetailRepo(apkAppToRepo(app))
+            setSheet('detail')
           }}
         />
       )}

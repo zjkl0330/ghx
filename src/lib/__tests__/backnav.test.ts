@@ -64,6 +64,11 @@ describe('sheetBackTarget', () => {
     })
   })
 
+  it('APK 商店是从热门页拉起的全屏清单，返回直接收起', () => {
+    expect(sheetBackTarget('apkstore', false)).toBe('none')
+    expect(resolveBack(state({ sheet: 'apkstore', tab: 'hot' }))).toEqual({ kind: 'sheet', to: 'none' })
+  })
+
   it('其余弹层一律收起', () => {
     const others: SheetName[] = [
       'add',
