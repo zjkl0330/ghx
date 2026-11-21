@@ -554,11 +554,11 @@ describe('翻译保链接（guard 钩子）', () => {
         },
       },
     )
-    // 旧条目没被命中，重新走了通道；新条目写进了 .g2 命名空间
+    // 旧条目没被命中，重新走了通道；新条目写进了 .g3 命名空间
     // （v1.0.1 起 guard 也保粗体，token 结构变了才再升一档）
     expect(fetched).toBe(1)
     expect(r.blocks[0].text).toContain('指南')
-    expect(written.some((k) => k.endsWith('.g2'))).toBe(true)
+    expect(written.some((k) => k.endsWith('.g3'))).toBe(true)
     expect(written.every((k) => k !== oldKey)).toBe(true)
   })
 })

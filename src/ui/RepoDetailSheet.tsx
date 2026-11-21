@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { repoPageUrl } from '../lib/mirrors'
 import { archiveFileName } from '../lib/archive'
 import type { GitHubClient } from '../lib/api'
 import type { AuditEntry, Repo, Visibility } from '../lib/types'
+import type { Route } from '../lib/routes'
 import { parseTopics, topicsToInput } from '../lib/topics'
 import { openExternal } from '../lib/update'
 import { copyText } from '../lib/clipboard'
@@ -41,6 +41,8 @@ interface Props {
   onOpenOwner?: () => void
   /** 下载源码 ZIP：开统一下载面板（测速选线在那边，和安装包共用一套） */
   onDownloadArchive?: () => void
+  /** 简介里的 GitHub 链接在 App 内打开 */
+  onOpenRoute?: (r: Route) => void
 }
 
 function relTime(iso: string): string {
@@ -206,7 +208,12 @@ export function RepoDetailSheet(p: Props) {
             {p.descZh ? (
               <>
                 <div>
-                  <SpanText text={p.descZh} spans={linkifyUrls(p.descZh)} spansFor={p.descZh} />
+                  <SpanText
+                    text={p.descZh}
+                    spans={linkifyUrls(p.descZh)}
+                    spansFor={p.descZh}
+                    onRoute={p.onOpenRoute}
+                  />
                   <span className="tr-mark">译</span>
                 </div>
                 <button className="linkbtn" style={{ marginTop: 4 }} onClick={() => setShowSrc((v) => !v)}>
@@ -218,6 +225,7 @@ export function RepoDetailSheet(p: Props) {
                       text={p.repo.description}
                       spans={linkifyUrls(p.repo.description)}
                       spansFor={p.repo.description}
+                      onRoute={p.onOpenRoute}
                     />
                   </div>
                 )}
@@ -227,6 +235,7 @@ export function RepoDetailSheet(p: Props) {
                 text={p.repo.description}
                 spans={linkifyUrls(p.repo.description)}
                 spansFor={p.repo.description}
+                onRoute={p.onOpenRoute}
               />
             )}
           </div>
@@ -439,16 +448,6 @@ export function RepoDetailSheet(p: Props) {
                 `https://github.com/${owner}/${name}/archive/refs/heads/${p.repo.default_branch}.zip`,
               )
               p.onToast('已交给浏览器下载，可在通知栏看进度')
-            },
-          )}
-
-          {action(
-            'open',
-            'external',
-            '打开仓库',
-            `在浏览器打开 ${p.repo.full_name}，经 ${p.mirror.replace(/^https?:\/\//, '')}`,
-            async () => {
-              await openExternal(repoPageUrl(p.mirror, p.repo.full_name))
             },
           )}
 

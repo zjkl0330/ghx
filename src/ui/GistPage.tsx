@@ -20,7 +20,6 @@ import {
   type Gist,
 } from '../lib/gists'
 import { formatBytes, relTime } from '../lib/format'
-import { openExternal } from '../lib/update'
 import { PageHeader, PageState } from './PageHeader'
 import { Icon } from './icons'
 
@@ -207,16 +206,6 @@ export function GistPage(p: {
               <button className="btn ghost tiny" onClick={() => void copyText(`https://gist.github.com/${gist.id}`).then((ok) => p.onToast(ok ? '已复制链接' : '复制失败'))}>
                 <Icon name="link" size={14} />
                 链接
-              </button>
-              <button
-                className="btn ghost tiny"
-                onClick={() => {
-                  if (gist.html_url) void openExternal(gist.html_url).catch((e) => p.onToast((e as Error).message))
-                  else p.onToast('没有网页地址')
-                }}
-              >
-                <Icon name="external" size={14} />
-                打开
               </button>
               <button
                 className={`btn ghost tiny${confirmDel ? ' danger' : ''}`}

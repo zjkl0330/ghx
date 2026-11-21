@@ -2931,12 +2931,49 @@ h1.title {
 }
 
 .md-img-fail {
-  display: inline-block;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-dim);
   border: 1px dashed var(--line);
   border-radius: 6px;
-  padding: 3px 8px;
+  padding: 4px 8px;
+  margin: 3px 6px 3px 0;
+}
+
+/* 失败后的两个动作：重试 / 不加载。做成细链接，别让占位块变成大按钮 */
+.md-img-acts {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.md-img-linkbtn {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--blue);
+  cursor: pointer;
+}
+
+.md-img-linkbtn:active {
+  opacity: 0.6;
+}
+
+/* 「不加载」之后的折行小字，点「加载」可以回来 */
+.md-img-skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
   margin: 3px 6px 3px 0;
 }
 
@@ -5598,9 +5635,19 @@ button.ustat:active {
   gap: 1px;
   max-height: 46vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .toc-item {
+  /*
+   * flex: none 是必须的，不是保险。
+   * 列表是 column flex 且限高，条目默认 flex-shrink:1；而下面的
+   * overflow:hidden（为了省略号）会让「自动最小高度」失效，两者一起
+   * 就把 25 个条目压成 14px 一条，文字只剩一条横切面 —— 真机截图上
+   * 整块目录糊成一片就是这个。目录要的是「装不下就滚」，不是「压扁」。
+   */
+  flex: none;
   text-align: left;
   font-size: 12.5px;
   line-height: 1.5;
@@ -6224,4 +6271,74 @@ button.ustat:active {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* ── 站内暂缺页（GitHub 有、App 还没有的地址）──────────────────────────
+   用户硬性要求「GitHub 跳转不能跳浏览器」，所以这里必须像一页正经页面：
+   路径等宽显示、复制按钮、能退回仓库，而不是一块光秃秃的提示。 */
+.webonly {
+  padding: 16px;
+}
+
+.webonly-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--text-2);
+}
+
+.webonly-head b {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.webonly-head span {
+  display: block;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.webonly-path {
+  margin: 12px 0 14px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--fill);
+  color: var(--text-2);
+  font-size: 11.5px;
+  user-select: text;
+}
+
+/* ── 译文切换条（Issue / PR / 通知共用）────────────────────────────── */
+.trans-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 20px;
+  margin-bottom: 4px;
+}
+
+.trans-head-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.trans-head-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trans-head-state {
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.trans-head-err {
+  margin: 2px 0 6px;
 }

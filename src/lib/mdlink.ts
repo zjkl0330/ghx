@@ -16,7 +16,7 @@
 
 import { githubUrlAt } from './mirrors'
 import type { Route } from './routes'
-import type { Span } from './markdown'
+import { splitTextLinks, type Span } from './markdown'
 
 /** 链接动作：打开外部地址，或在自述内部滚动到某个标题。
  *  route 有值时说明这条 GitHub 链接能在 App 内直接打开，调用方优先走它。 */
@@ -33,6 +33,11 @@ export interface LinkContext {
   basePath: string
   /** 网页加速前缀；空串表示直连 github.com */
   mirror: string
+}
+
+/** 是不是 github.com 的地址（含 www）；用来守住「GitHub 链接不外跳」 */
+export function isGithubUrl(url: string): boolean {
+  return /^https?:\/\/(?:www\.)?github\.com(?:\/|$)/i.test(url)
 }
 
 /** 允许的协议。其余带协议的（javascript:、data:、file:）一律不认 */
@@ -101,15 +106,18 @@ export function dirOf(path: string): string {
  * 返回 null 表示 App 内没有对应页面。
  */
 export function routeForGithubPath(path: string): Route | null {
-  const segs = path.replace(/^\/+/, '').split('/')
+  const clean = path.replace(/^\/+/, '')
+  const segs = clean.split('/')
   if (segs.length === 0 || !segs[0]) return null
   // 只有一段：用户主页
   if (segs.length === 1) return { kind: 'user', login: segs[0] }
   const owner = segs[0]
   const repo = segs[1]
-  if (!repo) return null
+  if (!repo) return { kind: 'user', login: owner }
   const rest = segs.slice(2)
   const kind = rest[0] ?? ''
+  /** 落不到具体页面的，给说明页而不是 null —— null 会让调用方退回浏览器 */
+  const webOnly = (): Route => ({ kind: 'webOnly', path: clean })
 
   const num = (s: string | undefined): number | null => {
     const n = Number(s)
@@ -129,11 +137,10 @@ export function routeForGithubPath(path: string): Route | null {
       const n = num(rest[1])
       return n ? { kind: 'issue', owner, repo, number: n } : { kind: 'issues', owner, repo }
     }
-    case 'pull':
-      return (() => {
-        const n = num(rest[1])
-        return n ? { kind: 'pull', owner, repo, number: n } : null
-      })()
+    case 'pull': {
+      const n = num(rest[1])
+      return n ? { kind: 'pull', owner, repo, number: n } : { kind: 'pulls', owner, repo }
+    }
     case 'pulls':
       return { kind: 'pulls', owner, repo }
     case 'commits':
@@ -146,9 +153,20 @@ export function routeForGithubPath(path: string): Route | null {
       }
     case 'actions':
       return { kind: 'actions', owner, repo }
-    // releases / tags / wiki / discussions / security 等页面 App 还没有，走外部
+    // 分支与标签：RefsPage 就是干这个的
+    case 'tags':
+    case 'branches':
+      return { kind: 'refs', owner, repo }
+    case 'settings':
+      return { kind: 'admin', owner, repo }
+    case 'commit': {
+      const sha = rest[1] ?? ''
+      return /^[0-9a-f]{7,40}$/i.test(sha) ? { kind: 'commit', owner, repo, sha } : { kind: 'commits', owner, repo }
+    }
+    // releases / wiki / discussions / security / compare / stargazers… 没有页面，
+    // 但也不能交给浏览器：给一页说明，用户自己决定下一步
     default:
-      return null
+      return webOnly()
   }
 }
 
@@ -192,6 +210,29 @@ export function resolveHref(href: string, ctx: LinkContext): LinkTarget | null {
 }
 
 /**
+ * 没有仓库上下文时（Issue 正文、PR 评论、通知评论、简介）的解析入口。
+ *
+ * 这些地方拿不到默认分支，算不出相对路径的基准，所以只认三种：
+ * 锚点、`mailto:`/`tel:`、绝对 http(s) 地址。相对路径一律当无效 ——
+ * 硬拼一个基准只会打开拼错的地址，比不给点更糟。
+ *
+ * GitHub 绝对地址仍然要尽量给 App 内路由：Issue 正文里十有八九是
+ * `github.com/o/r/issues/12` 这类链接，交给系统浏览器等于把人踢出 App。
+ * App 没有对应页面（releases / wiki / discussions）时才留 route 为空，
+ * 由渲染层退回外部浏览器。
+ */
+export function resolveBareHref(href: string): LinkTarget | null {
+  const s = safeHref(href)
+  if (!s) return null
+  if (s.startsWith('#')) return s.length > 1 ? { kind: 'anchor', id: s.slice(1) } : null
+  if (/^(?:mailto:|tel:)/i.test(s)) return { kind: 'external', url: s }
+  if (!/^https?:\/\//i.test(s)) return null
+  const m = /^https?:\/\/(?:www\.)?github\.com(\/[^\s]*)?$/i.exec(s)
+  const route = m ? routeForGithubPath(m[1] ?? '/') : null
+  return { kind: 'external', url: s, route: route ?? undefined }
+}
+
+/**
  * 链接指向的是不是仓库内的文件/目录。
  *
  * 用来决定副标题文案（「打开文件」还是「浏览器打开」）—— 两者都走
@@ -213,28 +254,6 @@ export function isRepoPath(href: string): boolean {
  * 免得「https://a.b。」点了带句号。
  */
 export function linkifyUrls(text: string): Span[] {
-  if (!text) return [{ t: 'text', v: '' }]
-  // URL 主体的字符集：排除空白、CJK 汉字与中日韩标点（简介里「https://a.b/c，后续」
-  // 这种中英文混排最常见，不能让 \S+ 把整句都吞成 URL）
-  const re = /https?:\/\/[^\s\u4E00-\u9FFF\u3000-\u303F\uFF00-\uFFEF\u2010-\u2027"'<>()[\]{}]+/gi
-  const spans: Span[] = []
-  let last = 0
-  let m: RegExpExecArray | null
-  let links = 0
-  while ((m = re.exec(text))) {
-    let url = m[0]
-    // ASCII 句读收尾不认账：句号、逗号、分号、右括号引号
-    const tail = url.match(/[.,;:!?)'"]+$/)
-    if (tail) {
-      url = url.slice(0, url.length - tail[0].length)
-      re.lastIndex = m.index + url.length
-    }
-    if (m.index > last) spans.push({ t: 'text', v: text.slice(last, m.index) })
-    spans.push({ t: 'link', v: url, href: url })
-    links += 1
-    last = m.index + url.length
-  }
-  if (links === 0) return [{ t: 'text', v: text }]
-  if (last < text.length) spans.push({ t: 'text', v: text.slice(last) })
-  return spans
+  // 实现放在 markdown.ts：parseInline 也要用同一条规则，不能两处各写一份
+  return splitTextLinks(text)
 }

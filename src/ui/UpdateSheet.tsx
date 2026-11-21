@@ -3,11 +3,11 @@ import { formatSpeed, mirrorLabel, releasePageUrl } from '../lib/mirrors'
 import {
   formatBytes,
   formatDate,
-  openExternal,
   UPDATE_OWNER,
   UPDATE_REPO,
   type UpdateCheckResult,
 } from '../lib/update'
+import { copyText } from '../lib/clipboard'
 import type { DownloadMode } from '../lib/download'
 import { Icon } from './icons'
 
@@ -46,6 +46,8 @@ function cleanNotes(raw: string): string {
 export function UpdateSheet(p: Props) {
   const [openError, setOpenError] = useState<string | null>(null)
   const [pageBusy, setPageBusy] = useState(false)
+  /** 发行版地址只复制不外开：硬要求 GitHub 不进浏览器 */
+  const [copied, setCopied] = useState(false)
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
@@ -66,9 +68,12 @@ export function UpdateSheet(p: Props) {
   async function openPage() {
     setPageBusy(true)
     try {
-      await openExternal(pageUrl)
-    } catch (err) {
-      setOpenError(`无法唤起浏览器：${(err as Error).message}`)
+      const ok = await copyText(pageUrl)
+      setOpenError(ok ? null : '复制失败，可在下载面板里走安装包')
+      if (ok) {
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1600)
+      }
     } finally {
       setPageBusy(false)
     }
@@ -94,6 +99,7 @@ export function UpdateSheet(p: Props) {
             <h3>已是最新版本</h3>
             <div className="sheet-sub">
               当前 v{p.current}
+              {p.result?.channel === 'beta' ? ' · 测试通道' : ''}
               {info?.publishedAt ? ` · 最新发布 ${formatDate(info.publishedAt)}` : ''}
             </div>
             <div style={{ padding: '20px 0 8px' }}>
@@ -117,8 +123,8 @@ export function UpdateSheet(p: Props) {
               </div>
             </div>
             <button className="btn ghost block" style={{ marginTop: 4 }} disabled={pageBusy} onClick={() => void openPage()}>
-              <Icon name="external" size={14} />
-              打开发行版页面
+              <Icon name="copy" size={14} />
+              {copied ? '已复制' : '复制发行版地址'}
             </button>
             <div className="btns">
               <button className="btn ghost" onClick={p.onRecheck}>
@@ -136,6 +142,7 @@ export function UpdateSheet(p: Props) {
             <h3>发现新版本 v{info.version}</h3>
             <div className="sheet-sub">
               v{p.current} → v{info.version}
+              {info.prerelease ? ' · 测试版' : ''}
               {info.asset ? ` · ${formatBytes(info.asset.size)}` : ''}
               {info.publishedAt ? ` · ${formatDate(info.publishedAt)}` : ''}
             </div>
@@ -167,13 +174,16 @@ export function UpdateSheet(p: Props) {
                   </button>
                 </div>
                 <button className="btn ghost block" style={{ marginTop: 8 }} disabled={pageBusy} onClick={() => void openPage()}>
-                  <Icon name="external" size={14} />
-                  打开发行版页面
+                  <Icon name="copy" size={14} />
+                  {copied ? '已复制' : '复制发行版地址'}
                 </button>
                 <div className="hint" style={{ marginTop: 10, textAlign: 'center' }}>
                   {innerReady
                     ? '下载面板里会先测速选最快线路，下完直接调起安装器；覆盖安装不会丢失本地令牌与审计日志。'
                     : '交给浏览器后进度在通知栏，下载完成后点通知即可安装；覆盖安装不会丢失本地令牌与审计日志。'}
+                  {info.prerelease
+                    ? ' 这是测试版；想回正式版，把设置里的「更新通道」切回正式版再检查一次即可。'
+                    : ''}
                 </div>
               </>
             ) : (
@@ -193,8 +203,8 @@ export function UpdateSheet(p: Props) {
                   该版本没有附带 APK 安装包，可能是发布流水线还没跑完。稍后重新检查即可。
                 </div>
                 <button className="btn ghost block" disabled={pageBusy} onClick={() => void openPage()}>
-                  <Icon name="external" size={14} />
-                  打开发行版页面
+                  <Icon name="copy" size={14} />
+                  {copied ? '已复制' : '复制发行版地址'}
                 </button>
                 <div className="btns">
                   <button className="btn ghost" onClick={p.onClose}>
@@ -228,8 +238,8 @@ export function UpdateSheet(p: Props) {
               {p.error ?? '未知错误'}
             </div>
             <button className="btn ghost block" disabled={pageBusy} onClick={() => void openPage()}>
-              <Icon name="external" size={14} />
-              打开发行版页面（手动下载）
+              <Icon name="copy" size={14} />
+              {copied ? '已复制' : '复制发行版地址'}（手动下载）
             </button>
             {openError && <div className="errline">{openError}</div>}
             <div className="btns">

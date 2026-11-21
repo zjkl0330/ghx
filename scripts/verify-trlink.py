@@ -234,20 +234,24 @@ def main():
         assert 'windows store' in body_text, '链接文字丢了'
         print(f'[3] 原文视图：参考式链接 {n_ref} 条可点，定义行已剔除')
 
-        # ── 断言 4：App 没有的页面（releases）与外站 → 外部浏览器 ──
-        pg.evaluate("() => window.__ext = []")
-        pg.click('.md .md-link[title*="releases"]')
-        pg.wait_for_timeout(600)
-        ext = ext_urls(pg)
-        assert len(ext) == 1 and 'releases' in ext[0], f'releases 链接应跳外部浏览器：{ext}'
-        print(f'[4] 无 App 内页面的链接走外部：{ext[0]}')
-
+        # ── 断言 4：外站链接仍然原样外开（不能被 GitHub 规则误吞） ──
         pg.evaluate("() => window.__ext = []")
         pg.click('.md .md-link[title*="example.com"]')
         pg.wait_for_timeout(600)
         ext = ext_urls(pg)
         assert ext == ['https://example.com'], f'外站链接应原样跳外部：{ext}'
-        print('[5] 外站链接原样走外部')
+        print('[4] 外站链接原样走外部')
+
+        # ── 断言 5：App 没有的页面（releases）→ 站内说明页，绝不外跳 ──
+        # 说明页是压栈的，点完这一页就离开自述，所以放最后一段
+        pg.evaluate("() => window.__ext = []")
+        pg.click('.md .md-link[title*="releases"]')
+        pg.wait_for_timeout(700)
+        ext = ext_urls(pg)
+        assert ext == [], f'GitHub 链接不该再踢去浏览器：{ext}'
+        title = pg.evaluate("() => (document.querySelector('.page-title') || {}).textContent || ''")
+        assert title == 'App 内暂缺此页', f'releases 没进站内说明页：{title!r}'
+        print('[5] 无 App 内页面的 GitHub 链接 → 站内说明页（未外跳）')
 
         pg.screenshot(path=f'{OUT}/trlink-096-source.png')
         b.close()

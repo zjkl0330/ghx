@@ -161,7 +161,13 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 - **链接保活（v0.9.6）**：机翻只换 `block.text`，spans 一失效整段链接变死文字。解法在 `linkguard.ts`：翻译前把链接标签换成 ⟦标签⟧（U+27E6/27E7，实测 Edge 通道整存整取、标签还会被顺便翻译；**不要用数字序号**，会被中文化成「1个」），地址按出现顺序存数组，译文回来按出现顺序回填。占位符被通道吞掉时退回纯译文，不更糟。
 - **参考式链接（v0.9.6）**：`expandLinkRefs` 在解析前把 `[文字][ref]`、`[文字][]`、`![alt][ref]`、快捷式 `[ref]` 展开成行内链接，`[ref]: url` 定义行收集后从正文剔除；围栏代码块内的定义与引用原样保留。LocalSend、SoftEther 这类 README 以前会吐一屏 URL。
 - **GitHub 链接 App 内打开（v0.9.6）**：`mdlink.routeForGithubPath` 把 github.com 路径映射成 App 内 Route（repo/code/issues/pull/commits/actions/user），`SpanText` 有 `onRoute` 时优先 App 内跳转（收弹层、压路由），App 没有的页面（releases/wiki/discussions）与外站仍走外部浏览器。
+- **更新通道（v1.1.0）**：`update-pref.ts` 只存一个 `ghx.update.mode`（`stable` / `beta` / `off`），旧键 `ghx.update.hint` 仅用于迁移（写过新键时同步旧键，回退旧版本语义不变）。正式通道仍走 `/releases/latest`；测试通道走 `/releases?per_page=30`，`pickBestRelease` 按**版本号**排（接口按创建时间排，补发的低版本 hotfix 会排在最前，照单全收取会把用户往回拽），同号时正式版优先。`isNewer` 在数字相同时把「预发布 → 同号正式版」算作升级，否则测试版用户会卡在 beta 上。切换通道后要立刻用新通道重查，且要把 `silentChecked` 置真 —— 否则启动副作用会再发一次请求。
+- **限高 flex 列里的条目必须 `flex: none`（v1.0.4）**：`.toc-list` 是 `flex-direction: column` + `max-height`，`.toc-item` 又带 `overflow: hidden`（为了 `text-overflow: ellipsis`）。按规范，`overflow` 非 `visible` 时自动最小高度（`min-height:auto`）失效，条目就会被 `flex-shrink` 压到 14px 一条、文字只剩横切面。**以后凡是「限高 + 可滚 + 子项省略号」的列表，子项都写 `flex: none`（或 `flex: 0 0 auto`）**，要的是滚动而不是压缩。
+- **GitHub 链接零外跳（v1.0.3）**：`routeForGithubPath` 不再返回 null —— releases / wiki / discussions / compare 这类 App 没有的页面给 `{kind:'webOnly'}`，由 `WebOnlyPage` 展示路径、复制地址、回仓库。`SpanText` 里 GitHub 目标即使没有 `onRoute` 也不会 `openExternal`（只给 `onBlocked` 提示）。**新加链接渲染时不要对 github.com 调 openExternal**，下载/附件上传除外。
+- **没有仓库上下文时（v1.0.2）**：Issue 正文/评论、PR 描述与审核、通知评论、个人主页自述这些地方拿不到默认分支，走 `mdlink.resolveBareHref`：只认锚点、`mailto:`/`tel:`、绝对地址，相对路径一律不给跳（拼错地址比不给点更糟）。绝对 GitHub 地址照样映射成 Route，所以在这些页面里点 `github.com/o/r/issues/12` 也是 App 内打开。**新加 Markdown 渲染点时必须同时传 `ctx`（有仓库时）和 `onRoute`，否则链接会悄悄退回系统浏览器** —— v1.0.1 就是这里漏了，用户看到「部分跳转还是跳网页」。
 - **行内格式保活（v1.0.1）**：以前 `guardLinks` 只保链接，粗体/斜体在 `block.text` 里连标记都没有，译文一替换格式全丢（发行说明里 `**OpenAI Codex**` 变普通文字）。现在 `guardInline` 把 link/strong/em/del 统一换成 ⟦内容⟧，ctx 变成 `{ tokens: [{kind, href?}] }` 按出现顺序配对；code 不保护（通道会把命令当正文翻，语义本就不保）。token 数与 ctx 不符就整段降级 —— 宁可少格式，不可错配。
+- **Issue / PR / 通知也翻（v1.0.3）**：`scope.issue` 默认开。Issue 正文与评论、PR 描述与审核意见、通知直读的评论都走 `useDocTranslation`，正文与评论各一套 hook（生命周期不同，混用会互相取消）。评论的译文是拍平后按块数切片还原的，所以每条评论的块数必须用同一份 `parseMarkdown` 结果。
+- **裸 URL 也算链接（v1.0.3）**：`parseInline` 末尾过一遍 `linkifySpans`，把 text 段里的 `https://…` 换成 link span —— 以前只有 `[文字](地址)` 才算链接，手写 URL 翻完就变成点不动的死字。字符集排除 CJK 与全角标点。规则与 `linkifyUrls` 共用 `splitTextLinks`，只维护一份。guard 的 token 数因此变化，缓存命名空间升 `.g3`。
 - **标题锚点（v1.0.1）**：发行说明爱写 `[English](#en-v1.3.10) | [中文](#cn-v1.3.10)` 配 `<h2 id="…">`。`parseMarkdown` 现在把显式 id 原样留下、普通标题按 GitHub 规则生成 slug（重名加 `-1`），`MarkdownView` 用它当元素 id，`onAnchor` 才能 scrollIntoView。以前标题 id 是下标式 `md-h-<i>`，这类目录全是死链。
 - **名字不翻**：`needsTranslation()` 先问 `isNameLike()`。单段纯字母、无空格、且（camelCase / 带数字下划线 / 能按拼音音节表切完 / 三字母内无元音）就判定为名字，直接返回 false。原因：机翻拿到纯拼音会按音硬凑，`MiyoQian` 被翻成「美代倩」；这类简介翻了只会得到一句不存在的中文。`looksLikePinyin()` 用 DP 逐段切音节（拼音没有词边界，正则不可靠），会有误伤（`case` = ca+se），代价只是少一次没必要的翻译，可以接受。
 
@@ -267,6 +273,7 @@ user / notifications / search / profile / settings / tokens / audit
 
 - 版本号在 `package.json`、`android/app/build.gradle`（`versionCode` = 版本×1000）、`README.md`。三处要一致。
 - 流程：改代码 → `tsc -b` → `vitest run` → `pnpm build` → 提交推 `main` → 打**注解 tag** 推上去。CI 见到 `refs/tags/v*` 才构建签名 APK 并 `softprops/action-gh-release` 发版；普通 push 只留 workflow artifact，**Releases 页不会出现新版本**。
+- **正式版与预发布的开关写在 tag 注解里**：默认 `prerelease: true`（不占 `/releases/latest`、不催别人升级）；注解里出现 `<!-- release: stable -->` 时 CI 走另一条发布步骤，`prerelease: false` + `make_latest: true`。HTML 注释在 Release 页面渲染时看不见，所以机器标记和给人看的说明可以放在同一份注解里。
 - 发版说明直接取 tag 注解（`%(contents:subject)` + `%(contents:body)`），所以内容写在 tag 里，不写进代码。
 - **`git tag -a -F notes.txt` 默认 `--cleanup=strip`，会把以 `#` 开头的行当注释删掉** —— 正文里的 `## 小节标题` 会整行消失，Releases 上只剩连成一片的段落。v0.7.7 与 v0.8.2 都踩过（v0.8.2 事后用 `PATCH /releases/{id}` 补回正文）。要么加 `--cleanup=verbatim`，要么小节标题改用 `**加粗**`。
 - 一旦 tag 推上去，`main` 上的后续文档修正不会进这个 Release 的正文与源码包；要改正文用 `PATCH /repos/{owner}/{repo}/releases/{release_id}`（按 tag 名的端点只支持 GET，会 404）。
@@ -401,7 +408,7 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - `Span` + `parseInline()`：有序规则表扫描，同位置命中按数组顺序取优先。**刻意不用后行断言** `(?<!…)` —— iOS 16.4 以前不支持，正则会直接抛语法错误，表现为整页白屏。斜体只认 `*`，不认 `_`（`snake_case` 遍地都是）。
   - **块上多挂 `spans` 而不是替换 `text`**：翻译、摘要、缓存全都读 `text`，换字段等于把三条链路重写。另存 `spansFor`（生成 spans 时的纯文本快照），机翻换掉 `text` 后两者不等，渲染侧自动退回纯文本 —— 否则译文里会混进一截原文。
   - `Block` 的 `spans` / `spansFor` 直接展开在每个分支上，**不用 `& Rich` 交叉类型**：交叉会让 TS 丢掉对象字面量的隐式索引签名，`Block` 随即不满足 `translate.ts` 的 `BlockLike`（那里靠 `[key: string]: unknown` 遍历）。
-  - `mdlink.ts`：`safeHref`（只放行 http/https/mailto/tel/锚点，`javascript:` 与 `data:` 渲染成纯文字）、`joinPath`（`..` 顶到仓库根就返回空串，不拼出 404 地址）、`resolveHref`（相对路径按**自述所在目录**算，不是仓库根）、`isRepoPath`。
+  - `mdlink.ts`：`safeHref`（只放行 http/https/mailto/tel/锚点，`javascript:` 与 `data:` 渲染成纯文字）、`joinPath`（`..` 顶到仓库根就返回空串，不拼出 404 地址）、`resolveHref`（相对路径按**自述所在目录**算，不是仓库根）、`resolveBareHref`（没有仓库上下文的地方用：绝对地址 + 锚点，GitHub 路径照样给 Route）、`isRepoPath`。
   - `toc.ts`：`slugOf` + `anchorIndexOf`。同名标题按 GitHub 规则补 `-1` / `-2`，`#修复-1` 落到第二处。
   - `SpanText`：链接渲染成 `<button class="md-link">` 而不是 `<a href>` —— WebView 里点 `a` 会先走一次真实导航，长按、中键、无障碍焦点都可能把当前页顶掉。
   - **表格单元格改为保留原文**：`splitCells(line)` 不再 `.map(inline)`，改由渲染层 `SpanText` 解析；`blocksToText` / `summarize` 里才清洗。不这么改，表格里的链接与 `代码` 永远没有格式。
@@ -595,6 +602,31 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - **顺带挖出真 bug：翻译会丢粗体**。`block.text` 里没有 `**`，spans 一失效格式全没 —— 现在 `guardInline` 把 strong/em/del 与链接一起占位保护；缓存命名空间升 `.g2`。
   - **双语目录锚点以前全是死链**：标题 id 是下标式 `md-h-<i>`，`#en-v1.3.10` 根本不存在。现在保留显式 id、普通标题生成 GitHub slug，`onAnchor` 滚动到位（实测 scrollTop 0 → 285）。
   - 设置页补「发行版说明」开关，`DEFAULT_SCOPE.release` 默认开。`verify-relnotes.py` 六段；单测 1369 → 1373。
+
+- **v1.0.2**：站内跳转补漏 —— 用户反馈「部分跳转还是跳转到网址而不是留在网站里」。v0.9.6 只把自述与发行说明接进了路由，另外五处能渲染 Markdown 的地方一直没接：Issue 正文与评论、PR 描述与审核意见、通知直读面板的评论（这四处连 `onRoute` 都没传）、个人主页自述（传了 ctx 没传 `onRoute`）、仓库详情简介（老 `fallback` 只认绝对地址，不给 Route）。
+  - `mdlink.resolveBareHref` 新增：没有仓库上下文时，绝对 GitHub 地址也映射成 Route；相对路径仍然拒绝（没有基准，拼出来必错）。
+  - 五处接线统一用「收弹层 → `pushTo`」，Issue/PR 页直接用 `pushTo`。Issue/PR 的图片顺手接上 `mirror` 加速。
+  - `ui/MdImage.tsx` 抽出共用：自述与 MarkdownView 以前各写一份。加载失败给「重试」「不加载」两个动作（重试换 key 重挂 `<img>`，不加载折成一行可恢复的小字）；徽章失败静默消失，不占位。
+  - `verify-applinks.py` 八段：简介 URL、Issue 正文 blob/issue 链接、PR 描述与审核意见、通知评论、主页自述全部断言 `window.open` 未调用且标题落到目标页；对照组 releases 仍外开（App 没有该页面，不能误吞）。单测 1373 → 1378。
+
+- **v1.0.3**：翻译补齐 + 图片失败可操作 + GitHub 链接彻底不出 App。
+  - 翻译接入 Issue 正文/评论、PR 描述/审核、通知直读（`scope.issue`，设置页第四个开关），译文/原文可切，译标与发行说明一致。
+  - 裸 URL 链接化（`splitTextLinks` 统一规则），译文里的地址仍可点；缓存命名空间 `.g2 → .g3`。
+  - releases / wiki / discussions 等没有页面的 GitHub 地址改走 `WebOnlyPage`，不再 `openExternal`；`SpanText` 对 github.com 有硬闸。连显式按钮也一起收了：仓库页/详情页/自述/个人页/代码页/发行版/Gist/运行日志的「打开网页」都改成「复制地址」，只留下载与附件上传（它们本来就要系统下载器）。
+  - 图片失败给「重试」「不加载」，`MdImage` 两处实现合并。
+  - `verify-v103.py` 八段（译文链接可点、裸 URL 站内打开、原文切换、图片重试/跳过）；单测 1379 → 1384。
+
+- **v1.1.0**：正式版发布 + 更新通道可选测试版。
+  - `update-pref.ts` 从布尔开关升级为三档（正式版 / 测试版 / 关掉），旧键只用于迁移；设置页、个人页、列表横幅在预发布时都标「测试版」。
+  - `update.ts` 新增 `UpdateChannel`、`pickBestRelease`、`isPrerelease`；测试通道读 `/releases` 列表按版本号取最高，正式通道仍只认 `/releases/latest`，预发布在正式通道一律视为「无更新」而不是报错。
+  - 切换通道立刻重查并置 `silentChecked`，避免一次切换打出两三个请求。
+  - CI 支持正式版：tag 注解含 `<!-- release: stable -->` 时取消 Pre-release 并更新 `latest`。
+  - `verify-update.py` 八段（含测试版通道与回正式版说明）；单测 1384 → 1396。
+
+- **v1.0.4**：修自述目录被压扁。
+  - 真机上 25 节目的目录糊成一片：`.toc-item` 被 flex-shrink 压到 14.6px（正常 32.8px），文字只剩一条横切面。加 `flex: none` 后恢复，列表装不下就滚。
+  - `verify-toc.py` 六段：25 条高度 ≥26px 且无竖向裁切、面板不越视口、列表可滚、超长标题走省略号、点第 21 节滚动 0 → 1096 且浮层收起、重开高亮随位置走、深色同样正常。
+  - 单测不变（纯样式问题，1384 条仍全绿）。
 
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 

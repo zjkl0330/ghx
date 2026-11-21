@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dirOf, isRepoPath, joinPath, linkifyUrls, resolveHref, routeForGithubPath, safeHref, splitHash, type LinkContext } from '../mdlink'
+import { dirOf, isRepoPath, joinPath, linkifyUrls, resolveBareHref, resolveHref, routeForGithubPath, safeHref, splitHash, type LinkContext } from '../mdlink'
 
 const ctx: LinkContext = {
   owner: 'zjkl0330',
@@ -218,7 +218,8 @@ describe('routeForGithubPath', () => {
   it('pull/pulls 路由', () => {
     expect(routeForGithubPath('/a/b/pulls')).toEqual({ kind: 'pulls', owner: 'a', repo: 'b' })
     expect(routeForGithubPath('/a/b/pull/7')).toEqual({ kind: 'pull', owner: 'a', repo: 'b', number: 7 })
-    expect(routeForGithubPath('/a/b/pull/abc')).toBeNull()
+    // 编号不是数字时退回 PR 列表，而不是 null（null 会让调用方跳浏览器）
+    expect(routeForGithubPath('/a/b/pull/abc')).toEqual({ kind: 'pulls', owner: 'a', repo: 'b' })
   })
 
   it('commits 与 actions', () => {
@@ -227,11 +228,31 @@ describe('routeForGithubPath', () => {
     expect(routeForGithubPath('/a/b/actions')).toEqual({ kind: 'actions', owner: 'a', repo: 'b' })
   })
 
-  it('App 没有的页面返回 null（releases/wiki/discussions）', () => {
-    expect(routeForGithubPath('/a/b/releases')).toBeNull()
-    expect(routeForGithubPath('/a/b/releases/tag/v1')).toBeNull()
-    expect(routeForGithubPath('/a/b/wiki/Home')).toBeNull()
-    expect(routeForGithubPath('/a/b/discussions')).toBeNull()
+  it('分支/标签与设置走已有页面', () => {
+    expect(routeForGithubPath('/a/b/tags')).toEqual({ kind: 'refs', owner: 'a', repo: 'b' })
+    expect(routeForGithubPath('/a/b/branches')).toEqual({ kind: 'refs', owner: 'a', repo: 'b' })
+    expect(routeForGithubPath('/a/b/settings')).toEqual({ kind: 'admin', owner: 'a', repo: 'b' })
+    expect(routeForGithubPath('/a/b/commit/' + 'a'.repeat(40))).toEqual({
+      kind: 'commit',
+      owner: 'a',
+      repo: 'b',
+      sha: 'a'.repeat(40),
+    })
+  })
+
+  it('App 没有的页面给站内说明页，而不是 null', () => {
+    // 硬要求：GitHub 地址不能交给系统浏览器。null 会让渲染层 fallback 到
+    // openExternal，所以这里必须给一个 webOnly 路由兜住。
+    expect(routeForGithubPath('/a/b/releases')).toEqual({ kind: 'webOnly', path: 'a/b/releases' })
+    expect(routeForGithubPath('/a/b/releases/tag/v1')).toEqual({
+      kind: 'webOnly',
+      path: 'a/b/releases/tag/v1',
+    })
+    expect(routeForGithubPath('/a/b/wiki/Home')).toEqual({ kind: 'webOnly', path: 'a/b/wiki/Home' })
+    expect(routeForGithubPath('/a/b/discussions')).toEqual({
+      kind: 'webOnly',
+      path: 'a/b/discussions',
+    })
   })
 })
 
@@ -252,10 +273,13 @@ describe('resolveHref 附带 App 内路由', () => {
     expect(t && 'route' in t ? t.route : undefined).toBeUndefined()
   })
 
-  it('App 没有的 GitHub 页面不带 route', () => {
+  it('App 没有的 GitHub 页面给 webOnly 路由（不外跳）', () => {
     const t = resolveHref('https://github.com/a/b/releases/latest', ctx)
     expect(t).toMatchObject({ kind: 'external' })
-    expect(t && 'route' in t ? t.route : undefined).toBeUndefined()
+    expect(t && 'route' in t ? t.route : undefined).toEqual({
+      kind: 'webOnly',
+      path: 'a/b/releases/latest',
+    })
   })
 })
 
@@ -279,5 +303,53 @@ describe('linkifyUrls 纯文本链接化', () => {
     expect(two.filter((s) => s.t === 'link')).toHaveLength(2)
     expect(linkifyUrls('没有链接的一句话')).toEqual([{ t: 'text', v: '没有链接的一句话' }])
     expect(linkifyUrls('')).toEqual([{ t: 'text', v: '' }])
+  })
+})
+
+describe('resolveBareHref 无仓库上下文', () => {
+  it('绝对 GitHub 地址给出 App 内路由', () => {
+    expect(resolveBareHref('https://github.com/a/b')).toMatchObject({
+      kind: 'external',
+      route: { kind: 'repo', owner: 'a', repo: 'b' },
+    })
+    expect(resolveBareHref('https://github.com/a/b/issues/12')).toMatchObject({
+      route: { kind: 'issue', owner: 'a', repo: 'b', number: 12 },
+    })
+    expect(resolveBareHref('https://github.com/a/b/pull/7')).toMatchObject({
+      route: { kind: 'pull', owner: 'a', repo: 'b', number: 7 },
+    })
+    expect(resolveBareHref('https://github.com/a/b/blob/main/x.md')).toMatchObject({
+      route: { kind: 'code', owner: 'a', repo: 'b', path: 'x.md', ref: 'main' },
+    })
+    expect(resolveBareHref('https://github.com/a')).toMatchObject({
+      route: { kind: 'user', login: 'a' },
+    })
+  })
+
+  it('App 没有的页面仍给 webOnly 路由', () => {
+    expect(resolveBareHref('https://github.com/a/b/releases/tag/v1')).toEqual({
+      kind: 'external',
+      url: 'https://github.com/a/b/releases/tag/v1',
+      route: { kind: 'webOnly', path: 'a/b/releases/tag/v1' },
+    })
+  })
+
+  it('非 GitHub 站点原样外开，不多长路由', () => {
+    expect(resolveBareHref('https://example.com/x')).toEqual({
+      kind: 'external',
+      url: 'https://example.com/x',
+      route: undefined,
+    })
+  })
+
+  it('锚点与 mailto 仍按原语义', () => {
+    expect(resolveBareHref('#安装')).toEqual({ kind: 'anchor', id: '安装' })
+    expect(resolveBareHref('mailto:a@b.com')).toEqual({ kind: 'external', url: 'mailto:a@b.com' })
+  })
+
+  it('相对路径与不安全协议一律不给跳', () => {
+    expect(resolveBareHref('docs/a.md')).toBeNull()
+    expect(resolveBareHref('javascript:alert(1)')).toBeNull()
+    expect(resolveBareHref('')).toBeNull()
   })
 })

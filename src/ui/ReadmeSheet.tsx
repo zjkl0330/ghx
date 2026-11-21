@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
-import { mirrorImage, rawBase } from '../lib/images'
+import { rawBase } from '../lib/images'
+import { copyText } from '../lib/clipboard'
 import { guardInline, unguardInline } from '../lib/linkguard'
 import { parseMarkdown, type Block } from '../lib/markdown'
 import type { LinkContext } from '../lib/mdlink'
 import type { Route } from '../lib/routes'
 import { looksChinese, type ReadmeFile } from '../lib/readme'
 import { activeHeading, anchorIndexOf, buildToc, tocAnchor, tocIndent } from '../lib/toc'
-import { openExternal } from '../lib/update'
 import {
   TARGET_LANGS,
   translateBlocks,
@@ -17,6 +17,7 @@ import {
   type TranslationStore,
 } from '../lib/translate'
 import type { Repo } from '../lib/types'
+import { MdImage } from './MdImage'
 import { Icon } from './icons'
 import { Table } from './MarkdownView'
 import { SpanText } from './SpanText'
@@ -41,68 +42,6 @@ interface Props {
 }
 
 type View = 'zh' | 'source'
-
-/**
- * 单张图片。
- *
- * 仓库里的图基本都在 raw.githubusercontent.com，国内直连要么不通、要么慢到
- * 十几秒还没响应 —— 而 img 在「还在等」的时候不会触发 onerror，界面就是一块空白。
- * 所以这里有两条路：优先走加速前缀，失败或超时再换回 raw；两边都失败才显示占位。
- */
-function MdImage({ b, mirror }: { b: Extract<Block, { kind: 'img' }>; mirror: string }) {
-  const accelerated = mirrorImage(b.src, mirror)
-  const primary = accelerated ?? b.src
-  const other = accelerated ? b.src : null
-
-  const [src, setSrc] = useState(primary)
-  const [failed, setFailed] = useState(false)
-  const tried = useRef(false)
-
-  const giveUpOrSwap = useCallback(() => {
-    if (!tried.current && other && other !== src) {
-      tried.current = true
-      setSrc(other)
-      return
-    }
-    setFailed(true)
-  }, [other, src])
-
-  // 没有 onerror 的那种「假死」也要有个了断
-  useEffect(() => {
-    if (failed || !other || tried.current) return
-    const t = window.setTimeout(giveUpOrSwap, 12_000)
-    return () => window.clearTimeout(t)
-  }, [failed, other, src, giveUpOrSwap])
-
-  if (failed) {
-    return (
-      <span className="md-img-fail" title={b.alt || b.src}>
-        {b.alt ? `图片没能加载：${b.alt}` : '图片没能加载'}
-      </span>
-    )
-  }
-
-  return (
-    <img
-      className={`md-img${b.badge ? ' badge' : ''}${b.inline ? ' inline' : ''}`}
-      src={src}
-      alt={b.alt}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      style={
-        b.badge
-          ? undefined
-          : b.height
-            ? { height: b.height }
-            : b.width
-              ? { maxWidth: b.width }
-              : undefined
-      }
-      onError={giveUpOrSwap}
-    />
-  )
-}
 
 function renderBlock(
   b: Block,
@@ -531,12 +470,14 @@ export function ReadmeSheet(p: Props) {
             <button
               className="btn ghost"
               style={{ flex: 1 }}
-              onClick={() =>
-                void openExternal(`${githubUrlAt(p.mirror, p.repo.full_name)}#readme`)
-              }
+              onClick={() => {
+                // 自述已经完整显示在这里了，网页版只留一个「复制地址」出口
+                const url = `${githubUrlAt(p.mirror, p.repo.full_name)}#readme`
+                void copyText(url).then((ok) => p.onToast(ok ? '自述地址已复制' : '复制失败'))
+              }}
             >
-              <Icon name="globe" size={14} />
-              网页版
+              <Icon name="copy" size={14} />
+              复制地址
             </button>
             {zhFile ? (
               <button

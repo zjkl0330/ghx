@@ -598,17 +598,6 @@ export function ReleasesSheet(p: Props) {
                             <Icon name="plus" size={12} />
                             网页上传附件
                           </button>
-                          <button
-                            className="btn ghost tiny"
-                            onClick={() =>
-                              void openExternal(
-                                githubUrlAt(p.mirror, `${p.repo.full_name}/releases/tag/${r.tag_name}`),
-                              )
-                            }
-                          >
-                            <Icon name="arrowRight" size={12} />
-                            网页查看
-                          </button>
                           {confirmId === r.id ? (
                             <>
                               <button className="btn ghost tiny" onClick={() => setConfirmId(null)}>

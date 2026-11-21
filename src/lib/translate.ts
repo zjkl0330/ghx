@@ -58,7 +58,7 @@ export const TARGET_LANGS: { key: TargetLang; label: string }[] = [
 
 export const DEFAULT_TARGET: TargetLang = 'zh-CN'
 
-/** 哪些内容需要翻。设置页三个开关直接映射到这里。 */
+/** 哪些内容需要翻。设置页四个开关直接映射到这里。 */
 export interface TranslateScope {
   /** 项目自述 */
   readme: boolean
@@ -66,6 +66,8 @@ export interface TranslateScope {
   desc: boolean
   /** 发行版说明 */
   release: boolean
+  /** Issue / PR 正文与评论、通知直读里的评论 */
+  issue: boolean
 }
 
 /**
@@ -74,7 +76,7 @@ export interface TranslateScope {
  * `release` 默认开：发行说明是最该中文化的地方 —— 一屏英文 changelog
  * 翻不翻的体验差距最大，而且只有展开某一条时才发请求，成本可控。
  */
-export const DEFAULT_SCOPE: TranslateScope = { readme: true, desc: true, release: true }
+export const DEFAULT_SCOPE: TranslateScope = { readme: true, desc: true, release: true, issue: true }
 
 export function normalizeTarget(raw: string | null | undefined): TargetLang {
   const v = (raw ?? '').trim()
@@ -95,6 +97,7 @@ export function parseScope(raw: string | null | undefined): TranslateScope {
       readme: typeof obj.readme === 'boolean' ? obj.readme : DEFAULT_SCOPE.readme,
       desc: typeof obj.desc === 'boolean' ? obj.desc : DEFAULT_SCOPE.desc,
       release: typeof obj.release === 'boolean' ? obj.release : DEFAULT_SCOPE.release,
+      issue: typeof obj.issue === 'boolean' ? obj.issue : DEFAULT_SCOPE.issue,
     }
   } catch {
     return { ...DEFAULT_SCOPE }
@@ -927,9 +930,10 @@ export async function translateBlocks<B extends BlockLike>(
       const guarded = opts.guard?.protect(blocks[idx]) ?? null
       // 缓存键带 guard 命名空间：无 guard 时代的旧缓存存的是纯译文，
       // 拿来 restore 会因为找不到 ⟦⟧ 而退回死链接文字（v0.9.9 真机踩到）。
-      // v1.0.1 起 guard 也保粗体/斜体，token 数量变了，旧 `.g` 条目会让
-      // 整段降级（丢链接），所以命名空间再升一档 `.g2`。
-      const key = cacheKeyFor(opts, plainSrc) + (guarded ? '.g2' : '')
+      // v1.0.1 起 guard 也保粗体/斜体，v1.0.3 起裸 URL 也算链接，
+      // token 数量一变旧条目就会让整段降级（丢链接）。命名空间跟着升档，
+      // 宁可多翻一次，也不能拿旧译文去还原新结构。
+      const key = cacheKeyFor(opts, plainSrc) + (guarded ? '.g3' : '')
       const src = guarded ? guarded.text : plainSrc
       const finish = (translated: string): B => {
         if (!guarded) return { ...blocks[idx], text: translated }

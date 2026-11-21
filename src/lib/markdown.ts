@@ -170,7 +170,61 @@ export function parseInline(raw: string): Span[] {
     i = best.at + best.len
   }
   flush()
-  return out
+  return linkifySpans(out)
+}
+
+/**
+ * 纯文本里的裸地址切出来。
+ *
+ * README / Issue 里手写 `https://…` 很常见，以前只能当死文字看（翻译后
+ * 尤其明显：句子翻了，地址原样留着却点不动）。字符集排除 CJK 与全角标点，
+ * 否则「https://a.b/c，后续」会把整句吞成一个地址。
+ */
+const BARE_URL = /https?:\/\/[^\s\u4E00-\u9FFF\u3000-\u303F\uFF00-\uFFEF\u2010-\u2027"'<>()[\]{}]+/gi
+
+export function splitTextLinks(text: string): Span[] {
+  if (!text) return [{ t: 'text', v: '' }]
+  const spans: Span[] = []
+  let last = 0
+  let links = 0
+  BARE_URL.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = BARE_URL.exec(text))) {
+    let url = m[0]
+    // 句尾 ASCII 句读不算地址的一部分
+    const tail = url.match(/[.,;:!?)'"]+$/)
+    if (tail) {
+      url = url.slice(0, url.length - tail[0].length)
+      BARE_URL.lastIndex = m.index + url.length
+    }
+    if (m.index > last) spans.push({ t: 'text', v: text.slice(last, m.index) })
+    spans.push({ t: 'link', v: url, href: url })
+    links += 1
+    last = m.index + url.length
+  }
+  if (links === 0) return [{ t: 'text', v: text }]
+  if (last < text.length) spans.push({ t: 'text', v: text.slice(last) })
+  return spans
+}
+
+/** 把 text 段里的裸地址换成 link span；没有地址时原样返回同一个数组 */
+export function linkifySpans(spans: Span[]): Span[] {
+  let changed = false
+  const out: Span[] = []
+  for (const sp of spans) {
+    if (sp.t !== 'text') {
+      out.push(sp)
+      continue
+    }
+    const parts = splitTextLinks(sp.v)
+    if (parts.length === 1) {
+      out.push(sp)
+      continue
+    }
+    changed = true
+    out.push(...parts)
+  }
+  return changed ? out : spans
 }
 
 /** 片段还原成纯文本（链接只留文字），用来和 block.text 比对 */

@@ -19,6 +19,7 @@ import {
   type TranslateChannel,
   type TranslateScope,
 } from '../lib/translate'
+import type { UpdateMode } from '../lib/update-pref'
 import { Icon } from './icons'
 
 interface Props {
@@ -32,9 +33,11 @@ interface Props {
   updateCheckedAt: number | null
   latestVersion: string | null
   hasUpdate: boolean
-  /** 是否提示更新（只对正式版生效；关掉后启动不再查） */
-  updateHint: boolean
-  onUpdateHint: (on: boolean) => void
+  /** 更新通道：stable 只提示正式版，beta 连预发布，off 关掉 */
+  updateMode: UpdateMode
+  onUpdateMode: (m: UpdateMode) => void
+  /** 当前查到的可更新版本是不是预发布，用来在文案里标「测试版」 */
+  latestIsBeta?: boolean
   themePref: ThemePref
   resolvedTheme: ResolvedTheme
   onTheme: (pref: ThemePref) => void
@@ -432,6 +435,12 @@ export function SettingsPage(p: Props) {
               on={p.scope.release}
               onChange={(v) => p.onScope({ ...p.scope, release: v })}
             />
+            <SwitchRow
+              label="Issue 与 PR"
+              hint="正文、评论、通知直读里的回复一起翻，链接照样点得动"
+              on={p.scope.issue}
+              onChange={(v) => p.onScope({ ...p.scope, issue: v })}
+            />
 
             <div className="tgl-label" style={{ marginTop: 14 }}>
               翻译通道
@@ -603,7 +612,9 @@ export function SettingsPage(p: Props) {
             <div className="kv-row">
               <span>状态</span>
               <b style={{ color: p.hasUpdate ? 'var(--green)' : 'var(--text-dim)' }}>
-                {p.hasUpdate ? `可更新至 v${p.latestVersion}` : ago(p.updateCheckedAt)}
+                {p.hasUpdate
+                  ? `可更新至 v${p.latestVersion}${p.latestIsBeta ? '（测试版）' : ''}`
+                  : ago(p.updateCheckedAt)}
               </b>
             </div>
             <button
@@ -612,22 +623,31 @@ export function SettingsPage(p: Props) {
               onClick={p.onCheckUpdate}
             >
               <Icon name={p.hasUpdate ? 'download' : 'refresh'} size={14} />
-              {p.hasUpdate ? `发现新版本 v${p.latestVersion}` : '检查更新'}
+              {p.hasUpdate
+                ? `发现新版本 v${p.latestVersion}${p.latestIsBeta ? '（测试版）' : ''}`
+                : '检查更新'}
             </button>
 
             <div className="tgl-label" style={{ marginTop: 14 }}>
-              更新提示
+              更新通道
             </div>
             <div className="seg" style={{ margin: 0 }}>
-              <button className={p.updateHint ? 'on' : ''} onClick={() => p.onUpdateHint(true)}>
-                提示正式版
+              <button className={p.updateMode === 'stable' ? 'on' : ''} onClick={() => p.onUpdateMode('stable')}>
+                正式版
               </button>
-              <button className={!p.updateHint ? 'on' : ''} onClick={() => p.onUpdateHint(false)}>
+              <button className={p.updateMode === 'beta' ? 'on' : ''} onClick={() => p.onUpdateMode('beta')}>
+                测试版
+              </button>
+              <button className={p.updateMode === 'off' ? 'on' : ''} onClick={() => p.onUpdateMode('off')}>
                 关掉
               </button>
             </div>
             <div className="hint" style={{ marginTop: 8 }}>
-              只提示正式版：开发中的包都标了预发布，不会催你升级。关掉后启动时不再检查更新，也不会出现红点；想查时点上面的按钮即可。
+              {p.updateMode === 'beta'
+                ? '测试版连预发布一起提示，能先用到新功能，但不保证稳定；装回正式版只要切回上一档再更新一次。两个通道同一个签名，可以互相覆盖安装。'
+                : p.updateMode === 'off'
+                  ? '已关闭启动检查：不会再出现红点和更新横幅；想升级时点上面的「检查更新」即可。'
+                  : '只提示正式版：标了 Pre-release 的包不会催你升级。想先试新功能，可以切到「测试版」。'}
             </div>
             <div className="tgl-label" style={{ marginTop: 14 }}>
               下载方式

@@ -513,13 +513,15 @@ export function CodePage(p: {
                 className="linkrow"
                 onClick={() => {
                   setSheetOpen(false)
-                  void openExternal(blobUrl(p.owner, p.repo, p.ref, file.item.path, file.item.html_url))
+                  // 硬要求：GitHub 地址不再踢去浏览器。要网页版就复制出去自己粘
+                  const url = blobUrl(p.owner, p.repo, p.ref, file.item.path, file.item.html_url)
+                  void copyText(url).then((ok) => p.onToast(ok ? '文件地址已复制' : '复制失败'))
                 }}
               >
-                <Icon name="external" size={16} />
+                <Icon name="copy" size={16} />
                 <span className="linkrow-main">
-                  <b>在浏览器打开</b>
-                  <i>跳到 github.com 的这个文件</i>
+                  <b>复制文件地址</b>
+                  <i>需要网页版时自己粘贴打开</i>
                 </span>
               </button>
 

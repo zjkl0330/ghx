@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
 import {
   addComment,
@@ -23,9 +23,14 @@ import {
 } from '../lib/milestones'
 import { listCollaborators } from '../lib/repo-admin'
 import { parseMarkdown } from '../lib/markdown'
+import type { LinkContext } from '../lib/mdlink'
+import type { Route } from '../lib/routes'
+import type { TargetLang, TranslateChannel, TranslationStore } from '../lib/translate'
 import { relTime, shortDate } from '../lib/format'
 import { PageHeader, PageState } from './PageHeader'
 import { MarkdownView } from './MarkdownView'
+import { TransHead } from './TransHead'
+import { useDocTranslation } from './useDocTranslation'
 import { Icon } from './icons'
 
 /**
@@ -43,7 +48,30 @@ export function IssuePage(p: {
   onToast: (s: string) => void
   /** 点作者看主页 */
   onOpenUser?: (login: string) => void
+  /** 网页加速前缀：正文里 github.com 的链接要换成能打开的地址 */
+  mirror?: string
+  /** GitHub 链接的 App 内打开入口。不传的话正文链接只能交给系统浏览器 */
+  onOpenRoute?: (r: Route) => void
+  /** 设置里的「Issue 与 PR」开关 */
+  autoTranslate?: boolean
+  channel?: TranslateChannel
+  target?: TargetLang
+  azureKey?: string
+  store?: TranslationStore | null
 }) {
+  /**
+   * 正文/评论的行内链接上下文。
+   *
+   * Issue 正文里的相对路径按仓库根算（basePath 空串）；默认分支这里拿不到，
+   * 用 `HEAD` —— GitHub 网页与 API 都认它，会解析到仓库真正的默认分支。
+   */
+  const linkCtx: LinkContext = {
+    owner: p.owner,
+    repo: p.repo,
+    branch: 'HEAD',
+    basePath: '',
+    mirror: p.mirror ?? '',
+  }
   const [issue, setIssue] = useState<Issue | null>(null)
   const [comments, setComments] = useState<IssueComment[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,6 +85,56 @@ export function IssuePage(p: {
   const [pickingLock, setPickingLock] = useState(false)
   const [milestones, setMilestones] = useState<Milestone[] | null>(null)
   const [pickingMilestone, setPickingMilestone] = useState(false)
+
+  /**
+   * 正文与评论各走一套翻译：正文换了要立刻重翻，评论是后到的，
+   * 两个生命周期不一样，混在一个 hook 里会互相取消。
+   */
+  const bodyBlocks = useMemo(
+    () => (issue?.body?.trim() ? parseMarkdown(issue.body, { maxBlocks: 300 }) : []),
+    [issue?.body],
+  )
+  const commentBlocks = useMemo(
+    () => comments.map((c) => (c.body?.trim() ? parseMarkdown(c.body, { maxBlocks: 200 }) : [])),
+    [comments],
+  )
+  const flatComments = useMemo(() => commentBlocks.flat(), [commentBlocks])
+  const transBody = useDocTranslation({
+    enabled: !!p.autoTranslate,
+    channel: p.channel ?? 'auto',
+    target: p.target ?? 'zh-CN',
+    azureKey: p.azureKey ?? '',
+    store: p.store ?? null,
+  })
+  const transTalk = useDocTranslation({
+    enabled: !!p.autoTranslate,
+    channel: p.channel ?? 'auto',
+    target: p.target ?? 'zh-CN',
+    azureKey: p.azureKey ?? '',
+    store: p.store ?? null,
+  })
+  const [view, setView] = useState<'zh' | 'src'>('zh')
+
+  // 换了一条 Issue 就取消在途任务，免得上一条的译文糊到这一条上
+  useEffect(() => {
+    transBody.reset()
+    if (p.autoTranslate) void transBody.translate(bodyBlocks)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue?.number, issue?.body, p.autoTranslate])
+
+  useEffect(() => {
+    transTalk.reset()
+    if (p.autoTranslate && flatComments.length > 0) void transTalk.translate(flatComments)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comments, p.autoTranslate])
+
+  /** 第 ci 条评论该显示哪一份块：译文是拍平的，按前面的块数切回来 */
+  const commentShown = (ci: number) => {
+    const blocks = commentBlocks[ci] ?? []
+    if (view !== 'zh' || !transTalk.zh) return blocks
+    const start = commentBlocks.slice(0, ci).reduce((n, b) => n + b.length, 0)
+    return transTalk.zh.slice(start, start + blocks.length)
+  }
 
   const load = useCallback(
     async (silent = false) => {
@@ -265,7 +343,24 @@ export function IssuePage(p: {
 
             <div className="detail-body">
               {issue.body?.trim() ? (
-                <MarkdownView blocks={parseMarkdown(issue.body, { maxBlocks: 300 })} />
+                <>
+                  <TransHead
+                    label="正文"
+                    view={view}
+                    onToggle={() => setView((v) => (v === 'zh' ? 'src' : 'zh'))}
+                    ready={!!transBody.zh}
+                    busy={transBody.busy}
+                    enabled={!!p.autoTranslate}
+                    onTranslate={() => void transBody.translate(bodyBlocks)}
+                    error={transBody.error}
+                  />
+                  <MarkdownView
+                    blocks={view === 'zh' && transBody.zh ? transBody.zh : bodyBlocks}
+                    mirror={p.mirror}
+                    ctx={linkCtx}
+                    onRoute={p.onOpenRoute}
+                  />
+                </>
               ) : (
                 <div className="muted">（没有正文）</div>
               )}
@@ -421,7 +516,21 @@ export function IssuePage(p: {
               评论 {comments.length > 0 ? `· ${comments.length}` : ''}
             </div>
 
-            {comments.map((c) => (
+            {comments.length > 0 && (
+              <div style={{ padding: '0 16px' }}>
+                <TransHead
+                  view={view}
+                  onToggle={() => setView((v) => (v === 'zh' ? 'src' : 'zh'))}
+                  ready={!!transTalk.zh}
+                  busy={transTalk.busy}
+                  enabled={!!p.autoTranslate}
+                  onTranslate={() => void transTalk.translate(flatComments)}
+                  error={transTalk.error}
+                />
+              </div>
+            )}
+
+            {comments.map((c, ci) => (
               <div className="comment" key={c.id}>
                 <div className="comment-head">
                   {c.user?.login && p.onOpenUser ? (
@@ -435,7 +544,12 @@ export function IssuePage(p: {
                 </div>
                 <div className="comment-body">
                   {c.body?.trim() ? (
-                    <MarkdownView blocks={parseMarkdown(c.body, { maxBlocks: 200 })} />
+                    <MarkdownView
+                      blocks={commentShown(ci)}
+                      mirror={p.mirror}
+                      ctx={linkCtx}
+                      onRoute={p.onOpenRoute}
+                    />
                   ) : (
                     <span className="muted">（空评论）</span>
                   )}

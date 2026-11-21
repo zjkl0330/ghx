@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
 import { relTime } from '../lib/format'
 import { parseMarkdown } from '../lib/markdown'
+import type { LinkContext } from '../lib/mdlink'
+import type { Route } from '../lib/routes'
+import type { TargetLang, TranslateChannel, TranslationStore } from '../lib/translate'
 import {
   getPull,
   listPulls,
@@ -24,6 +27,8 @@ import {
 } from '../lib/pulls'
 import { PageHeader, PageState } from './PageHeader'
 import { MarkdownView } from './MarkdownView'
+import { TransHead } from './TransHead'
+import { useDocTranslation } from './useDocTranslation'
 import { DiffView } from './DiffView'
 import { Icon } from './icons'
 import { EMPTY_FILTER, activeCount, filterSummary, matchesFilter, type IssueFilter } from '../lib/issue-filter'
@@ -214,7 +219,25 @@ export function PullPage(p: {
   onToast: (s: string) => void
   /** 点作者 / 审核人看主页 */
   onOpenUser?: (login: string) => void
+  /** 网页加速前缀：描述里 github.com 的链接要换成能打开的地址 */
+  mirror?: string
+  /** GitHub 链接的 App 内打开入口。不传的话描述里的链接只能交给系统浏览器 */
+  onOpenRoute?: (r: Route) => void
+  /** 设置里的「Issue 与 PR」开关 */
+  autoTranslate?: boolean
+  channel?: TranslateChannel
+  target?: TargetLang
+  azureKey?: string
+  store?: TranslationStore | null
 }) {
+  /** 描述与审核意见的行内链接上下文（分支用 HEAD，GitHub 会解析到默认分支） */
+  const linkCtx: LinkContext = {
+    owner: p.owner,
+    repo: p.repo,
+    branch: 'HEAD',
+    basePath: '',
+    mirror: p.mirror ?? '',
+  }
   const [pr, setPr] = useState<PullRequest | null>(null)
   const [files, setFiles] = useState<PullFile[]>([])
   const [commits, setCommits] = useState<PullCommit[]>([])
@@ -228,6 +251,52 @@ export function PullPage(p: {
   const [confirm, setConfirm] = useState(false)
   const [reviewPanel, setReviewPanel] = useState<'APPROVE' | 'REQUEST_CHANGES' | null>(null)
   const [reviewBody, setReviewBody] = useState('')
+
+  /** 描述与审核意见各一套：描述先到，审核是随后拉的，混在一起会互相取消 */
+  const bodyBlocks = useMemo(
+    () => (pr?.body?.trim() ? parseMarkdown(pr.body, { maxBlocks: 300 }) : []),
+    [pr?.body],
+  )
+  const reviewBlocks = useMemo(
+    () => reviews.map((r) => (r.body?.trim() ? parseMarkdown(r.body, { maxBlocks: 120 }) : [])),
+    [reviews],
+  )
+  const flatReviews = useMemo(() => reviewBlocks.flat(), [reviewBlocks])
+  const transBody = useDocTranslation({
+    enabled: !!p.autoTranslate,
+    channel: p.channel ?? 'auto',
+    target: p.target ?? 'zh-CN',
+    azureKey: p.azureKey ?? '',
+    store: p.store ?? null,
+  })
+  const transReview = useDocTranslation({
+    enabled: !!p.autoTranslate,
+    channel: p.channel ?? 'auto',
+    target: p.target ?? 'zh-CN',
+    azureKey: p.azureKey ?? '',
+    store: p.store ?? null,
+  })
+  const [view, setView] = useState<'zh' | 'src'>('zh')
+
+  useEffect(() => {
+    transBody.reset()
+    if (p.autoTranslate) void transBody.translate(bodyBlocks)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pr?.number, pr?.body, p.autoTranslate])
+
+  useEffect(() => {
+    transReview.reset()
+    if (p.autoTranslate && flatReviews.length > 0) void transReview.translate(flatReviews)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviews, p.autoTranslate])
+
+  /** 第 ri 条审核意见显示哪份块：译文拍平了，按前面的块数切回来 */
+  const reviewShown = (ri: number) => {
+    const blocks = reviewBlocks[ri] ?? []
+    if (view !== 'zh' || !transReview.zh) return blocks
+    const start = reviewBlocks.slice(0, ri).reduce((n, b) => n + b.length, 0)
+    return transReview.zh.slice(start, start + blocks.length)
+  }
 
   const load = useCallback(
     async (silent = false) => {
@@ -381,7 +450,24 @@ export function PullPage(p: {
               <>
                 <div className="detail-body">
                   {pr.body?.trim() ? (
-                    <MarkdownView blocks={parseMarkdown(pr.body, { maxBlocks: 300 })} />
+                    <>
+                      <TransHead
+                        label="描述"
+                        view={view}
+                        onToggle={() => setView((v) => (v === 'zh' ? 'src' : 'zh'))}
+                        ready={!!transBody.zh}
+                        busy={transBody.busy}
+                        enabled={!!p.autoTranslate}
+                        onTranslate={() => void transBody.translate(bodyBlocks)}
+                        error={transBody.error}
+                      />
+                      <MarkdownView
+                        blocks={view === 'zh' && transBody.zh ? transBody.zh : bodyBlocks}
+                        mirror={p.mirror}
+                        ctx={linkCtx}
+                        onRoute={p.onOpenRoute}
+                      />
+                    </>
                   ) : (
                     <div className="muted">（没有描述）</div>
                   )}
@@ -405,7 +491,18 @@ export function PullPage(p: {
                 {reviews.length > 0 && (
                   <>
                     <div className="section-title">审核 · {reviews.length}</div>
-                    {reviews.map((r) => (
+                    <div style={{ padding: '0 16px' }}>
+                      <TransHead
+                        view={view}
+                        onToggle={() => setView((v) => (v === 'zh' ? 'src' : 'zh'))}
+                        ready={!!transReview.zh}
+                        busy={transReview.busy}
+                        enabled={!!p.autoTranslate}
+                        onTranslate={() => void transReview.translate(flatReviews)}
+                        error={transReview.error}
+                      />
+                    </div>
+                    {reviews.map((r, ri) => (
                       <div className="comment" key={r.id}>
                         <div className="comment-head">
                           {r.user?.login && p.onOpenUser ? (
@@ -421,7 +518,12 @@ export function PullPage(p: {
                         </div>
                         {r.body?.trim() && (
                           <div className="comment-body">
-                            <MarkdownView blocks={parseMarkdown(r.body, { maxBlocks: 120 })} />
+                            <MarkdownView
+                              blocks={reviewShown(ri)}
+                              mirror={p.mirror}
+                              ctx={linkCtx}
+                              onRoute={p.onOpenRoute}
+                            />
                           </div>
                         )}
                       </div>

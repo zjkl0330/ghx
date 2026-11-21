@@ -5,6 +5,7 @@ import { rawBase } from '../lib/images'
 import { parseMarkdown, type Block } from '../lib/markdown'
 import { branchFromBlobUrl, type ReadmeFile } from '../lib/readme'
 import { MarkdownView } from './MarkdownView'
+import type { Route } from '../lib/routes'
 import { Icon } from './icons'
 
 /**
@@ -25,6 +26,8 @@ export function ProfileReadme(p: {
   /** 自己的账号才给编辑入口 */
   canEdit: boolean
   onEdit: (sha: string | undefined) => void
+  /** 自述里的 GitHub 链接在 App 内打开；不传就退回系统浏览器 */
+  onOpenRoute?: (r: Route) => void
 }) {
   const [file, setFile] = useState<ReadmeFile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -145,6 +148,7 @@ export function ProfileReadme(p: {
               basePath: 'README.md',
               mirror: p.mirror,
             }}
+            onRoute={p.onOpenRoute}
           />
         </div>
         {overflowing && !expanded && <div className="preadme-fade" />}

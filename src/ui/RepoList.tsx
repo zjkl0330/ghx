@@ -81,6 +81,8 @@ interface Props {
   descZh?: Record<string, string>
   onOpenRepo: (repo: Repo) => void
   updateVersion: string | null
+  /** 这条更新是不是预发布，用来在横幅上标「测试版」 */
+  updateBeta?: boolean
   onOpenUpdate: () => void
   onCreate: () => void
   canCreate: boolean
@@ -203,7 +205,10 @@ export function RepoList(p: Props) {
         {p.updateVersion && (
           <div className="updatebar">
             <Icon name="download" size={14} />
-            <span>新版本 v{p.updateVersion} 可用</span>
+            <span>
+              新版本 v{p.updateVersion}
+              {p.updateBeta ? '（测试版）' : ''} 可用
+            </span>
             <button onClick={p.onOpenUpdate}>查看</button>
           </div>
         )}

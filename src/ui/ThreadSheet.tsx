@@ -12,6 +12,11 @@ import {
   type ThreadComment,
 } from '../lib/notifications'
 import { MarkdownView } from './MarkdownView'
+import { TransHead } from './TransHead'
+import { useDocTranslation } from './useDocTranslation'
+import type { LinkContext } from '../lib/mdlink'
+import type { Route } from '../lib/routes'
+import type { TargetLang, TranslateChannel, TranslationStore } from '../lib/translate'
 import { PageState } from './PageHeader'
 import { Icon } from './icons'
 
@@ -30,6 +35,14 @@ export function ThreadSheet(p: {
   onClose: () => void
   /** 打开完整页面（Issue / PR 详情） */
   onOpenFull: () => void
+  /** 评论里的 GitHub 链接在 App 内打开；不传就退回系统浏览器 */
+  onOpenRoute?: (r: Route) => void
+  /** 设置里的「Issue 与 PR」开关：通知直读的评论跟着它 */
+  autoTranslate?: boolean
+  channel?: TranslateChannel
+  target?: TargetLang
+  azureKey?: string
+  store?: TranslationStore | null
   /** 标记完成，移出收件箱 */
   onDone: () => void
   onToast: (s: string) => void
@@ -43,6 +56,12 @@ export function ThreadSheet(p: {
   const meta = subjectMeta(p.thread.subject.type)
   const number = threadNumber(p.thread)
   const repo = p.thread.repository?.full_name ?? ''
+  // 通知一定绑着仓库：评论里的相对链接按仓库根 + HEAD 解析
+  const [owner, repoName] = repo.split('/')
+  const linkCtx: LinkContext | null =
+    owner && repoName
+      ? { owner, repo: repoName, branch: 'HEAD', basePath: '', mirror: p.mirror }
+      : null
 
   const load = useCallback(async () => {
     if (!p.client) {
@@ -71,6 +90,30 @@ export function ThreadSheet(p: {
     () => items.map((c) => parseMarkdown(c.body ?? '', { maxBlocks: 60 })),
     [items],
   )
+
+  const flatBlocks = useMemo(() => blocks.flat(), [blocks])
+  const trans = useDocTranslation({
+    enabled: !!p.autoTranslate,
+    channel: p.channel ?? 'auto',
+    target: p.target ?? 'zh-CN',
+    azureKey: p.azureKey ?? '',
+    store: p.store ?? null,
+  })
+  const [view, setView] = useState<'zh' | 'src'>('zh')
+
+  useEffect(() => {
+    trans.reset()
+    if (p.autoTranslate && flatBlocks.length > 0) void trans.translate(flatBlocks)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, p.autoTranslate])
+
+  /** 第 i 条评论显示哪份块：译文拍平了，按前面条目的块数切回来 */
+  const shown = (i: number) => {
+    const own = blocks[i] ?? []
+    if (view !== 'zh' || !trans.zh) return own
+    const start = blocks.slice(0, i).reduce((n, b) => n + b.length, 0)
+    return trans.zh.slice(start, start + own.length)
+  }
 
   function markDone() {
     if (busy) return
@@ -108,6 +151,20 @@ export function ThreadSheet(p: {
         />
 
         {items.length > 0 && (
+          <div style={{ padding: '0 2px' }}>
+            <TransHead
+              view={view}
+              onToggle={() => setView((v) => (v === 'zh' ? 'src' : 'zh'))}
+              ready={!!trans.zh}
+              busy={trans.busy}
+              enabled={!!p.autoTranslate}
+              onTranslate={() => void trans.translate(flatBlocks)}
+              error={trans.error}
+            />
+          </div>
+        )}
+
+        {items.length > 0 && (
           <div className="thread-list">
             {items.map((c, i) => (
               <div className="thread-comment" key={c.id}>
@@ -116,7 +173,7 @@ export function ThreadSheet(p: {
                   <span className="muted">{relTime(c.created_at)}</span>
                   {isFreshComment(c) && <span className="pill fresh">24 小时内</span>}
                 </div>
-                <MarkdownView blocks={blocks[i]} mirror={p.mirror} />
+                <MarkdownView blocks={shown(i)} mirror={p.mirror} ctx={linkCtx} onRoute={p.onOpenRoute} />
               </div>
             ))}
           </div>

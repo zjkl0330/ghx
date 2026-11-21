@@ -6,8 +6,9 @@ import type { Repo } from '../lib/types'
 import type { RepoTab } from '../lib/routes'
 import { REPO_TABS } from '../lib/routes'
 import { archiveCandidates } from '../lib/archive'
+import { copyText } from '../lib/clipboard'
 import { repoPageUrl } from '../lib/mirrors'
-import { openArchive, openExternal } from '../lib/update'
+import { openArchive } from '../lib/update'
 import { PageHeader, PageState } from './PageHeader'
 import { IssuesPage } from './IssuesPage'
 import { PullsPage } from './PullsPage'
@@ -176,9 +177,13 @@ export function RepoPage(p: {
               </button>
               <button
                 className="chip"
-                onClick={() => void openExternal(repoPageUrl(p.mirror, `${p.owner}/${p.repo}`))}
+                onClick={() =>
+                  void copyText(repoPageUrl(p.mirror, `${p.owner}/${p.repo}`)).then((ok) =>
+                    p.onToast(ok ? '仓库地址已复制' : '复制失败'),
+                  )
+                }
               >
-                <Icon name="external" size={12} /> 打开仓库
+                <Icon name="copy" size={12} /> 复制地址
               </button>
             </div>
           </div>

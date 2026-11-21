@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
+import { copyText } from '../lib/clipboard'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { buildDispatchInputs, parseDispatchInputs, validateInputs, type DispatchInput } from '../lib/actions-ext'
 import { getFile } from '../lib/code'
 import type { Repo, Workflow, WorkflowRun, WorkflowState } from '../lib/types'
-import { openExternal } from '../lib/update'
 import {
   eventLabel,
   formatDuration,
@@ -274,12 +274,16 @@ export function WorkflowSheet(p: Props) {
         <button
           className="btn ghost block"
           style={{ marginTop: 12 }}
-          onClick={() =>
-            void openExternal(githubUrlAt(p.mirror, `${p.repo.full_name}/actions/workflows/${p.workflow.path.split('/').pop()}`))
-          }
+          onClick={() => {
+            const url = githubUrlAt(
+              p.mirror,
+              `${p.repo.full_name}/actions/workflows/${p.workflow.path.split('/').pop()}`,
+            )
+            void copyText(url).then((ok) => p.onToast(ok ? '工作流地址已复制' : '复制失败'))
+          }}
         >
-          <Icon name="terminal" size={14} />
-          在网页查看完整日志
+          <Icon name="copy" size={14} />
+          复制工作流地址
         </button>
       </div>
     </div>

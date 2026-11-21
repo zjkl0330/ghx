@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
+import { copyText } from '../lib/clipboard'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { deleteRun, rerunFailedJobs, rerunJob } from '../lib/actions-ext'
 import type { Repo, WorkflowJob, WorkflowRun } from '../lib/types'
-import { openExternal } from '../lib/update'
 import {
   canCancel,
   canRerun,
@@ -252,9 +252,15 @@ export function RunSheet(p: Props) {
           <button
             className="btn ghost"
             style={{ flex: 1 }}
-            onClick={() =>
-              void openExternal(githubUrlAt(p.mirror, `${p.repo.full_name}/actions/runs/${p.run.id}`))
-            }
+            onClick={() => {
+              // 优先在 App 内的日志面板看；没有入口就复制地址，不踢浏览器
+              if (p.onOpenLogs) {
+                p.onOpenLogs()
+                return
+              }
+              const url = githubUrlAt(p.mirror, `${p.repo.full_name}/actions/runs/${p.run.id}`)
+              void copyText(url).then((ok) => p.onToast(ok ? '运行地址已复制' : '复制失败'))
+            }}
           >
             <Icon name="terminal" size={14} />
             看日志

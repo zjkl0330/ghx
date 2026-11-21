@@ -186,11 +186,27 @@ jobs:
           echo "已收集 ${TAG} 的发版说明（上一版 ${PREV:-无}，来源 $([ "$(git cat-file -t "$TAG")" = tag ] && echo tag注解 || echo 提交记录)）"
 
       # 只有打 v* tag 才发 release，普通 push 只留 artifact。
-      # 一律标预发布（prerelease: true）：这些包是「按需求改出来的中间版本」，
-      # 不该占用 /releases/latest、也不该在别人手机里弹更新。
-      # 真要发正式版时，去 GitHub 页面把这一个 release 取消勾选 Pre-release。
-      - name: Publish release
+      # 默认标预发布：日常按需求改出来的包不该占用 /releases/latest、
+      # 也不该在别人手机里弹更新。
+      # 要发正式版时，在 tag 注解里写一行 `<!-- release: stable -->`
+      # （HTML 注释，Release 页面渲染时看不见），下面据此取消 Pre-release。
+      - name: Decide release channel
         if: startsWith(github.ref, 'refs/tags/v')
+        id: channel
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}" >/dev/null 2>&1 || true
+          MSG="$(git for-each-ref --format='%(contents)' "refs/tags/$TAG")"
+          if printf '%s' "$MSG" | grep -qE 'release:[[:space:]]*stable'; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+            echo "→ 正式版：不勾选 Pre-release，并占用 /releases/latest"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "→ 预发布：不占用 /releases/latest"
+          fi
+
+      - name: Publish prerelease
+        if: startsWith(github.ref, 'refs/tags/v') && steps.channel.outputs.stable != 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: ghx ${{ steps.ver.outputs.version }}
@@ -198,3 +214,14 @@ jobs:
           files: ghx-${{ steps.ver.outputs.version }}-debug.apk
           fail_on_unmatched_files: true
           prerelease: true
+
+      - name: Publish stable release
+        if: startsWith(github.ref, 'refs/tags/v') && steps.channel.outputs.stable == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ghx ${{ steps.ver.outputs.version }}
+          body: ${{ steps.notes.outputs.body }}
+          files: ghx-${{ steps.ver.outputs.version }}-debug.apk
+          fail_on_unmatched_files: true
+          prerelease: false
+          make_latest: true

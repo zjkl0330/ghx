@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { mirrorImage } from '../lib/images'
 import type { Block } from '../lib/markdown'
 import type { LinkContext } from '../lib/mdlink'
 import type { Route } from '../lib/routes'
 import { tocAnchor } from '../lib/toc'
+import { MdImage } from './MdImage'
 import { SpanText } from './SpanText'
 
 /**
@@ -12,68 +11,6 @@ import { SpanText } from './SpanText'
  * 自述阅读器有自己的一套（带机翻与图片加速），这里只做「原样呈现」，
  * 避免把翻译状态塞进一个通用组件里。
  */
-
-/**
- * 正文里的图片。
- *
- * 传了 mirror 就优先走加速前缀：raw.githubusercontent.com 在国内经常
- * 连不上，而 <img> 在「还在等」的时候不会触发 onerror，界面就是一块空白。
- * 所以加速失败或超时都要能退回原图，两边都不行才显示占位。
- */
-function MdImage({ b, mirror }: { b: Extract<Block, { kind: 'img' }>; mirror?: string }) {
-  const accelerated = mirror ? mirrorImage(b.src, mirror) : null
-  const primary = accelerated ?? b.src
-  const fallback = accelerated ? b.src : null
-
-  const [src, setSrc] = useState(primary)
-  const [failed, setFailed] = useState(false)
-  const tried = useRef(false)
-
-  // 换了一张图（列表复用组件）要重置，否则会沿用上一张的失败状态
-  useEffect(() => {
-    setSrc(primary)
-    setFailed(false)
-    tried.current = false
-  }, [primary])
-
-  useEffect(() => {
-    if (failed || !fallback || tried.current) return
-    const t = window.setTimeout(() => {
-      if (tried.current) return
-      tried.current = true
-      setSrc(fallback)
-    }, 12_000)
-    return () => window.clearTimeout(t)
-  }, [failed, fallback, src])
-
-  if (failed) {
-    return (
-      <span className="md-img-fail" title={b.alt || b.src}>
-        [图片加载失败{b.alt ? `：${b.alt}` : ''}]
-      </span>
-    )
-  }
-  return (
-    <img
-      className={`md-img${b.badge ? ' badge' : ''}${b.inline ? ' inline' : ''}`}
-      src={src}
-      alt={b.alt}
-      loading="lazy"
-      style={{
-        ...(b.width ? { width: b.width } : {}),
-        ...(b.height ? { height: b.height } : {}),
-      }}
-      onError={() => {
-        if (!tried.current && fallback && fallback !== src) {
-          tried.current = true
-          setSrc(fallback)
-          return
-        }
-        setFailed(true)
-      }}
-    />
-  )
-}
 
 export function Table({
   b,

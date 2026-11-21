@@ -42,6 +42,14 @@ export type Route =
   | { kind: 'refs'; owner: string; repo: string }
   | { kind: 'actions'; owner: string; repo: string }
   | { kind: 'admin'; owner: string; repo: string }
+  /**
+   * GitHub 有、App 还没有的页面（releases / wiki / discussions / compare…）。
+   *
+   * 以前这类链接直接交给系统浏览器 —— 用户的原话是「GitHub 跳转不能跳到
+   * 浏览器网址」，所以改成一页说明：路径原样显示、可复制、能退回仓库，
+   * 就是不把当前界面顶掉。
+   */
+  | { kind: 'webOnly'; path: string }
 
 export type RepoTab = 'code' | 'issues' | 'pulls' | 'actions'
 
@@ -84,6 +92,8 @@ export function routeKey(r: Route): string {
     case 'issue':
     case 'pull':
       return `${r.kind}:${r.owner}/${r.repo}#${r.number}`
+    case 'webOnly':
+      return `webOnly:${r.path}`
     case 'code':
       return `code:${r.owner}/${r.repo}:${r.ref ?? ''}:${r.path}:${r.find ?? ''}`
     case 'edit':
@@ -148,6 +158,8 @@ export function routeLabel(r: Route): string {
       return '工作流'
     case 'admin':
       return '仓库设置'
+    case 'webOnly':
+      return '站内暂缺'
   }
 }
 

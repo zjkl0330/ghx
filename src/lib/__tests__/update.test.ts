@@ -6,9 +6,11 @@ import {
   formatBytes,
   formatDate,
   isNewer,
+  isPrerelease,
   parseRelease,
   parseVersion,
   pickApk,
+  pickBestRelease,
 } from '../update'
 
 describe('parseVersion', () => {
@@ -46,6 +48,19 @@ describe('compareVersions / isNewer', () => {
   it('isNewer 对坏版本号返回 false 而非崩溃', () => {
     expect(isNewer('abc', '0.1.0')).toBe(false)
     expect(isNewer('0.2.0', '0.1.0')).toBe(true)
+  })
+
+  it('同号时正式版算作高于预发布', () => {
+    // 测试通道用户不能被卡在 beta 上：1.2.0 发布后要能收到
+    expect(isNewer('1.2.0', '1.2.0-beta.1')).toBe(true)
+    expect(isNewer('1.2.0-beta.2', '1.2.0-beta.1')).toBe(false)
+    expect(isNewer('1.2.0-beta.1', '1.2.0')).toBe(false)
+  })
+
+  it('isPrerelease 只认版本号里的后缀', () => {
+    expect(isPrerelease('v1.2.3-beta.1')).toBe(true)
+    expect(isPrerelease('1.2.3')).toBe(false)
+    expect(isPrerelease('')).toBe(false)
   })
 })
 
@@ -210,6 +225,59 @@ describe('checkForUpdate', () => {
     expect(error).toContain('网络')
   })
 
+  it('测试通道读列表接口，并把预发布算进候选', async () => {
+    const fetchImpl = vi.fn(async () =>
+      res(200, [
+        {
+          tag_name: 'v0.3.0',
+          prerelease: false,
+          assets: [{ name: 'ghx-0.3.0.apk', size: 10, browser_download_url: 'u' }],
+        },
+        {
+          tag_name: 'v0.4.0-beta.1',
+          prerelease: true,
+          body: 'beta',
+          assets: [{ name: 'ghx-0.4.0-beta.1.apk', size: 10, browser_download_url: 'u2' }],
+        },
+      ]),
+    )
+    const { result, error } = await checkForUpdate({
+      current: '0.3.0',
+      channel: 'beta',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    expect(error).toBeNull()
+    expect(result?.channel).toBe('beta')
+    expect(result?.hasUpdate).toBe(true)
+    expect(result?.latest).toBe('0.4.0')
+    expect(result?.info?.prerelease).toBe(true)
+    const url = (fetchImpl.mock.calls[0] as unknown[])[0] as string
+    expect(url).toContain('/releases?per_page=30')
+  })
+
+  it('测试通道列表为空时按「无更新」处理，不报错', async () => {
+    const fetchImpl = vi.fn(async () => res(200, []))
+    const { result, error } = await checkForUpdate({
+      current: '0.3.0',
+      channel: 'beta',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    expect(error).toBeNull()
+    expect(result?.hasUpdate).toBe(false)
+    expect(result?.channel).toBe('beta')
+  })
+
+  it('正式通道仍只认 /latest，不把 beta 当更新', async () => {
+    const fetchImpl = vi.fn(async () => res(200, { tag_name: 'v9.9.9', prerelease: true, assets: [] }))
+    const { result } = await checkForUpdate({
+      current: '0.3.0',
+      channel: 'stable',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+    expect(result?.hasUpdate).toBe(false)
+    expect(result?.channel).toBe('stable')
+  })
+
   it('使用配置的 API 基址与仓库', async () => {
     const fetchImpl = vi.fn(async () => res(200, { tag_name: 'v0.2.0', assets: [] }))
     await checkForUpdate({
@@ -234,5 +302,48 @@ describe('格式化', () => {
   it('日期截到天', () => {
     expect(formatDate('2026-11-02T10:00:00Z')).toMatch(/^2026-11-0[12]$/)
     expect(formatDate('')).toBe('')
+  })
+})
+
+describe('pickBestRelease（测试通道）', () => {
+  const apk = [{ name: 'ghx.apk', size: 10, browser_download_url: 'u' }]
+  const rel = (tag: string, extra: Record<string, unknown> = {}) => ({
+    tag_name: tag,
+    assets: apk,
+    published_at: '2026-11-20T10:00:00Z',
+    ...extra,
+  })
+
+  it('按版本号取最高，不按接口返回顺序', () => {
+    // 补发的低版本 hotfix 会排在列表最前面，照单全收会把用户往回拽
+    const got = pickBestRelease(
+      [rel('v1.1.2'), rel('v1.2.0-beta.1', { prerelease: true }), rel('v1.1.9')],
+      'https://m',
+    )
+    expect(got?.tag).toBe('v1.2.0-beta.1')
+    expect(got?.prerelease).toBe(true)
+  })
+
+  it('接口没标 prerelease 时，按 tag 后缀也认得出预发布', () => {
+    expect(parseRelease(rel('v1.2.0-beta.1'), 'https://m', { allowPrerelease: true })?.prerelease).toBe(true)
+  })
+
+  it('同号时正式版优先于预发布', () => {
+    const got = pickBestRelease(
+      [rel('v1.2.0-beta.1', { prerelease: true }), rel('v1.2.0')],
+      'https://m',
+    )
+    expect(got?.tag).toBe('v1.2.0')
+    expect(got?.prerelease).toBe(false)
+  })
+
+  it('丢掉 draft 与无法解析的 tag', () => {
+    const got = pickBestRelease([rel('v9.9.9', { draft: true }), rel('nightly'), rel('v1.0.1')], 'https://m')
+    expect(got?.tag).toBe('v1.0.1')
+  })
+
+  it('全是不可用时返回 null', () => {
+    expect(pickBestRelease([], 'https://m')).toBeNull()
+    expect(pickBestRelease([rel('nightly')], 'https://m')).toBeNull()
   })
 })

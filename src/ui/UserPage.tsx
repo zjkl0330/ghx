@@ -3,6 +3,7 @@ import { GitHubError, type GitHubClient } from '../lib/api'
 import { getUser, isFollowing, setFollowing, userRepos, type UserProfile } from '../lib/repo-admin'
 import { compactNumber, relTime } from '../lib/format'
 import type { Repo } from '../lib/types'
+import type { Route } from '../lib/routes'
 import {
   USER_REPO_SORTS,
   displayName,
@@ -15,6 +16,7 @@ import {
   type UserRepoSort,
 } from '../lib/users'
 import { repoPageUrl } from '../lib/mirrors'
+import { copyText } from '../lib/clipboard'
 import { openExternal } from '../lib/update'
 import { PageHeader, PageState } from './PageHeader'
 import { ProfileReadme } from './ProfileReadme'
@@ -65,6 +67,8 @@ export function UserPage(p: {
   onEditReadme: (sha?: string) => void
   /** 看这个人的公开 Gist */
   onOpenGists: () => void
+  /** 主页自述里的 GitHub 链接在 App 内打开 */
+  onOpenRoute?: (r: Route) => void
   onToast: (s: string) => void
 }) {
   const [user, setUser] = useState<UserProfile | null>(null)
@@ -152,8 +156,10 @@ export function UserPage(p: {
   }
 
   function openHomepage() {
-    // 镜像能翻页就走镜像，否则退回自建站 —— 和仓库页同一套规则
-    void openExternal(repoPageUrl(p.mirror, p.login))
+    // 硬要求：不再把 GitHub 地址交给浏览器。这里只复制，去不去网页由用户决定
+    void copyText(repoPageUrl(p.mirror, p.login)).then((ok) =>
+      p.onToast(ok ? '主页地址已复制' : '复制失败'),
+    )
   }
 
   const facts = user ? userFacts(user) : []
@@ -205,8 +211,8 @@ export function UserPage(p: {
               <button className="icon-btn" onClick={p.onOpenGists} aria-label="这个人的 Gist">
                 <Icon name="file" size={16} />
               </button>
-              <button className="icon-btn" onClick={openHomepage} aria-label="在浏览器打开主页">
-                <Icon name="external" size={16} />
+              <button className="icon-btn" onClick={openHomepage} aria-label="复制主页地址">
+                <Icon name="link" size={16} />
               </button>
             </div>
 
@@ -274,6 +280,7 @@ export function UserPage(p: {
               mirror={p.mirror}
               canEdit={isSelf}
               onEdit={p.onEditReadme}
+              onOpenRoute={p.onOpenRoute}
             />
 
             <div className="usec">

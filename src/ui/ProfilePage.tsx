@@ -15,6 +15,8 @@ interface Props {
   version: string
   latestVersion: string | null
   hasUpdate: boolean
+  /** 可更新版本是预发布时，文案里标出「测试版」 */
+  latestIsBeta?: boolean
   onBack: () => void
   onOpenTokens: () => void
   onOpenSettings: () => void
@@ -194,7 +196,9 @@ export function ProfilePage(p: Props) {
             onClick={p.onCheckUpdate}
           >
             <Icon name={p.hasUpdate ? 'download' : 'refresh'} size={14} />
-            {p.hasUpdate ? `发现新版本 v${p.latestVersion}` : '检查更新'}
+            {p.hasUpdate
+              ? `发现新版本 v${p.latestVersion}${p.latestIsBeta ? '（测试版）' : ''}`
+              : '检查更新'}
           </button>
         </div>
 

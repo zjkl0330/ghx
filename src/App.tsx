@@ -115,7 +115,13 @@ import {
   type TranslationStore,
 } from './lib/translate'
 import { APP_VERSION, checkForUpdate, UPDATE_OWNER, UPDATE_REPO, type UpdateCheckResult } from './lib/update'
-import { readUpdateHint, writeUpdateHint } from './lib/update-pref'
+import {
+  readUpdateMode,
+  updateModeEnabled,
+  writeUpdateMode,
+  type UpdateChannel,
+  type UpdateMode,
+} from './lib/update-pref'
 import {
   apkTarget,
   archiveTarget,
@@ -176,6 +182,7 @@ import { GuardSheet, type GuardMode } from './ui/GuardSheet'
 import { Boundary } from './ui/Boundary'
 import { DashboardPage } from './ui/DashboardPage'
 import { GistPage } from './ui/GistPage'
+import { WebOnlyPage } from './ui/WebOnlyPage'
 import { GistsPage } from './ui/GistsPage'
 import { HotPage } from './ui/HotPage'
 import { IssuePage } from './ui/IssuePage'
@@ -427,13 +434,14 @@ export default function App() {
   probeRef.current = probe
   const mirrorAutoRef = useRef(mirrorAuto)
   mirrorAutoRef.current = mirrorAuto
-  const [updateHint, setUpdateHint] = useState(readUpdateHint)
+  /** 更新通道：正式版 / 测试版 / 关掉（v1.1.0 起由布尔开关升级为三档） */
+  const [updateMode, setUpdateMode] = useState<UpdateMode>(readUpdateMode)
   /*
    * 关了更新提示就别停在 'checking'：后台测速在等这个状态结束，
    * 一直 checking 会让它永远不跑（而测速跟提示是两回事）。
    */
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>(() =>
-    readUpdateHint() ? 'checking' : 'latest',
+    updateModeEnabled(readUpdateMode()) ? 'checking' : 'latest',
   )
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -1535,11 +1543,13 @@ export default function App() {
   }
 
   const runCheck = useCallback(
-    async (open: boolean) => {
+    async (open: boolean, channel?: UpdateChannel) => {
       if (open) setSheet('update')
       setUpdatePhase('checking')
       setUpdateError(null)
-      const { result, error } = await checkForUpdate({ mirror, current: APP_VERSION })
+      // 切换通道后要立刻用新通道重查，所以允许调用方显式指定，避免读到旧 state
+      const ch: UpdateChannel = channel ?? (updateMode === 'beta' ? 'beta' : 'stable')
+      const { result, error } = await checkForUpdate({ mirror, current: APP_VERSION, channel: ch })
       if (result) {
         setUpdateResult(result)
         setUpdateCheckedAt(result.checkedAt)
@@ -1551,7 +1561,7 @@ export default function App() {
         if (!open) setSheet((cur) => (cur === 'update' ? 'none' : cur))
       }
     },
-    [mirror],
+    [mirror, updateMode],
   )
 
   // 未读通知：解锁后拉一次，之后每 5 分钟刷一次。fine-grained 令牌直接跳过
@@ -1579,31 +1589,36 @@ export default function App() {
   // 关掉「更新提示」就一次都不查 —— 省请求，也省掉那个红点。
   useEffect(() => {
     if (!unlocked || silentChecked.current) return
-    if (!updateHint) {
+    if (!updateModeEnabled(updateMode)) {
       setUpdatePhase((cur) => (cur === 'checking' ? 'latest' : cur))
       return
     }
     silentChecked.current = true
     void runCheck(false)
-  }, [unlocked, runCheck, updateHint])
+  }, [unlocked, runCheck, updateMode])
 
   /**
-   * 开关「更新提示」。
+   * 切换「更新提示」：正式版 / 测试版 / 关掉。
    *
    * 关掉时顺手把结果清空：红点/横幅的数据源就是它，不清会留一条旧提示在界面上。
-   * 重新打开时如果这次会话还没查过，立刻补查一次，免得要等重启才生效。
+   * 换通道时立刻用新通道重查一次 —— 否则用户点了「测试版」还看着正式版的结果，
+   * 会以为没生效。
    */
-  const changeUpdateHint = useCallback(
-    (on: boolean) => {
-      setUpdateHint(on)
-      writeUpdateHint(on)
-      if (!on) {
+  const changeUpdateMode = useCallback(
+    (mode: UpdateMode) => {
+      setUpdateMode(mode)
+      writeUpdateMode(mode)
+      if (mode === 'off') {
         setUpdateResult(null)
         setUpdateError(null)
         setUpdatePhase('latest')
         return
       }
-      if (!updateResultRef.current) void runCheck(false)
+      setUpdateResult(null)
+      // 这次就算「已经静默查过」了：否则 updateMode 变化会再触发启动副作用，
+      // 一次切换发出两三个请求，白白消耗 API 配额
+      silentChecked.current = true
+      void runCheck(false, mode)
     },
     [runCheck],
   )
@@ -2303,6 +2318,7 @@ export default function App() {
             setSheet('detail')
           }}
           updateVersion={updateResult?.hasUpdate ? (updateResult.info?.version ?? null) : null}
+          updateBeta={!!updateResult?.info?.prerelease}
           onOpenUpdate={() => void runCheck(true)}
           sort={sort}
           onOpenSort={() => setSheet('sort')}
@@ -2392,6 +2408,7 @@ export default function App() {
           version={APP_VERSION}
           latestVersion={updateResult?.latest ?? null}
           hasUpdate={!!updateResult?.hasUpdate}
+          latestIsBeta={!!updateResult?.info?.prerelease}
           onBack={popTo}
           onOpenTokens={() => pushTo({ kind: 'tokens' })}
           onOpenSettings={() => pushTo({ kind: 'settings' })}
@@ -2422,8 +2439,9 @@ export default function App() {
           updateCheckedAt={updateCheckedAt}
           latestVersion={updateResult?.latest ?? null}
           hasUpdate={!!updateResult?.hasUpdate}
-          updateHint={updateHint}
-          onUpdateHint={changeUpdateHint}
+          latestIsBeta={!!updateResult?.info?.prerelease}
+          updateMode={updateMode}
+          onUpdateMode={changeUpdateMode}
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}
@@ -2447,8 +2465,15 @@ export default function App() {
             setScope(next)
             if (kvRef.current) void kvRef.current.set(TRANSLATE_SCOPE_KEY, JSON.stringify(next))
             showToast(
-              next.readme || next.desc
-                ? `翻译范围：${[next.readme ? '自述' : '', next.desc ? '简介' : ''].filter(Boolean).join('、')}`
+              next.readme || next.desc || next.release || next.issue
+                ? `翻译范围：${[
+                    next.readme ? '自述' : '',
+                    next.desc ? '简介' : '',
+                    next.release ? '发行说明' : '',
+                    next.issue ? 'Issue/PR' : '',
+                  ]
+                    .filter(Boolean)
+                    .join('、')}`
                 : '已关闭机翻',
             )
           }}
@@ -2637,9 +2662,16 @@ export default function App() {
           owner={route.owner}
           repo={route.repo}
           number={route.number}
+          mirror={mirror}
+          autoTranslate={scope.issue}
+          channel={translateChannel}
+          target={translateTarget}
+          azureKey={azureKey}
+          store={translateStore}
           onBack={popTo}
           onToast={showToast}
           onOpenUser={(login) => pushTo({ kind: 'user', login })}
+          onOpenRoute={pushTo}
         />
       )}
 
@@ -2650,9 +2682,16 @@ export default function App() {
           repo={route.repo}
           number={route.number}
           login={activeRecord?.login ?? null}
+          mirror={mirror}
+          autoTranslate={scope.issue}
+          channel={translateChannel}
+          target={translateTarget}
+          azureKey={azureKey}
+          store={translateStore}
           onBack={popTo}
           onToast={showToast}
           onOpenUser={(login) => pushTo({ kind: 'user', login })}
+          onOpenRoute={pushTo}
         />
       )}
 
@@ -2749,8 +2788,18 @@ export default function App() {
           client={client}
           thread={thread}
           mirror={mirror}
+          autoTranslate={scope.issue}
+          channel={translateChannel}
+          target={translateTarget}
+          azureKey={azureKey}
+          store={translateStore}
           onClose={() => setThread(null)}
           onToast={showToast}
+          onOpenRoute={(r) => {
+            // 和自述一样：弹层不收掉的话，压上去的页面会藏在它下面
+            setThread(null)
+            pushTo(r)
+          }}
           onOpenFull={() => {
             const next = targetRoute(thread)
             setThread(null)
@@ -2799,6 +2848,16 @@ export default function App() {
         />
       )}
 
+      {route?.kind === 'webOnly' && (
+        <WebOnlyPage
+          path={route.path}
+          mirror={mirror}
+          onBack={popTo}
+          onToast={showToast}
+          onOpenRepo={(owner, repo) => pushTo({ kind: 'repo', owner, repo, tab: 'code' })}
+        />
+      )}
+
       {route?.kind === 'gist' && (
         <GistPage
           client={client}
@@ -2831,6 +2890,7 @@ export default function App() {
             if (owner && repo) pushTo({ kind: 'repo', owner, repo, tab: 'code' })
           }}
           onOpenGists={() => pushTo({ kind: 'gists', login: route.login })}
+          onOpenRoute={pushTo}
           onEditReadme={(sha) => {
             // 没有 sha 说明 README 还不存在，交给编辑器走「新建」分支
             pushTo({
@@ -3005,6 +3065,11 @@ export default function App() {
           onOpenReleases={() => {
             setSubReturn('detail')
             setSheet('releases')
+          }}
+          onOpenRoute={(r) => {
+            // 弹层先收，再压路由：简介里的链接要真的落到页面上
+            setSheet('none')
+            pushTo(r)
           }}
           onOpenForks={() => {
             setSubReturn('detail')

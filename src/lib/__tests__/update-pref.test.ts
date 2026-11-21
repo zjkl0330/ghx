@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { UPDATE_HINT_KEY, readUpdateHint, writeUpdateHint } from '../update-pref'
+import {
+  UPDATE_HINT_KEY,
+  UPDATE_MODE_KEY,
+  readUpdateMode,
+  updateModeEnabled,
+  writeUpdateMode,
+} from '../update-pref'
 
 /** node 环境没有 localStorage，按需塞一个假的再拆掉 */
 function withStorage(
@@ -29,33 +35,56 @@ afterEach(() => {
   delete globalThis.localStorage
 })
 
-describe('更新提示开关', () => {
-  it('默认开启：没存过就是 on', () => {
+describe('更新通道', () => {
+  it('默认正式版：没存过就是 stable', () => {
     withStorage()
-    expect(readUpdateHint()).toBe(true)
+    expect(readUpdateMode()).toBe('stable')
+    expect(updateModeEnabled('stable')).toBe(true)
   })
 
-  it('关掉后读回来是 false，再打开又变 true', () => {
+  it('三档都能存能读，关掉与测试版互不影响', () => {
     const map = withStorage()
-    writeUpdateHint(false)
-    expect(map.get(UPDATE_HINT_KEY)).toBe('off')
-    expect(readUpdateHint()).toBe(false)
+    writeUpdateMode('beta')
+    expect(map.get(UPDATE_MODE_KEY)).toBe('beta')
+    expect(readUpdateMode()).toBe('beta')
 
-    writeUpdateHint(true)
-    expect(map.get(UPDATE_HINT_KEY)).toBe('on')
-    expect(readUpdateHint()).toBe(true)
+    writeUpdateMode('off')
+    expect(readUpdateMode()).toBe('off')
+    expect(updateModeEnabled('off')).toBe(false)
+
+    writeUpdateMode('stable')
+    expect(readUpdateMode()).toBe('stable')
   })
 
-  it('值被写坏也不当关闭处理，退回默认开启', () => {
-    withStorage({ [UPDATE_HINT_KEY]: 'yes-please' })
-    expect(readUpdateHint()).toBe(true)
+  it('写新键时同步旧键，回退到旧版本不会语义突变', () => {
+    const map = withStorage()
+    writeUpdateMode('beta')
+    expect(map.get(UPDATE_HINT_KEY)).toBe('on')
+    writeUpdateMode('off')
+    expect(map.get(UPDATE_HINT_KEY)).toBe('off')
+  })
+
+  it('老用户只存过旧开关时按它迁移', () => {
+    withStorage({ [UPDATE_HINT_KEY]: 'off' })
+    expect(readUpdateMode()).toBe('off')
+
+    withStorage({ [UPDATE_HINT_KEY]: 'on' })
+    expect(readUpdateMode()).toBe('stable')
+  })
+
+  it('新键写坏时退回旧键，再退回默认值', () => {
+    withStorage({ [UPDATE_MODE_KEY]: 'sometimes' })
+    expect(readUpdateMode()).toBe('stable')
+
+    withStorage({ [UPDATE_MODE_KEY]: 'sometimes', [UPDATE_HINT_KEY]: 'off' })
+    expect(readUpdateMode()).toBe('off')
   })
 
   it('存储不可用时读写都不抛错（隐私模式）', () => {
     withStorage({}, { throwGet: true })
-    expect(readUpdateHint()).toBe(true)
+    expect(readUpdateMode()).toBe('stable')
 
     withStorage({}, { throwSet: true })
-    expect(() => writeUpdateHint(false)).not.toThrow()
+    expect(() => writeUpdateMode('beta')).not.toThrow()
   })
 })

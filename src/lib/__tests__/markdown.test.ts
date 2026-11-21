@@ -489,3 +489,34 @@ describe('标题锚点', () => {
     expect(blocks.filter((b) => b.kind === 'h')).toHaveLength(0)
   })
 })
+
+describe('裸 URL 链接化（parseInline）', () => {
+  it('正文里的 https 地址变成可点的 link span', () => {
+    const spans = parseInline('详见 https://github.com/a/b/issues/12 这条')
+    const link = spans.find((s) => s.t === 'link')
+    expect(link).toMatchObject({ v: 'https://github.com/a/b/issues/12', href: 'https://github.com/a/b/issues/12' })
+  })
+
+  it('中文标点不并进地址', () => {
+    const spans = parseInline('地址是 https://a.b/c，后面还有字')
+    expect(spans.find((s) => s.t === 'link')).toMatchObject({ v: 'https://a.b/c', href: 'https://a.b/c' })
+    expect(spans.some((s) => s.t === 'text' && s.v.includes('后面'))).toBe(true)
+  })
+
+  it('句尾英文句读不算地址的一部分', () => {
+    const spans = parseInline('see https://a.b/c.')
+    expect(spans.find((s) => s.t === 'link')).toMatchObject({ v: 'https://a.b/c' })
+  })
+
+  it('已经是 Markdown 链接的不再重复切', () => {
+    const spans = parseInline('[文档](https://a.b/c)')
+    expect(spans.filter((s) => s.t === 'link')).toHaveLength(1)
+    expect(spans[0]).toMatchObject({ t: 'link', v: '文档', href: 'https://a.b/c' })
+  })
+
+  it('代码片段里的地址保持原样', () => {
+    const spans = parseInline('`curl https://a.b/c`')
+    expect(spans).toHaveLength(1)
+    expect(spans[0]).toMatchObject({ t: 'code' })
+  })
+})
