@@ -6022,3 +6022,127 @@ button.ustat:active {
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
 }
+
+/* ================= 热门页 APK 商店（komi-store 精选目录） ================= */
+
+.store {
+  flex: none;
+}
+
+.store-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 16px 6px;
+}
+
+.store-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.store-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-rail {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 2px 16px 10px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+.store-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.store-card {
+  scroll-snap-align: start;
+  flex: none;
+  width: 128px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 10px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 96px;
+}
+
+.store-card:active {
+  background: var(--surface-2);
+}
+
+.store-card-skel {
+  pointer-events: none;
+}
+
+.store-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--surface-2);
+  flex: none;
+}
+
+.store-letter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text);
+  text-transform: uppercase;
+  background: linear-gradient(135deg, #1f6feb, #8957e5);
+}
+
+.store-name {
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-tag {
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 20px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.store-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.store-desc {
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

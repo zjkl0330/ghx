@@ -64,6 +64,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block、图片路径与镜像 |
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
 | `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策、审计、领域类型 |
+| `apkstore.ts` | 热门页「APK 商店」横滑区：komi-store 精选安卓应用目录（静态 JSON，非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
 | `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
 | `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked` |
@@ -543,6 +544,15 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - 看板的「N 已归档」可点，直接跳归档档。
   - 详情页文案方向反了：已归档时副标题还写「归档后仓库只读」（读起来像正要归档），改成「恢复后可继续提交、开 Issue」。
   - `verify-archived.py` 九段，含完整闭环：详情里归档 →「全部」4 变 3 → 归档档涨到 3 → 里面找得到 → 入口变「取消归档」。单测 1279 → 1285。
+
+- **v0.9.4**：热门页顶部插入「APK 商店」横滑区（komi-store 精选目录）。
+  - **数据不是 GitHub API**：komi-store（原 GitHub Store）把每天轮换的安卓应用精选目录缓存在公开仓库 `komi-store/komi-store-backend-data` 的 `cached-data/feed/android.json`（2026-11-21 核实 150 条，`latestReleaseTag` / `hasInstallersAndroid` 全有值）。静态 JSON、免令牌、不占 api 配额，游客也能看 —— 与热门页「公开数据匿名可看」定位一致。
+  - **线路候选**：自建站队首（实测 200 且会顺手把 feed 里的 `avatars.githubusercontent.com` 改写成镜像域名，头像白捡一层加速）→ 官方 raw → gh-proxy 系，保序去重；一条线路超时 8s 收敛 null 换下一条，绝不全断。**全部失败时回退未过期缓存**（3 天内可用），而不是整块消失。
+  - **编排**：区块只在热门模式出现（搜索时不占屏），挂在时间范围 seg 与语言 chips 之下、榜单之上；横滑卡片（首屏 12 条）显示首字母/头像、名称、版本 tag、紧凑星数、两行简介；点卡片走 `apkAppToRepo` 进现有仓库详情，装包复用发行版下载链路，零特例。
+  - **头像坑**：`<img>` 等待响应期间不触发 onerror（RULES 记过），挂起也按失败算 —— 8 秒没加载出来就换首字母，不让空白方块挂首页。
+  - komi-store 的时间是 `2026-11-20 14:36:03+00`（空格 + 双位时区），不是 ISO：`normalizeTs` 补全后再 `Date.parse`，垃圾输入一律 null。
+  - `verify-apkstore.py` 八段（mock feed）+ 真实 feed 复验（12 张卡、首字母兜底全对）+ 挂起头像回退实测。单测 1285 → 1314。
+  - **边界**：真机未验；komi-store 目录是第三方维护的精选（非官方 trending），若上游改版/仓库消失，区块会静默隐藏，不影响榜单。
 
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
