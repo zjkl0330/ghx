@@ -47,10 +47,12 @@ describe('unguardLinks', () => {
     expect(unguardLinks('整段译文没有任何占位符', ['https://x'])).toBeNull()
   })
 
-  it('通道吞了部分占位符时，活下来的照常回填', () => {
+  it('通道吞了部分占位符时，整段降级纯文字 —— 不按顺序硬配错地址', () => {
     const t = `开头${GUARD_L}被保留的${GUARD_R}结尾`
     const r = unguardLinks(t, ['https://a', 'https://b'])
-    expect(r!.spans.filter((s) => s.t === 'link')).toHaveLength(1)
+    // 2 个地址只活了 1 个 token：硬配会把「被保留的」配上 https://a，
+    // 但它未必是第一条链接的标签 —— 错位的链接比死文字更糟
+    expect(r).toBeNull()
   })
 
   it('占位符比地址多时，多余的标签降级成文字', () => {

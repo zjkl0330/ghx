@@ -19,15 +19,21 @@ import { BUILTIN_MIRRORS, rawUrlAt, selfMirrorBase } from './mirrors'
 import type { KV } from './storage'
 import type { Repo } from './types'
 
-/** komi-store-backend-data 仓库里的 feed 文件路径（owner/repo/ref/目录） */
+/** komi-store-backend-data 仓库里的 feed 文件（按优先级合并，去重保序） */
 const FEED_OWNER = 'komi-store'
 const FEED_REPO = 'komi-store-backend-data'
 const FEED_REF = 'main'
-const FEED_PATH = 'cached-data/feed/android.json'
+/** 每日轮换精选（150 条恒有 tag）、最热门榜（~143 按星排序）、新发行榜（~43）。
+ *  只用轮换精选时目录每天就 150 个应用，用户嫌少 —— 三个源合并去重后 ~300。 */
+export const APK_STORE_SOURCES: readonly string[] = [
+  'feed/android.json',
+  'most-popular/android.json',
+  'new-releases/android.json',
+]
 
-/** 官方 raw 地址，恒在候选表末尾 */
+/** 官方 raw 地址（首源），恒在候选表末尾 */
 export const APK_STORE_OFFICIAL_URL =
-  `https://raw.githubusercontent.com/${FEED_OWNER}/${FEED_REPO}/${FEED_REF}/${FEED_PATH}`
+  `https://raw.githubusercontent.com/${FEED_OWNER}/${FEED_REPO}/${FEED_REF}/cached-data/${APK_STORE_SOURCES[0]}`
 
 /** 内置 url 风格公共代理（不含官方直连），头像改写与 feed 候选共用 */
 export function urlProxyBases(): string[] {
@@ -43,23 +49,24 @@ export function urlProxyBases(): string[] {
  * 略慢但更不容易被代理站限流；真机网络差时自建站已经兜住绝大多数场景。
  */
 export function apkStoreCandidates(
+  path: string = APK_STORE_SOURCES[0],
   proxies: string[] = urlProxyBases(),
   selfBase: string = selfMirrorBase(),
 ): string[] {
+  const feedPath = path.startsWith('cached-data/') ? path : `cached-data/${path}`
+  const official = `https://raw.githubusercontent.com/${FEED_OWNER}/${FEED_REPO}/${FEED_REF}/${feedPath}`
   const urls: string[] = []
   const self = selfBase.replace(/\/+$/, '')
   if (self) {
     // 自建地址就是官方 raw 本身时别产出 path 风格的重复项，直接算官方
     const isOfficialSelf = /^https?:\/\/raw\.githubusercontent\.com$/i.test(self)
     urls.push(
-      isOfficialSelf
-        ? APK_STORE_OFFICIAL_URL
-        : rawUrlAt(self, FEED_OWNER, FEED_REPO, FEED_REF, FEED_PATH),
+      isOfficialSelf ? official : rawUrlAt(self, FEED_OWNER, FEED_REPO, FEED_REF, feedPath),
     )
   }
-  urls.push(APK_STORE_OFFICIAL_URL)
+  urls.push(official)
   for (const p of proxies) {
-    if (p) urls.push(rawUrlAt(p, FEED_OWNER, FEED_REPO, FEED_REF, FEED_PATH))
+    if (p) urls.push(rawUrlAt(p, FEED_OWNER, FEED_REPO, FEED_REF, feedPath))
   }
   const seen = new Set<string>()
   const out: string[] = []
@@ -168,19 +175,26 @@ export function apkPlatforms(d: Record<string, unknown>): ApkPlatform[] {
 
 /**
  * 头像候选线路：原图恒在队首（海外/能直连时最准），
- * avatars.githubusercontent.com 在国内经常整站不通，所以按 url 风格
- * 公共代理逐个改写垫后（2026-11-21 实测 gh-proxy.com 代理头像 200）。
+ * avatars.githubusercontent.com 在国内经常整站不通，所以按候选垫后：
+ * ① 自建站的专用头像域名（avatars-githubusercontent-com-{host}，2026-11-21 实测 200）；
+ * ② url 风格公共代理逐个改写（gh-proxy.com 代理头像 200，ghfast/ghproxy.net 403）。
  * 原图若已被自建站改写成镜像域名就直接单线返回，不再二次包壳。
  */
-export function avatarSources(url: string, proxies: string[] = urlProxyBases()): string[] {
+export function avatarSources(
+  url: string,
+  proxies: string[] = urlProxyBases(),
+  selfBase: string = selfMirrorBase(),
+): string[] {
   const u = (url ?? '').trim()
   if (!u) return []
   const out: string[] = [u]
-  if (/^https?:\/\/avatars\.githubusercontent\.com\//i.test(u)) {
-    const seen = new Set([u.toLowerCase()])
+  const m = /^https?:\/\/avatars\.githubusercontent\.com(\/\S*)?$/i.exec(u)
+  if (m) {
+    const host = selfBase.replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+    if (host) out.push(`https://avatars-githubusercontent-com-${host}${m[1] ?? ''}`)
+    const seen = new Set(out.map((x) => x.toLowerCase()))
     for (const p of proxies) {
-      const base = p.replace(/\/+$/, '')
-      const candidate = base ? `${base}/${u}` : ''
+      const candidate = `${p.replace(/\/+$/, '')}/${u}`
       if (candidate && !seen.has(candidate.toLowerCase())) {
         seen.add(candidate.toLowerCase())
         out.push(candidate)
@@ -207,7 +221,9 @@ export function sanitizeApkApps(raw: unknown): ApkApp[] {
     seen.add(fullName.toLowerCase())
     const ownerLogin = str((d.owner as Record<string, unknown> | undefined)?.login) ??
       fullName.split('/')[0]
-    const ownerAvatar = str((d.owner as Record<string, unknown> | undefined)?.avatarUrl) ?? ''
+    // 新 schema 头像嵌在 owner 里；旧 schema（设备缓存、上游回退）在顶层 —— 都认
+    const ownerAvatar =
+      str((d.owner as Record<string, unknown> | undefined)?.avatarUrl) ?? str(d.avatarUrl) ?? ''
     const tag = str(d.latestReleaseTag) ?? str(d.platformReleases && typeof d.platformReleases === 'object'
       ? (d.platformReleases as Record<string, Record<string, unknown>>).android?.tag
       : undefined)
@@ -218,14 +234,13 @@ export function sanitizeApkApps(raw: unknown): ApkApp[] {
       avatarUrl: ownerAvatar,
       description: str(d.description),
       language: str(d.language),
-      stars: num(d.stargazersCount),
+      stars: num(d.stargazersCount) || num(d.stars),
       forks: num(d.forksCount),
       latestTag: tag,
       pushedAt: normalizeTs(d.pushedAt),
       topics: Array.isArray(d.topics) ? d.topics.filter((t): t is string => typeof t === 'string') : [],
       platforms: apkPlatforms(d),
-    })
-  }
+    })  }
   return out
 }
 
@@ -291,7 +306,7 @@ export function apkStoreUsable(store: ApkStore | null, now: number = Date.now())
 
 /* ------------------------------- 缓存与拉取 ------------------------------ */
 
-const STORE_KEY = 'ghx.apkstore.v1'
+const STORE_KEY = 'ghx.apkstore.v2'
 
 const memStore: { v: ApkStore | null } = { v: null }
 
@@ -331,6 +346,30 @@ export const defaultApkStoreHttp: ApkStoreHttp = async (url) => {
 }
 
 /**
+ * 多源合并：按传入顺序拼接，同仓去重保首条；rotation 取第一个有值的，
+ * at 取各源最新（保证新鲜度判断不被最旧的源拖死）。
+ */
+export function mergeApkStores(list: (ApkStore | null)[]): ApkStore | null {
+  const ok = list.filter((s): s is ApkStore => !!s && s.apps.length > 0)
+  if (ok.length === 0) return null
+  const seen = new Set<string>()
+  const apps: ApkApp[] = []
+  for (const s of ok) {
+    for (const a of s.apps) {
+      const k = a.fullName.toLowerCase()
+      if (seen.has(k)) continue
+      seen.add(k)
+      apps.push(a)
+    }
+  }
+  return {
+    at: Math.max(...ok.map((s) => s.at)),
+    rotation: ok.find((s) => s.rotation)?.rotation ?? '',
+    apps,
+  }
+}
+
+/**
  * 顺序尝试候选线路，第一条给出合法 JSON 的赢。
  * 全部失败返回 null（调用方决定是否回退到过期缓存）。
  */
@@ -346,6 +385,21 @@ export async function fetchApkStore(
     if (store) return store
   }
   return null
+}
+
+/**
+ * 三个目录源各走各的候选线路，拿到多少算多少，合并去重。
+ * 单个源挂了不拖累其它源 —— 轮换精选挂了还有最热门榜顶着。
+ */
+export async function fetchApkStoreMulti(
+  sources: readonly string[] = APK_STORE_SOURCES,
+  http: ApkStoreHttp = defaultApkStoreHttp,
+  now: number = Date.now(),
+): Promise<ApkStore | null> {
+  const results = await Promise.all(
+    sources.map((path) => fetchApkStore(apkStoreCandidates(path), http, now)),
+  )
+  return mergeApkStores(results)
 }
 
 export async function saveApkStore(kv: KV | null, store: ApkStore): Promise<void> {
@@ -386,8 +440,7 @@ export async function loadApkStore(
       if (apkStoreFresh(stored, now)) return stored
     }
   }
-  const bases = opts.bases ?? apkStoreCandidates()
-  const fetched = await fetchApkStore(bases, opts.http, now)
+  const fetched = await fetchApkStoreMulti(APK_STORE_SOURCES, opts.http, now)
   if (fetched) {
     await saveApkStore(kv, fetched)
     return fetched

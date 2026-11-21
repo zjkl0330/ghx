@@ -63,12 +63,16 @@ export interface UnguardedText {
  *
  * 容错都是「宁可少链接，不可出怪字」：
  * - token 比地址多（段落里混进了正文自带的 ⟦⟧）→ 文字保留，不当链接；
- * - token 比地址少（通道吞了几个）→ 有几个回几个；
+ * - token 比地址少（通道吞了几个）→ 整段降级纯文字，**不按顺序硬配** ——
+ *   幸存的 token 配上错位的地址比死链接更糟（点了跳错页）；
  * - 孤立的 ⟦/⟧ 一律清除。
  * 一个 token 都没有时返回 null，调用方退回纯译文。
  */
 export function unguardLinks(translated: string, hrefs: string[]): UnguardedText | null {
   const re = /\u27E6([^\u27E6\u27E7]*)\u27E7/g
+  const total = (translated.match(re) ?? []).length
+  // 通道吞了占位符：按出现顺序硬配必然错位，宁可整段退回纯文字
+  if (total < hrefs.length) return null
   const spans: Span[] = []
   const pushText = (raw: string) => {
     const v = raw.replace(/[\u27E6\u27E7]/g, '').replace(/[ \t]+/g, ' ')

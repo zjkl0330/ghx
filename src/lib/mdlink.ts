@@ -16,6 +16,7 @@
 
 import { githubUrlAt } from './mirrors'
 import type { Route } from './routes'
+import type { Span } from './markdown'
 
 /** 链接动作：打开外部地址，或在自述内部滚动到某个标题。
  *  route 有值时说明这条 GitHub 链接能在 App 内直接打开，调用方优先走它。 */
@@ -201,4 +202,39 @@ export function isRepoPath(href: string): boolean {
   if (!s) return false
   if (/^https?:\/\//i.test(s)) return /^https?:\/\/(?:www\.)?github\.com\//i.test(s)
   return !s.startsWith('#') && !/^(?:mailto:|tel:)/i.test(s)
+}
+
+/**
+ * 纯文本里的 http(s) URL 提取成链接 spans。
+ *
+ * 简介不是 Markdown，没有行内语法，以前 URL 只能当死文字看（机翻后尤其
+ * 明显 —— 译文里 URL 原样保留却点不动）。这里把 URL 切出来做成 link span，
+ * 渲染层照常走 SpanText 的链接分支。收尾标点不算 URL 的一部分，
+ * 免得「https://a.b。」点了带句号。
+ */
+export function linkifyUrls(text: string): Span[] {
+  if (!text) return [{ t: 'text', v: '' }]
+  // URL 主体的字符集：排除空白、CJK 汉字与中日韩标点（简介里「https://a.b/c，后续」
+  // 这种中英文混排最常见，不能让 \S+ 把整句都吞成 URL）
+  const re = /https?:\/\/[^\s\u4E00-\u9FFF\u3000-\u303F\uFF00-\uFFEF\u2010-\u2027"'<>()[\]{}]+/gi
+  const spans: Span[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  let links = 0
+  while ((m = re.exec(text))) {
+    let url = m[0]
+    // ASCII 句读收尾不认账：句号、逗号、分号、右括号引号
+    const tail = url.match(/[.,;:!?)'"]+$/)
+    if (tail) {
+      url = url.slice(0, url.length - tail[0].length)
+      re.lastIndex = m.index + url.length
+    }
+    if (m.index > last) spans.push({ t: 'text', v: text.slice(last, m.index) })
+    spans.push({ t: 'link', v: url, href: url })
+    links += 1
+    last = m.index + url.length
+  }
+  if (links === 0) return [{ t: 'text', v: text }]
+  if (last < text.length) spans.push({ t: 'text', v: text.slice(last) })
+  return spans
 }

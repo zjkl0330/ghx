@@ -2,7 +2,9 @@
 
 用户反馈：图标全成了首字母（旧代码 ok 初始为 false、img 不渲染就永远
 不触发 onLoad，头像从未真正加载过）；且没有平台归属（EXE/macOS/安卓/Linux）。
-v0.9.7 要证：
+v0.9.7/v0.9.9 要证：
+  · 三个目录源合并去重（feed 10 + 最热门 2 + 新发行 1 = 13 个应用）；
+  · 旧 schema 条目（顶层 stars/avatarUrl、tag 走 platformReleases 兜底）正确解析；
 
   · 卡片头像真的加载出 <img>（原图线路被掐死后，gh-proxy 改写线路接管）；
   · 卡片带平台小标（安卓/Win/macOS/Linux），feed 的 hasInstallers* 解析正确；
@@ -30,7 +32,7 @@ BASE = 'http://127.0.0.1:4173/'
 OUT = '/workspace/ghx/docs/screenshots'
 OWNER = 'zjkl0330'
 FEED_URL = re.compile(
-    r'.*komi-store-backend-data.*cached-data/feed/android\.json'
+    r'.*komi-store-backend-data.*android\.json'
 )
 AVATAR_ORIGINAL = re.compile(r'^https://avatars\.githubusercontent\.com/')
 AVATAR_PROXY = re.compile(r'^https://gh-proxy\.com/https://avatars\.githubusercontent\.com/')
@@ -68,8 +70,37 @@ def item(i, full, name, stars, tag, desc, lang, plats):
 
 ALL4 = ('android', 'windows', 'macos', 'linux')
 
+def item_old_schema(i, full, name, stars, tag, desc, lang, plats):
+    """旧 schema 条目：星数/头像在顶层、无 owner 对象、tag 只在 platformReleases 里"""
+    flags = {f'hasInstallers{p.capitalize()}': (p in plats) for p in ('android', 'windows', 'macos', 'linux')}
+    return {
+        'id': 500 + i, 'name': name, 'fullName': full, 'avatarUrl': f'https://avatars.githubusercontent.com/u/{500 + i}?v=4',
+        'description': desc, 'defaultBranch': 'main',
+        'stars': stars, 'forksCount': stars // 10,
+        'licenseSpdxId': 'MIT', 'language': lang, 'topics': [],
+        'pushedAt': '2026-11-19 08:00:00+00',
+        'latestReleaseTag': None,
+        'platformReleases': {'android': {'tag': tag, 'publishedAt': '2026-11-01T08:00:00Z'}},
+        **flags,
+    }
+
+
+# most-popular：2 个与 feed 重复（验证去重）+ 2 个新（其中 openclaw 是旧 schema）
+POP_APPS = [
+    item(0, 'localsend/localsend', 'localsend', 60000, 'v1.17.0', '跨设备互传文件与消息，详见 https://github.com/localsend/localsend。', 'Dart', ALL4),
+    item(5, 'godotengine/godot', 'godot', 120000, '4.5.1', '跨平台游戏引擎', 'C++', ALL4),
+    item_old_schema(0, 'openclaw/openclaw', 'openclaw', 394559, 'v2026.8.2', 'The AI that really does things', 'TypeScript', ('android',)),
+    item_old_schema(1, 'termux/termux', 'termux', 22000, 'v0.119.0', 'Android terminal emulator', 'Java', ('android', 'windows')),
+]
+NEW_APPS = [
+    item_old_schema(2, 'wailsapp/wails', 'wails', 33000, 'v2.11.2', 'Build desktop apps with Go', 'Go', ('android', 'macos', 'linux')),
+]
+POP_BODY = json.dumps({'category': 'most-popular', 'platform': 'android', 'repositories': POP_APPS})
+NEW_BODY = json.dumps({'category': 'new-releases', 'platform': 'android', 'repositories': NEW_APPS})
+# 合并预期：feed 10 + pop 新 2 + new 新 1 = 13；平台：安卓 13 / Win 8 / macOS 7 / Linux 8
+
 APPS = [
-    item(0, 'localsend/localsend', 'localsend', 60000, 'v1.17.0', '跨设备互传文件与消息', 'Dart', ALL4),
+    item(0, 'localsend/localsend', 'localsend', 60000, 'v1.17.0', '跨设备互传文件与消息，详见 https://github.com/localsend/localsend。', 'Dart', ALL4),
     item(1, 'immich-app/immich', 'immich', 55000, 'v2.2.0', '自托管照片备份', 'TypeScript', ('android', 'linux')),
     item(2, 'topjohnwu/Magisk', 'Magisk', 50000, 'v29.0', '安卓 root 套件', 'Kotlin', ('android',)),
     item(3, 'TeamNewPipe/NewPipe', 'NewPipe', 35000, 'v0.27.0', '轻量 YouTube 前端', 'Java', ('android',)),
@@ -89,7 +120,7 @@ REPOS = [
         'id': 1, 'name': 'ghx', 'full_name': f'{OWNER}/ghx',
         'owner': {'login': OWNER, 'avatar_url': ''},
         'private': False, 'visibility': 'public', 'archived': False, 'disabled': False,
-        'description': '一个 GitHub 客户端', 'language': 'TypeScript',
+        'description': '一个 GitHub 客户端，主页见 https://github.com/zjkl0330/ghx。', 'language': 'TypeScript',
         'stargazers_count': 42, 'forks_count': 3,
         'pushed_at': '2026-11-18T10:00:00Z', 'updated_at': '2026-11-18T10:00:00Z',
         'created_at': '2025-06-01T08:00:00Z', 'default_branch': 'main',
@@ -170,11 +201,30 @@ def store_errors(errors):
     ]
 
 
+AVATAR_SELF = re.compile(r'^https://avatars-githubusercontent-com-')
+
 def avatar_routes(pg):
-    """头像线路编排：原图域名一律掐死（模拟国内直连 avatars 不通），
+    """头像线路编排：原图与自建头像域名一律掐死（模拟直连不通），
     gh-proxy 改写线路返回 1x1 PNG（模拟代理成功）。后注册的规则优先。"""
     pg.route(AVATAR_ORIGINAL, lambda r: r.abort())
+    pg.route(AVATAR_SELF, lambda r: r.abort())
     pg.route(AVATAR_PROXY, lambda r: r.fulfill(status=200, content_type='image/png', body=TINY_PNG))
+
+
+def feed_routes(pg, ok=True):
+    """三个目录源按 URL 分发；ok=False 时全部 404"""
+    def route(r):
+        if not ok:
+            r.fulfill(status=404, content_type='text/plain', body='not found')
+            return
+        u = r.request.url
+        if 'most-popular/android.json' in u:
+            r.fulfill(status=200, content_type='application/json', body=POP_BODY)
+        elif 'new-releases/android.json' in u:
+            r.fulfill(status=200, content_type='application/json', body=NEW_BODY)
+        else:
+            r.fulfill(status=200, content_type='application/json', body=FEED_BODY)
+    pg.route(FEED_URL, route)
 
 
 MEASURE = """() => {
@@ -217,10 +267,7 @@ def new_page(b, handle_feed=True):
     pg.on('pageerror', lambda e: errors.append(str(e)))
     pg.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
     pg.route('**/api.github.com/**', handle)
-    if handle_feed:
-        pg.route(FEED_URL, lambda r: r.fulfill(status=200, content_type='application/json', body=FEED_BODY))
-    else:
-        pg.route(FEED_URL, lambda r: r.fulfill(status=404, content_type='text/plain', body='not found'))
+    feed_routes(pg, ok=handle_feed)
     pg.route(re.compile(r'.*\.(png|jpg|jpeg|svg|webp)(\?.*)?$'), lambda r: r.abort())
     avatar_routes(pg)
     pg.goto(BASE)
@@ -255,8 +302,8 @@ def main():
         assert m['sheetOpen'], '弹层没打开'
         assert 'APK 商店' in m['title'], f'弹层标题不对：{m["title"]}'
         assert 'komi-store' in m['sub'] and '2026-11-20' in m['sub'], f'副标题应含来源与 rotation：{m["sub"]}'
-        assert '10 个应用' in m['sub'], f'副标题应含总数：{m["sub"]}'
-        assert len(m['cards']) == 10, f'应 10 张卡，实际 {len(m["cards"])}'
+        assert '13 个应用' in m['sub'], f'副标题应含总数（三源合并）：{m["sub"]}'
+        assert len(m['cards']) == 13, f'三源合并去重后应 13 张卡，实际 {len(m["cards"])}'
         assert m['gridCols'] == 2, f'网格应 2 列，实际 {m["gridCols"]}'
         assert m['gridOverflow'], '网格卡片溢出屏幕'
         assert m['width'] <= m['client'] + 1, f'弹层把页面撑宽：{m["width"]}'
@@ -268,9 +315,14 @@ def main():
         assert first['plats'] == ['安卓', 'Win', 'macOS', 'Linux'], f'平台小标不对：{first["plats"]}'
         magisk = next(c for c in m['cards'] if c['name'] == 'Magisk')
         assert magisk['plats'] == ['安卓'], f'Magisk 应只有安卓：{magisk["plats"]}'
+        # 旧 schema 条目：星数认顶层 stars、tag 从 platformReleases 兜底
+        claw = next(c for c in m['cards'] if c['name'] == 'openclaw')
+        assert '395k' in claw['meta'], f'旧 schema 星数应解析：{claw["meta"]}'
+        assert claw['tag'] == 'v2026.8.2', f'tag 应从 platformReleases 兜底：{claw["tag"]}'
+        assert claw['plats'] == ['安卓'], f'openclaw 应只有安卓：{claw["plats"]}'
         # 平台筛选 tabs：全部 10 / 安卓 10 / Win 8 / macOS 7 / Linux 8
         tab_texts = [t['text'] for t in m['tabs']]
-        expect_tabs = ['全部10', '安卓10', 'Win7', 'macOS6', 'Linux7']
+        expect_tabs = ['全部13', '安卓13', 'Win8', 'macOS7', 'Linux8']
         assert tab_texts == expect_tabs, f'tabs 应为 {expect_tabs}：{tab_texts}'
         assert m['activeTab'].startswith('全部'), f'默认应选中「全部」：{m["activeTab"]}'
         pg.screenshot(path=f'{OUT}/apkstore-097-sheet.png')
@@ -281,7 +333,7 @@ def main():
         pg.wait_for_timeout(1500)
         m = pg.evaluate(MEASURE)
         imgs = [c for c in m['cards'] if c['imgSrc']]
-        assert len(imgs) == 10, f'10 张卡都该出 <img> 头像（走代理线路），实际 {len(imgs)}'
+        assert len(imgs) == 13, f'13 张卡都该出 <img> 头像（走代理线路），实际 {len(imgs)}'
         assert all(c['imgSrc'].startswith('https://gh-proxy.com/') for c in imgs), (
             f'头像应走 gh-proxy 改写线路：{[c["imgSrc"] for c in imgs[:3]]}'
         )
@@ -294,8 +346,8 @@ def main():
         pg.wait_for_timeout(400)
         m = pg.evaluate(MEASURE)
         names = [c['name'] for c in m['cards']]
-        assert len(names) == 7, f'Win 筛选应剩 7 个（Magisk/NewPipe/immich 被滤掉），实际 {len(names)}：{names}'
-        assert 'Magisk' not in names and 'NewPipe' not in names and 'immich' not in names, f'非 Win 应用该滤掉：{names}'
+        assert len(names) == 8, f'Win 筛选应剩 8 个，实际 {len(names)}：{names}'
+        assert 'Magisk' not in names and 'NewPipe' not in names and 'immich' not in names and 'openclaw' not in names, f'非 Win 应用该滤掉：{names}'
         assert m['activeTab'].startswith('Win'), 'Win tab 应高亮'
         pg.fill('.sheet .search input', 'godot')
         pg.wait_for_timeout(400)
@@ -305,19 +357,19 @@ def main():
         pg.click('.shop-tab:has-text("macOS")')
         pg.wait_for_timeout(400)
         m = pg.evaluate(MEASURE)
-        assert len(m['cards']) == 6, f'macOS 筛选应剩 6 个，实际 {len(m["cards"])}'
+        assert len(m['cards']) == 7, f'macOS 筛选应剩 7 个，实际 {len(m["cards"])}'
         pg.click('.shop-tab:has-text("Linux")')
         pg.wait_for_timeout(400)
         m = pg.evaluate(MEASURE)
-        assert len(m['cards']) == 7, f'Linux 筛选应剩 7 个，实际 {len(m["cards"])}'
+        assert len(m['cards']) == 8, f'Linux 筛选应剩 8 个，实际 {len(m["cards"])}'
         assert next(c for c in m['cards'] if c['name'] == 'immich')['plats'] == ['安卓', 'Linux'], (
             'immich 应标注 安卓+Linux'
         )
         pg.click('.shop-tab:has-text("全部")')
         pg.wait_for_timeout(400)
         m = pg.evaluate(MEASURE)
-        assert len(m['cards']) == 10, '回「全部」应恢复全量'
-        print('[5] 平台筛选：Win 7 / macOS 6 / Linux 7 各自生效，与名称过滤可叠加，全部恢复')
+        assert len(m['cards']) == 13, '回「全部」应恢复全量'
+        print('[5] 平台筛选：Win 8 / macOS 7 / Linux 8 各自生效，与名称过滤可叠加，全部恢复')
 
         # ── 5. 点应用 → 弹层收、详情开 ──
         pg.locator('.shop-card:not(.shop-skel)', has_text='localsend').first.click()
@@ -325,6 +377,9 @@ def main():
         d = pg.evaluate(MEASURE)
         assert 'localsend/localsend' in d['body'], '点应用没有打开仓库详情'
         assert '发行版' in d['body'] or 'Releases' in d['body'], '详情里应能看到发行版入口'
+        # 简介里的 URL 应该是可点链接（linkify），不再是死文字
+        n_links = pg.evaluate("document.querySelectorAll('.det-desc .md-link').length")
+        assert n_links >= 1, f'详情简介里的 URL 应渲染成链接，实际 {n_links} 个'
         pg.screenshot(path=f'{OUT}/apkstore-097-detail.png')
         print('[6] 点应用收商店弹层、开仓库详情（现有链路）')
         pg.keyboard.press('Escape')

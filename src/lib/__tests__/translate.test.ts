@@ -13,6 +13,7 @@ import {
   normalizeChannel,
   splitByBytes,
   translateBlocks,
+  type TranslationStore,
   translateChunk,
   translateText,
   unescapeHtml,
@@ -510,5 +511,53 @@ describe('翻译保链接（guard 钩子）', () => {
     expect(fetchOk).not.toHaveBeenCalled()
     expect(r2.translated).toBe(1)
     expect(r2.blocks[0].text).toContain(G)
+  })
+
+  it('带 guard 的缓存另开命名空间：无 guard 时代的旧纯译文条目不再命中', async () => {
+    // 模拟旧缓存：无 guard 时代按旧键（无 .g 后缀）存下的纯译文
+    const { cacheKeyFor } = await import('../translate')
+    const oldKey = cacheKeyFor({ channel: 'mymemory' }, 'See the guide.')
+    const written: string[] = []
+    const base = memoryStore({ [oldKey]: '旧纯译文，链接早丢了' })
+    const store: TranslationStore = {
+      get: (k) => base.get(k),
+      set: async (k, v) => {
+        written.push(k)
+        await base.set(k, v)
+      },
+    }
+
+    let fetched = 0
+    const f = vi.fn(async () => {
+      fetched += 1
+      return jsonResponse({ responseData: { translatedText: `见${G}指南${R}` }, responseStatus: 200 })
+    })
+    const r = await translateBlocks(
+      [
+        {
+          kind: 'p' as const,
+          text: 'See the guide.',
+          spans: [{ t: 'link', v: 'the guide', href: 'https://x/guide' }] as never[],
+        },
+      ],
+      {
+        fetchImpl: f as unknown as typeof fetch,
+        channel: 'mymemory',
+        store,
+        guard: {
+          protect: () => ({ text: `见${G}指南${R}`, ctx: ['https://x/guide'] }),
+          restore: (b: { kind: string; text: string }, translated: string, ctx: unknown) => ({
+            ...b,
+            text: translated,
+            spans: [{ t: 'link', v: '指南', href: (ctx as string[])[0] }],
+          }),
+        },
+      },
+    )
+    // 旧条目没被命中，重新走了通道；新条目写进了 .g 命名空间
+    expect(fetched).toBe(1)
+    expect(r.blocks[0].text).toContain('指南')
+    expect(written.some((k) => k.endsWith('.g'))).toBe(true)
+    expect(written.every((k) => k !== oldKey)).toBe(true)
   })
 })

@@ -65,7 +65,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键，`translateBlocks` 支持 guard 钩子（翻译前改写/还原）；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
 | `linkguard.ts` | 机翻保链接：链接标签换成 ⟦⟧ 占位符（实测 Edge 幸存 6/6 且标签被顺便翻译），译文按出现顺序回填 spans；通道吞掉占位符时退回纯译文 |
 | `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策（软键盘视口启发式 `softKeyboardOpen`）、审计、领域类型 |
-| `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 精选应用目录（静态 JSON，非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h、`avatarSources` 头像多线路回退（原图 → url 风格代理改写 → 首字母）、`apkPlatforms` 平台归属（hasInstallers* / platformReleases，缺省兜 android）、`apkAppToRepo` 复用仓库详情链路 |
+| `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 三源合并目录（feed 轮换精选 + most-popular + new-releases，去重 ~174+，静态 JSON 非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h（缓存键 v2）、`avatarSources` 头像多线路回退（原图 → 自建站头像域名 → url 风格代理改写 → 首字母）、新旧 schema 双认（stargazersCount/stars、owner.avatarUrl/顶层 avatarUrl）、`apkPlatforms` 平台归属、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
 | `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
 | `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked` |
@@ -576,6 +576,14 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - **现在的编排**：标题栏（刷新按钮左侧）一个包裹图标入口；点开是全屏弹层（`ApkStoreSheet`，新弹层类型 `apkstore`，返回键直接收起）：头部来源 + rotation 日期 + 总数，过滤框按名称/简介即时过滤，两列网格卡片（头像/名称/星数语言/版本 tag/两行简介），点应用收弹层、进现有仓库详情。
   - feed 拉不到时入口整个不出现，热门页无痕；单测净 +1（backnav 补 `apkstore` 层级）。`verify-apkstore.py` 九段重写（含「页内无内嵌区块」「feed 404 入口隐藏」「返回键收弹层」）。
   - 上一版的横滑卡样式（`.store-*`）已从 `theme.css` 删除，换成弹层网格（`.shop-*`）。
+
+- **v0.9.9**：商店扩容 + 图标/翻译三连修复 —— 用户反馈「就 150 个应用」「这翻译是什么鬼」「图标又是字母」。
+  - **真机三症状同根**：设备上还留着 v0.9.5 时代旧 schema 的目录缓存（旧格式星数字段叫 `stars`、头像在顶层 `avatarUrl`、没有 hasInstallers），解析器只认新 schema → 星数全 0、平台全兜安卓、头像地址为空只剩首字母。**缓存键升到 `ghx.apkstore.v2`** 直接作废旧缓存，同时解析器新旧双认（`stargazersCount||stars`、`owner.avatarUrl||avatarUrl`），以后上游再改字段也不至于全零。
+  - **目录扩容**：komi-store 除了每日轮换的 `feed/android.json`（150），还有 `most-popular/android.json`（~143 按星排序）与 `new-releases/android.json`（~43）。三源各走各的候选线路（`fetchApkStoreMulti`），`mergeApkStores` 去重保序合并 —— 2026-11-21 真实数据 174 个应用；单源挂了不拖累其它源。most-popular 没有 `latestReleaseTag`，tag 从 `platformReleases.android` 兜底（v0.9.7 已实现，这里吃到红利）。
+  - **头像候选加自建站专用域名**：`avatars-githubusercontent-com-{host}`（自建 worker 的通配改写，实测 200）排在原图之后、公共代理之前。
+  - **README 译文死链接的真凶是翻译缓存**：真实 Edge 通道实测 9 个 ⟦⟧ 占位符 9/9 幸存，占位符方案本身没问题；设备上命中了 v0.9.6 之前（无 guard 时代）存的纯译文缓存，restore 找不到占位符就退成死文字（截图里唯一活着的「SoftEther VPN」是因为它是名字没翻）。修复：**带 guard 的译文另开缓存命名空间（键尾 `.g`）**，旧条目自然过期。同时 `unguardLinks` 收紧：token 比地址少（通道真吞了）时整段降级纯文字，**不再按顺序硬配** —— 错位的链接比死文字更糟。
+  - **详情简介里的 URL 变可点**（`mdlink.linkifyUrls`）：简介不是 Markdown，URL 以前是死文字。译文/原文都做链接化，字符集排除 CJK 汉字与全角标点（「https://a.b/c，后续」不能整句吞成 URL），句尾 ASCII 句读不算 URL。
+  - `verify-apkstore.py` 十二段重写（三源合并 13 应用、旧 schema 条目解析、简介 URL 渲染成链接）。单测 1356 → 1366。
 
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 

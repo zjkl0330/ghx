@@ -6,7 +6,9 @@ import type { AuditEntry, Repo, Visibility } from '../lib/types'
 import { parseTopics, topicsToInput } from '../lib/topics'
 import { openExternal } from '../lib/update'
 import { copyText } from '../lib/clipboard'
+import { linkifyUrls } from '../lib/mdlink'
 import { Icon, type IconName } from './icons'
+import { SpanText } from './SpanText'
 
 interface Props {
   repo: Repo
@@ -204,16 +206,28 @@ export function RepoDetailSheet(p: Props) {
             {p.descZh ? (
               <>
                 <div>
-                  {p.descZh}
+                  <SpanText text={p.descZh} spans={linkifyUrls(p.descZh)} spansFor={p.descZh} />
                   <span className="tr-mark">译</span>
                 </div>
                 <button className="linkbtn" style={{ marginTop: 4 }} onClick={() => setShowSrc((v) => !v)}>
                   {showSrc ? '收起原文' : '看原文'}
                 </button>
-                {showSrc && <div className="det-src">{p.repo.description}</div>}
+                {showSrc && (
+                  <div className="det-src">
+                    <SpanText
+                      text={p.repo.description}
+                      spans={linkifyUrls(p.repo.description)}
+                      spansFor={p.repo.description}
+                    />
+                  </div>
+                )}
               </>
             ) : (
-              p.repo.description
+              <SpanText
+                text={p.repo.description}
+                spans={linkifyUrls(p.repo.description)}
+                spansFor={p.repo.description}
+              />
             )}
           </div>
         )}

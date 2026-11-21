@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dirOf, isRepoPath, joinPath, resolveHref, routeForGithubPath, safeHref, splitHash, type LinkContext } from '../mdlink'
+import { dirOf, isRepoPath, joinPath, linkifyUrls, resolveHref, routeForGithubPath, safeHref, splitHash, type LinkContext } from '../mdlink'
 
 const ctx: LinkContext = {
   owner: 'zjkl0330',
@@ -256,5 +256,28 @@ describe('resolveHref 附带 App 内路由', () => {
     const t = resolveHref('https://github.com/a/b/releases/latest', ctx)
     expect(t).toMatchObject({ kind: 'external' })
     expect(t && 'route' in t ? t.route : undefined).toBeUndefined()
+  })
+})
+
+describe('linkifyUrls 纯文本链接化', () => {
+  it('URL 切成 link span，前后文本保留', () => {
+    const spans = linkifyUrls('稳定版见 https://github.com/a/b/releases。')
+    expect(spans).toHaveLength(3)
+    expect(spans[0]).toEqual({ t: 'text', v: '稳定版见 ' })
+    expect(spans[1]).toEqual({ t: 'link', v: 'https://github.com/a/b/releases', href: 'https://github.com/a/b/releases' })
+    expect(spans[2]).toEqual({ t: 'text', v: '。' })
+  })
+
+  it('句尾标点不算 URL 的一部分', () => {
+    const spans = linkifyUrls('地址 https://a.b/c，后续')
+    expect(spans[1]).toMatchObject({ t: 'link', v: 'https://a.b/c' })
+    expect(spans[2]).toEqual({ t: 'text', v: '，后续' })
+  })
+
+  it('多个 URL 保序；没有 URL 时原样返回', () => {
+    const two = linkifyUrls('a https://x.co b https://y.co')
+    expect(two.filter((s) => s.t === 'link')).toHaveLength(2)
+    expect(linkifyUrls('没有链接的一句话')).toEqual([{ t: 'text', v: '没有链接的一句话' }])
+    expect(linkifyUrls('')).toEqual([{ t: 'text', v: '' }])
   })
 })

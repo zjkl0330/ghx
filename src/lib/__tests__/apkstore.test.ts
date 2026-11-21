@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   APK_STORE_FRESH,
+  APK_STORE_SOURCES,
   APK_STORE_MAX_AGE,
   APK_STORE_OFFICIAL_URL,
   apkAppToRepo,
@@ -12,7 +13,9 @@ import {
   avatarSources,
   defaultApkStoreHttp,
   fetchApkStore,
+  fetchApkStoreMulti,
   loadApkStore,
+  mergeApkStores,
   normalizeTs,
   parseApkFeed,
   parseApkStore,
@@ -226,6 +229,7 @@ describe('apkStoreCandidates', () => {
 
   it('自建站队首、官方 raw 恒在、公共代理殿后，保序去重', () => {
     const urls = apkStoreCandidates(
+      APK_STORE_SOURCES[0],
       ['https://gh-proxy.com', 'https://ghfast.top'],
       'https://gh.example.com',
     )
@@ -243,33 +247,104 @@ describe('apkStoreCandidates', () => {
   })
 
   it('自建站与官方重复时只留一条；空自建站跳过', () => {
-    const official = apkStoreCandidates([], 'https://raw.githubusercontent.com')
+    const official = apkStoreCandidates(APK_STORE_SOURCES[0], [], 'https://raw.githubusercontent.com')
     expect(official).toEqual([APK_STORE_OFFICIAL_URL])
-    expect(apkStoreCandidates([], '')).toEqual([APK_STORE_OFFICIAL_URL])
+    expect(apkStoreCandidates(APK_STORE_SOURCES[0], [], '')).toEqual([APK_STORE_OFFICIAL_URL])
   })
 
   it('默认代理来自内置 url 风格站点且不含官方直连', () => {
-    const urls = apkStoreCandidates(undefined, 'https://gh.example.com')
+    const urls = apkStoreCandidates(APK_STORE_SOURCES[0], undefined, 'https://gh.example.com')
     expect(urls.some((u) => u.startsWith('https://github.com/'))).toBe(false)
     expect(urls.length).toBeGreaterThan(2)
     expect(urls[1]).toBe(APK_STORE_OFFICIAL_URL)
   })
 })
 
-describe('avatarSources', () => {
-  it('裸头像域名：原图队首，url 风格代理逐个垫后', () => {
-    const list = avatarSources('https://avatars.githubusercontent.com/u/1?v=4', [
-      'https://gh-proxy.com',
-      'https://ghfast.top',
+describe('mergeApkStores / fetchApkStoreMulti 多源合并', () => {
+  const s = (full: string, at: number, stars = 10) =>
+    parseApkFeed(feedText([feedItem({ fullName: full, stargazersCount: stars })]), at) as ApkStore
+
+  it('按传入顺序拼接、同仓去重保首条、rotation 取首个、at 取最新', () => {
+    const m = mergeApkStores([
+      s('a/a', 1000, 5),
+      s('b/b', 2000, 6),
+      s('a/a', 3000, 999), // 重复仓：丢掉，星数不覆盖
+      s('c/c', 1500, 7),
     ])
+    expect(m?.apps.map((a) => a.fullName)).toEqual(['a/a', 'b/b', 'c/c'])
+    expect(m?.apps[0].stars).toBe(5)
+    expect(m?.rotation).toBe('2026-11-20')
+    expect(m?.at).toBe(3000)
+  })
+
+  it('单个源整体失败或空表不拖累其它源；全空返回 null', () => {
+    expect(mergeApkStores([s('a/a', 1000), null, null])?.apps).toHaveLength(1)
+    expect(mergeApkStores([null, null])).toBeNull()
+    expect(mergeApkStores([])).toBeNull()
+  })
+
+  it('fetchApkStoreMulti：每个源各走各的候选线路，单源失败不影响其它', async () => {
+    const calls: string[] = []
+    const http: ApkStoreHttp = async (url) => {
+      calls.push(url)
+      if (url.includes('most-popular')) return null // 这个源挂了
+      return feedText([feedItem({ fullName: url.includes('new-releases') ? 'x/x' : 'y/y' })])
+    }
+    const m = await fetchApkStoreMulti(APK_STORE_SOURCES, http, NOW)
+    // 三个源都发过请求
+    expect(calls.filter((u) => u.includes('feed/android')).length).toBeGreaterThan(0)
+    expect(calls.filter((u) => u.includes('most-popular')).length).toBeGreaterThan(0)
+    expect(m?.apps.map((a) => a.fullName)).toEqual(['y/y', 'x/x'])
+  })
+})
+
+describe('旧 schema 兼容', () => {
+  it('星数认顶层 stars（新 schema 是 stargazersCount）', () => {
+    const apps = sanitizeApkApps([feedItem({ stargazersCount: undefined, stars: 4321 })])
+    expect(apps[0].stars).toBe(4321)
+    expect(sanitizeApkApps([feedItem({ stars: 999 })])[0].stars).toBe(60000) // 新字段优先
+  })
+
+  it('头像认顶层 avatarUrl（旧缓存/上游回退形态）', () => {
+    const apps = sanitizeApkApps([
+      feedItem({ owner: { login: 'localsend' }, avatarUrl: 'https://avatars.githubusercontent.com/u/9?v=4' }),
+    ])
+    expect(apps[0].avatarUrl).toBe('https://avatars.githubusercontent.com/u/9?v=4')
+  })
+})
+
+describe('avatarSources', () => {
+  it('裸头像域名：原图队首、自建站头像域名第二、url 风格代理逐个垫后', () => {
+    const list = avatarSources(
+      'https://avatars.githubusercontent.com/u/1?v=4',
+      ['https://gh-proxy.com', 'https://ghfast.top'],
+      'https://gh.example.com',
+    )
     expect(list[0]).toBe('https://avatars.githubusercontent.com/u/1?v=4')
-    expect(list[1]).toBe('https://gh-proxy.com/https://avatars.githubusercontent.com/u/1?v=4')
-    expect(list[2]).toBe('https://ghfast.top/https://avatars.githubusercontent.com/u/1?v=4')
+    expect(list[1]).toBe('https://avatars-githubusercontent-com-gh.example.com/u/1?v=4')
+    expect(list[2]).toBe('https://gh-proxy.com/https://avatars.githubusercontent.com/u/1?v=4')
+    expect(list[3]).toBe('https://ghfast.top/https://avatars.githubusercontent.com/u/1?v=4')
+  })
+
+  it('自建站为空时不产自建候选，退回纯代理链', () => {
+    const list = avatarSources(
+      'https://avatars.githubusercontent.com/u/1?v=4',
+      ['https://gh-proxy.com'],
+      '',
+    )
+    expect(list).toEqual([
+      'https://avatars.githubusercontent.com/u/1?v=4',
+      'https://gh-proxy.com/https://avatars.githubusercontent.com/u/1?v=4',
+    ])
   })
 
   it('默认代理来自 urlProxyBases()，与 feed 候选同一来源', () => {
     expect(urlProxyBases().length).toBeGreaterThan(0)
-    const list = avatarSources('https://avatars.githubusercontent.com/u/2?v=4')
+    const list = avatarSources(
+      'https://avatars.githubusercontent.com/u/2?v=4',
+      urlProxyBases(),
+      '',
+    )
     expect(list.length).toBe(1 + urlProxyBases().length)
     expect(list[1].startsWith(urlProxyBases()[0])).toBe(true)
   })
@@ -286,10 +361,11 @@ describe('avatarSources', () => {
   })
 
   it('代理与原图同域名时去重；候选保序无重复', () => {
-    const list = avatarSources('https://avatars.githubusercontent.com/u/3?v=4', [
-      'https://gh-proxy.com',
-      'https://gh-proxy.com/',
-    ])
+    const list = avatarSources(
+      'https://avatars.githubusercontent.com/u/3?v=4',
+      ['https://gh-proxy.com', 'https://gh-proxy.com/'],
+      '',
+    )
     expect(new Set(list).size).toBe(list.length)
   })
 })
@@ -317,7 +393,7 @@ describe('loadApkStore', () => {
   it('新鲜缓存直接用，不发网络请求', async () => {
     const store = parseApkFeed(feedText([feedItem()]), NOW) as ApkStore
     const kv = memoryKv()
-    await kv.set('ghx.apkstore.v1', serializeApkStore(store))
+    await kv.set('ghx.apkstore.v2', serializeApkStore(store))
     let net = 0
     const http: ApkStoreHttp = async () => {
       net += 1
@@ -332,13 +408,13 @@ describe('loadApkStore', () => {
   it('缓存过期时走网络并回写缓存', async () => {
     const stale = parseApkFeed(feedText([feedItem()]), NOW - APK_STORE_FRESH - 1000) as ApkStore
     const kv = memoryKv()
-    await kv.set('ghx.apkstore.v1', serializeApkStore(stale))
+    await kv.set('ghx.apkstore.v2', serializeApkStore(stale))
     const newer = feedText([feedItem({ fullName: 'godotengine/godot' })], '2026-11-21')
     const http: ApkStoreHttp = async () => newer
     const got = await loadApkStore(kv, { http, now: NOW })
     expect(got?.apps[0].fullName).toBe('godotengine/godot')
     expect(got?.rotation).toBe('2026-11-21')
-    const saved = parseApkStore(await kv.get('ghx.apkstore.v1'))
+    const saved = parseApkStore(await kv.get('ghx.apkstore.v2'))
     expect(saved?.apps[0].fullName).toBe('godotengine/godot')
     expect(saved?.at).toBe(NOW)
   })
@@ -346,21 +422,21 @@ describe('loadApkStore', () => {
   it('fresh: true 绕过缓存强制刷新', async () => {
     const fresh = parseApkFeed(feedText([feedItem()]), NOW) as ApkStore
     const kv = memoryKv()
-    await kv.set('ghx.apkstore.v1', serializeApkStore(fresh))
+    await kv.set('ghx.apkstore.v2', serializeApkStore(fresh))
     let net = 0
     const http: ApkStoreHttp = async () => {
       net += 1
       return feedText([feedItem({ fullName: 'topjohnwu/Magisk' })])
     }
     const got = await loadApkStore(kv, { http, fresh: true, now: NOW })
-    expect(net).toBe(1)
+    expect(net).toBe(APK_STORE_SOURCES.length)
     expect(got?.apps[0].fullName).toBe('topjohnwu/Magisk')
   })
 
   it('网络全断时回退未过期的设备缓存，而不是消失', async () => {
     const stored = parseApkFeed(feedText([feedItem()]), NOW - APK_STORE_FRESH - 1000) as ApkStore
     const kv = memoryKv()
-    await kv.set('ghx.apkstore.v1', serializeApkStore(stored))
+    await kv.set('ghx.apkstore.v2', serializeApkStore(stored))
     const http: ApkStoreHttp = async () => null
     const got = await loadApkStore(kv, { http, now: NOW })
     expect(got?.apps[0].fullName).toBe('localsend/localsend')

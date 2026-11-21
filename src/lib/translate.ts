@@ -918,9 +918,11 @@ export async function translateBlocks<B extends BlockLike>(
       const idx = targets[cursor]
       cursor += 1
       const plainSrc = (blocks[idx].text ?? '').trim()
-      // 缓存键永远用未改写的原文：换通道、换 guard 实现后同一段原文命中同一份缓存
-      const key = cacheKeyFor(opts, plainSrc)
       const guarded = opts.guard?.protect(blocks[idx]) ?? null
+      // 缓存键带 guard 命名空间：无 guard 时代的旧缓存存的是纯译文，
+      // 拿来 restore 会因为找不到 ⟦⟧ 而退回死链接文字（v0.9.9 真机踩到）。
+      // 带 guard 的译文另开一块缓存空间，旧条目自然过期。
+      const key = cacheKeyFor(opts, plainSrc) + (guarded ? '.g' : '')
       const src = guarded ? guarded.text : plainSrc
       const finish = (translated: string): B => {
         if (!guarded) return { ...blocks[idx], text: translated }
