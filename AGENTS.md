@@ -585,6 +585,8 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - **详情简介里的 URL 变可点**（`mdlink.linkifyUrls`）：简介不是 Markdown，URL 以前是死文字。译文/原文都做链接化，字符集排除 CJK 汉字与全角标点（「https://a.b/c，后续」不能整句吞成 URL），句尾 ASCII 句读不算 URL。
   - `verify-apkstore.py` 十二段重写（三源合并 13 应用、旧 schema 条目解析、简介 URL 渲染成链接）。单测 1356 → 1366。
 
+- **v1.0.0**：下载选线不再跳动 —— 用户反馈「下载链接加速选择页点一个他会跳到第一个展示，有点难判断」。`DownloadSheet` 的 `order` 以前把手动挑中的线路 splice 到第一行，列表当场重排，刚点的行窜去顶部。修复：**选线只做高亮**（`picked` 只控制 `.on`），顺序完全交给测速排序 + 自建站钉位维持稳定。`verify-dl.py` 补第 3 段：点倒数第二行断言整表顺序不变、有且只有该行高亮。
+
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）

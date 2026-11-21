@@ -6,7 +6,8 @@
 断言口径（读 DOM 与 computed style，不靠截图目测）：
 1. 线路表 ≥5 条，官方直连是最后一条，且副标题写明「长时段偏慢」；
 2. 测速跑完后官方仍然不是第一条（不依赖测速是否成功：失败的线路沉底）；
-3. 有安装包的仓库行出现 APK / EXE 徽标，没包的仓库行不出现。
+3. 点选线路只做高亮不重排（列表顺序不变，选中行有且只有一个 on）；
+4. 有安装包的仓库行出现 APK / EXE 徽标，没包的仓库行不出现。
 """
 import json
 import os
@@ -205,6 +206,27 @@ def main():
         print('测速后第一行：', after[0])
         assert '官方' not in after[0], f'测速后官方被选成第一条：{after[0]!r}'
         pg.screenshot(path=f'{OUT}/dl-routes-083.png')
+
+        # ── 3. 点选线路不重排：只高亮，不跳动 ──
+        before_click = [pg.locator('.multi-row').nth(i).locator('b').inner_text()
+                        for i in range(pg.locator('.multi-row').count())]
+        # 点倒数第二行（肯定不是第一行），看列表有没有把它挪到顶部
+        target_idx = len(before_click) - 2
+        target_label = before_click[target_idx]
+        pg.locator('.multi-row').nth(target_idx).click()
+        pg.wait_for_timeout(400)
+        after_click = [pg.locator('.multi-row').nth(i).locator('b').inner_text()
+                       for i in range(pg.locator('.multi-row').count())]
+        assert after_click == before_click, (
+            f'点选后列表被重排了：前 {before_click[:3]}… 后 {after_click[:3]}…'
+        )
+        on_rows = pg.locator('.multi-row.on')
+        assert on_rows.count() == 1, f'应有且只有一行高亮，实际 {on_rows.count()} 行'
+        assert target_label in on_rows.first.inner_text(), (
+            f'高亮的应是刚点的那条（{target_label}），实际：{on_rows.first.inner_text()!r}'
+        )
+        print(f'点选第 {target_idx + 1} 行（{target_label}）：列表顺序不变，仅该行高亮')
+        pg.screenshot(path=f'{OUT}/dl-picked-0910.png')
 
         b.close()
         print('全部断言通过')

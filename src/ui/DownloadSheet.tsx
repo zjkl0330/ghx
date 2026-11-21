@@ -225,7 +225,7 @@ export function DownloadSheet(p: Props) {
   const bestDup = best ? p.target.routes.filter((r) => r.label === best.label).length > 1 : false
 
   /**
-   * 实际下载顺序：手动挑的排第一，其余按测速结果（没测过就按原顺序）。
+   * 实际下载顺序：按测速结果排（没测过就按原顺序）。
    *
    * 测速是一条条来的，中途只有前几条有结果。这里把「已测的」放前面、
    * 「还没测的」接在后面，行数始终等于候选总数 —— 否则测速一开始列表会
@@ -252,11 +252,15 @@ export function DownloadSheet(p: Props) {
       const [self] = base.splice(selfAt, 1)
       base.splice(1, 0, self)
     }
-    if (!picked) return base
-    const hit = all.find((r) => r.url === picked)
-    if (!hit) return base
-    return [hit, ...base.filter((r) => r.url !== hit.url)]
-  }, [entries, ranked, picked, p.target.routes])
+    /*
+     * 手动挑过的线路**不重排**，只做选中高亮。
+     *
+     * 以前把挑中的 splice 到第一行，列表当场跳动：想从下往上选的人刚点到目标行，
+     * 它就窜去顶部，下一行又顶上来 —— 很难确认自己刚才点的是哪条。
+     * 顺序交给测速排序（+ 自建站钉位）维持稳定，选中态只靠高亮框表达。
+     */
+    return base
+  }, [entries, ranked, p.target.routes])
 
   /**
    * 认领这次下载的结果并写进本机历史。
