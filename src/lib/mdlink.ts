@@ -15,9 +15,13 @@
  */
 
 import { githubUrlAt } from './mirrors'
+import type { Route } from './routes'
 
-/** 链接动作：打开外部地址，或在自述内部滚动到某个标题 */
-export type LinkTarget = { kind: 'external'; url: string } | { kind: 'anchor'; id: string }
+/** 链接动作：打开外部地址，或在自述内部滚动到某个标题。
+ *  route 有值时说明这条 GitHub 链接能在 App 内直接打开，调用方优先走它。 */
+export type LinkTarget =
+  | { kind: 'external'; url: string; route?: Route }
+  | { kind: 'anchor'; id: string }
 
 export interface LinkContext {
   owner: string
@@ -85,6 +89,69 @@ export function dirOf(path: string): string {
 }
 
 /**
+ * GitHub 站内路径 → App 内路由。
+ *
+ * README 里最常见的就是指向自己仓库的链接（源码目录、Issues、发行页）。
+ * 全扔给系统浏览器等于「点一下就跳出软件」，用户为此专门提了意见；
+ * 能在 App 里看的就给路由，App 没有的页面（releases、wiki、discussions）
+ * 才退回外部浏览器。
+ *
+ * path 是 github.com 后面的部分（含开头的 `/`，如 `/o/r/blob/main/x.md`）。
+ * 返回 null 表示 App 内没有对应页面。
+ */
+export function routeForGithubPath(path: string): Route | null {
+  const segs = path.replace(/^\/+/, '').split('/')
+  if (segs.length === 0 || !segs[0]) return null
+  // 只有一段：用户主页
+  if (segs.length === 1) return { kind: 'user', login: segs[0] }
+  const owner = segs[0]
+  const repo = segs[1]
+  if (!repo) return null
+  const rest = segs.slice(2)
+  const kind = rest[0] ?? ''
+
+  const num = (s: string | undefined): number | null => {
+    const n = Number(s)
+    return Number.isInteger(n) && n > 0 ? n : null
+  }
+
+  switch (kind) {
+    case '':
+      return { kind: 'repo', owner, repo }
+    // blob 与 tree 都映射到代码浏览；ref 取第一段，剩下的是路径
+    case 'blob':
+    case 'tree': {
+      const [ref, ...tail] = rest.slice(1)
+      return { kind: 'code', owner, repo, path: tail.join('/'), ref: ref || undefined }
+    }
+    case 'issues': {
+      const n = num(rest[1])
+      return n ? { kind: 'issue', owner, repo, number: n } : { kind: 'issues', owner, repo }
+    }
+    case 'pull':
+      return (() => {
+        const n = num(rest[1])
+        return n ? { kind: 'pull', owner, repo, number: n } : null
+      })()
+    case 'pulls':
+      return { kind: 'pulls', owner, repo }
+    case 'commits':
+      return {
+        kind: 'commits',
+        owner,
+        repo,
+        ref: rest[1] || undefined,
+        path: rest.slice(2).join('/') || undefined,
+      }
+    case 'actions':
+      return { kind: 'actions', owner, repo }
+    // releases / tags / wiki / discussions / security 等页面 App 还没有，走外部
+    default:
+      return null
+  }
+}
+
+/**
  * 把 Markdown 里的地址解析成动作。
  *
  * 认这几种写法：
@@ -105,9 +172,10 @@ export function resolveHref(href: string, ctx: LinkContext): LinkTarget | null {
 
   if (/^https?:\/\//i.test(s)) {
     const m = /^https?:\/\/(?:www\.)?github\.com(\/[^\s]*)?$/i.exec(s)
-    // 非 GitHub 站点原样打开；GitHub 的换成加速地址
+    // 非 GitHub 站点原样打开；GitHub 的换成加速地址，并尽量给 App 内路由
     if (!m) return { kind: 'external', url: s }
-    return { kind: 'external', url: githubUrlAt(ctx.mirror, m[1] || '/') }
+    const route = routeForGithubPath(m[1] ?? '/')
+    return { kind: 'external', url: githubUrlAt(ctx.mirror, m[1] || '/'), route: route ?? undefined }
   }
 
   const [pathPart, hash] = splitHash(s)
@@ -118,7 +186,8 @@ export function resolveHref(href: string, ctx: LinkContext): LinkTarget | null {
     : joinPath(dirOf(ctx.basePath), pathPart)
   if (!repoPath) return null
   const blob = `${ctx.owner}/${ctx.repo}/blob/${ctx.branch || 'main'}/${repoPath}${tail}`
-  return { kind: 'external', url: githubUrlAt(ctx.mirror, blob) }
+  const route: Route = { kind: 'code', owner: ctx.owner, repo: ctx.repo, path: repoPath, ref: ctx.branch || undefined }
+  return { kind: 'external', url: githubUrlAt(ctx.mirror, blob), route }
 }
 
 /**

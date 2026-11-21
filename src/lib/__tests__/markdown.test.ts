@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blocksToText, inline, parseMarkdown, parseInline, spansText, summarize } from '../markdown'
+import { blocksToText, expandLinkRefs, inline, parseMarkdown, parseInline, spansText, summarize } from '../markdown'
 
 /**
  * 剥掉行内结构再比对。
@@ -385,5 +385,79 @@ describe('块上挂行内结构', () => {
     // 模拟机翻：只换 text，不碰 spans
     const translated = { ...b, text: 'See 文档' }
     expect(translated.text).not.toBe(translated.spansFor)
+  })
+})
+
+describe('参考式链接', () => {
+  it('定义行被收集进 map 并从正文剔除', () => {
+    const r = expandLinkRefs('# 标题\n\n[repo]: https://github.com/a/b\n正文')
+    expect(r.map.get('repo')).toBe('https://github.com/a/b')
+    expect(r.body).not.toContain('[repo]:')
+    expect(r.body).toContain('正文')
+  })
+
+  it('[文字][ref] 展开成行内链接', () => {
+    const md = '了解更多关于[发行渠道][]的信息。\n\n[发行渠道]: https://x/dist'
+    const blocks = parseMarkdown(md) as { kind: string; text: string; spans?: { t: string; href?: string }[] }[]
+    expect(blocks[0].text).toBe('了解更多关于发行渠道的信息。')
+    const link = blocks[0].spans?.find((s) => s.t === 'link')
+    expect(link?.href).toBe('https://x/dist')
+  })
+
+  it('完整引用 [文字][ref] 与折叠引用 [文字][] 都认', () => {
+    const md = '看 [指南][guide] 和 [常见问题][] 吧\n\n[guide]: https://g\n[常见问题]: https://f'
+    const blocks = parseMarkdown(md) as { spans?: { t: string; href?: string }[] }[]
+    const hrefs = blocks.flatMap((b) => (b.spans ?? []).map((s) => (s as { href?: string }).href))
+    expect(hrefs).toContain('https://g')
+    expect(hrefs).toContain('https://f')
+  })
+
+  it('图片引用 ![alt][ref] 也展开（徽章表格大量使用）', () => {
+    const md = '![下载][dl-badge]\n\n[dl-badge]: https://img.shields.io/x'
+    const blocks = parseMarkdown(md)
+    // 徽章单行 → img 块
+    expect(blocks.some((b) => b.kind === 'img')).toBe(true)
+  })
+
+  it('快捷引用 [ref] 在已定义时展开，未定义时保留原文', () => {
+    const md = '用 [ghx] 构建的任务清单（见任务列表段落）\n\n[ghx]: https://x/ghx'
+    const blocks = parseMarkdown(md) as { text: string }[]
+    expect(blocks[0].text).toContain('ghx')
+    const spans = (blocks[0] as { spans?: { t: string; href?: string }[] }).spans
+    expect(spans?.some((s) => s.t === 'link')).toBe(true)
+    // 未定义的 [文字] 不动；`- [ ]` 任务列表不因引用展开而消失
+    const md2 = '- 任务 [ ] 未完成\n\n[ghx]: https://x'
+    const blocks2 = parseMarkdown(md2)
+    expect(blocks2.some((b) => b.kind === 'li')).toBe(true)
+    const li = blocks2.find((b) => b.kind === 'li') as { text: string }
+    expect(li.text).toContain('未完成')
+  })
+
+  it('标签大小写与空白不敏感', () => {
+    const md = '见 [Docs][  Docs  ] 与 [docs][]\n\n[DOCS]: https://d'
+    const blocks = parseMarkdown(md) as { spans?: { t: string; href?: string }[] }[]
+    const hrefs = blocks.flatMap((b) => (b.spans ?? []).map((s) => (s as { href?: string }).href))
+    expect(hrefs.filter((h) => h === 'https://d')).toHaveLength(2)
+  })
+
+  it('围栏代码块里的定义行与引用原样保留', () => {
+    const md = '```md\n[link]: https://inside\n正文见 [link]\n```\n\n[link]: https://real'
+    const blocks = parseMarkdown(md)
+    const code = blocks.find((b) => b.kind === 'code') as { text: string }
+    expect(code.text).toContain('[link]: https://inside')
+    expect(code.text).toContain('[link]')
+    // 正文外的定义行仍然收走
+    expect(blocks.every((b) => b.kind === 'code' || b.kind !== 'p' || !((b as { text?: string }).text ?? '').includes('[link]:'))).toBe(true)
+  })
+
+  it('LocalSend 那种定义行整段的 README 不再吐一屏 URL', () => {
+    const defs = ['[windows store]: https://www.microsoft.com/store/apps/1', '[play store]: https://play.google.com/store/apps/2', '[latest]: https://github.com/a/b/releases/latest'].join('\n')
+    const md = `下载渠道见 [windows store][] 与 [play store][]。\n\n${defs}`
+    const blocks = parseMarkdown(md)
+    const allText = blocks.map((b) => (b.kind === 'p' || b.kind === 'h' ? (b as { text: string }).text : '')).join('')
+    expect(allText).not.toContain('[windows store]:')
+    expect(allText).not.toContain('https://www.microsoft.com')
+    // 链接文字保留
+    expect(allText).toContain('windows store')
   })
 })

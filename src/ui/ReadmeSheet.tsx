@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { mirrorImage, rawBase } from '../lib/images'
+import { guardLinks, unguardLinks } from '../lib/linkguard'
 import { parseMarkdown, type Block } from '../lib/markdown'
 import type { LinkContext } from '../lib/mdlink'
+import type { Route } from '../lib/routes'
 import { looksChinese, type ReadmeFile } from '../lib/readme'
 import { activeHeading, anchorIndexOf, buildToc, tocAnchor, tocIndent } from '../lib/toc'
 import { openExternal } from '../lib/update'
@@ -32,6 +34,8 @@ interface Props {
   /** 微软翻译密钥；有值时一次能翻整段 */
   azureKey: string
   store: TranslationStore | null
+  /** GitHub 链接在 App 内打开：给路由就跳页面，不给就全走外部浏览器 */
+  onOpenRoute?: (r: Route) => void
   onClose: () => void
   onToast: (msg: string) => void
 }
@@ -107,9 +111,17 @@ function renderBlock(
   mirror: string,
   ctx: LinkContext,
   onAnchor: (id: string) => void,
+  onRoute?: (r: Route) => void,
 ) {
   const rich = (x: Extract<Block, { kind: 'h' | 'p' | 'li' | 'quote' }>) => (
-    <SpanText text={x.text} spans={x.spans} spansFor={x.spansFor} ctx={ctx} onAnchor={onAnchor} />
+    <SpanText
+      text={x.text}
+      spans={x.spans}
+      spansFor={x.spansFor}
+      ctx={ctx}
+      onAnchor={onAnchor}
+      onRoute={onRoute}
+    />
   )
 
   switch (b.kind) {
@@ -149,7 +161,7 @@ function renderBlock(
     case 'img':
       return <MdImage key={key} b={b} mirror={mirror} />
     case 'table':
-      return <Table key={key} b={b} ctx={ctx} onAnchor={onAnchor} />
+      return <Table key={key} b={b} ctx={ctx} onAnchor={onAnchor} onRoute={onRoute} />
     default:
       return null
   }
@@ -206,11 +218,25 @@ export function ReadmeSheet(p: Props) {
           maxBlocks: bulk ? 40 : 20,
           concurrency: bulk ? 6 : 3,
           skip,
+          // 翻译前把链接换成 ⟦标签⟧ 占位，译文回来按出现顺序回填 —— 否则
+          // 译文一替换 spans 就失效，整段可点的链接全变死文字（用户提过）
+          guard: {
+            protect: (b) => {
+              if (!('spans' in b)) return null
+              const g = guardLinks(b.spans)
+              return g ? { text: g.text, ctx: g.hrefs } : null
+            },
+            restore: (b, translated, ctx) => {
+              const res = unguardLinks(translated, (ctx as string[]) ?? [])
+              if (!res) return null
+              return { ...b, text: res.text, spans: res.spans, spansFor: res.text }
+            },
+          },
           onProgress: (done, total) => setProgress({ done, total }),
-          onBlock: (index, text) => {
+          onBlock: (index, block) => {
             const cur = translatedRef.current
             if (!cur) return
-            applyTranslated(cur.map((b, i) => (i === index ? { ...b, text } : b)))
+            applyTranslated(cur.map((b, i) => (i === index ? block : b)))
           },
         })
         applyTranslated(res.blocks)
@@ -480,7 +506,9 @@ export function ReadmeSheet(p: Props) {
 
         {!loading && shown.length > 0 && (
           <div className="md">
-            {shown.map((b, i) => renderBlock(b, i, view === 'source', p.mirror, linkCtx, jumpAnchor))}
+            {shown.map((b, i) =>
+              renderBlock(b, i, view === 'source', p.mirror, linkCtx, jumpAnchor, p.onOpenRoute),
+            )}
           </div>
         )}
 

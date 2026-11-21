@@ -3107,6 +3107,11 @@ export default function App() {
           azureKey={azureKey}
           store={translateStore}
           onClose={() => setSheet(subReturn)}
+          onOpenRoute={(r) => {
+            // App 内打开：收掉弹层、压路由。GitHub 链接跳系统浏览器是用户点名要改的
+            setSheet('none')
+            pushTo(r)
+          }}
           onToast={showToast}
         />
       )}

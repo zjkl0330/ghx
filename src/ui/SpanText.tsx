@@ -9,6 +9,7 @@
 
 import { parseInline, type Span } from '../lib/markdown'
 import { resolveHref, safeHref, type LinkContext, type LinkTarget } from '../lib/mdlink'
+import type { Route } from '../lib/routes'
 import { openExternal } from '../lib/update'
 
 interface Props {
@@ -22,6 +23,8 @@ interface Props {
   ctx?: LinkContext | null
   /** 点内部锚点。不传就退化成「什么都不做」 */
   onAnchor?: (id: string) => void
+  /** GitHub 链接的 App 内打开入口。不传就全部走外部浏览器 */
+  onRoute?: (r: Route) => void
 }
 
 /**
@@ -39,7 +42,7 @@ function fallback(href: string): LinkTarget | null {
   return null
 }
 
-export function SpanText({ text, spans, spansFor, ctx, onAnchor }: Props) {
+export function SpanText({ text, spans, spansFor, ctx, onAnchor, onRoute }: Props) {
   // 机翻会把 text 换掉却碰不到 spans，这时 spans 里是原文，直接用会串味。
   // 退一步现场解析译文：译文里已经不含链接地址（inline() 早把地址丢了），
   // 所以解析结果只会是纯文字，不会凭空长出假链接。
@@ -67,6 +70,9 @@ export function SpanText({ text, spans, spansFor, ctx, onAnchor }: Props) {
             // 没有滚动容器可跳时，锚点也只当普通文字 —— 渲染成按钮却点不动更糟
             if (target.kind === 'anchor' && !onAnchor) return <span key={i}>{sp.v}</span>
             const isAnchor = target.kind === 'anchor'
+            // GitHub 链接优先在 App 内打开；没有入口回调或没有对应页面才走外部
+            const route = target.kind === 'external' ? target.route : undefined
+            const inApp = !!route && !!onRoute
             return (
               <button
                 type="button"
@@ -75,6 +81,7 @@ export function SpanText({ text, spans, spansFor, ctx, onAnchor }: Props) {
                 title={isAnchor ? '跳到本节' : target.url}
                 onClick={() => {
                   if (isAnchor) onAnchor?.(target.id)
+                  else if (inApp) onRoute?.(route as Route)
                   else void openExternal(target.url)
                 }}
               >

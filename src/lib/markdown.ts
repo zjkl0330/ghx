@@ -317,7 +317,108 @@ export interface ParseOptions {
   imageBase?: string
 }
 
+/*
+ * 参考式链接。
+ *
+ * LocalSend、SoftEther 这类 README 大量使用 `[文字][ref]` + 文末 `[ref]: url`
+ * 的写法。早期版本只认 `[文字](地址)`，结果是链接变纯文字、定义行整段
+ * 原样吐在页面上 —— 用户看到的是一屏 URL 而不是文档。
+ * 这里在解析前统一展开成行内链接，后续逻辑（spans、翻译、徽章）一行不用改。
+ */
+
+/** 定义行：`[ref]: https://… "可选标题"`。标题里允许换行以外的任意内容 */
+const REF_DEF = /^ {0,3}\[([^\]]+)\]:\s*<?([^\s>]+)>?(?:\s+["'(](.*)["')])?\s*$/
+/** 图片引用：`![alt][ref]`，ref 可空（collapsed） */
+const IMG_REF = /!\[([^\]]*)\]\s*\[([^\]]*)\]/g
+/** 完整/折叠引用：`[text][ref]` */
+const FULL_REF = /\[([^\]]+)\]\s*\[([^\]]*)\]/g
+/** 快捷引用：`[ref]`，只在 ref 已定义时展开，且后面不跟 `[` 或 `(` */
+const SHORT_REF = /\[([^\]\n]+)\](?!\[|\()/g
+
+export interface LinkRefs {
+  /** 标签（小写、空白折叠）→ 地址 */
+  map: Map<string, string>
+  /** 展开后的 markdown，定义行已剔除 */
+  body: string
+}
+
+/** 标签归一：大小写与内部空白不敏感，跟 GitHub 的行为一致 */
+function refKey(label: string): string {
+  return label.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+/**
+ * 收集参考定义并展开全部引用。围栏代码块里的内容一字不动 ——
+ * 示例代码里写 `[link]: url` 是合法内容，不该被当定义吃掉。
+ */
+export function expandLinkRefs(md: string): LinkRefs {
+  const lines = md.replace(/\r\n?/g, '\n').split('\n')
+  const map = new Map<string, string>()
+  const kept: string[] = []
+
+  let fence: string | null = null
+  for (const line of lines) {
+    const f = FENCE.exec(line)
+    if (f) {
+      // 开/闭围栏（``` 与 ~~~ 各自配对）
+      if (!fence) fence = f[1]
+      else if (fence === f[1]) fence = null
+      kept.push(line)
+      continue
+    }
+    if (fence) {
+      kept.push(line)
+      continue
+    }
+    const def = REF_DEF.exec(line)
+    if (def && !map.has(refKey(def[1]))) {
+      map.set(refKey(def[1]), def[2].trim())
+      continue // 定义行不进正文
+    }
+    kept.push(line)
+  }
+
+  const urlOf = (label: string): string | null => {
+    const key = refKey(label)
+    if (!key) return null
+    return map.get(key) ?? null
+  }
+
+  const expandLine = (line: string): string =>
+    line
+      .replace(IMG_REF, (m, alt: string, ref: string) => {
+        const url = urlOf(ref || alt)
+        return url ? `![${alt}](${url})` : m
+      })
+      .replace(FULL_REF, (m, text: string, ref: string) => {
+        const url = urlOf(ref || text)
+        return url ? `[${text}](${url})` : m
+      })
+      .replace(SHORT_REF, (m, label: string) => {
+        const url = urlOf(label)
+        return url ? `[${label}](${url})` : m
+      })
+
+  // 展开同样要绕开围栏：代码示例里的 `[文字][ref]` 是教学内容，不是链接
+  const out: string[] = []
+  fence = null
+  for (const line of kept) {
+    const f = FENCE.exec(line)
+    if (f) {
+      if (!fence) fence = f[1]
+      else if (fence === f[1]) fence = null
+      out.push(line)
+      continue
+    }
+    out.push(fence ? line : expandLine(line))
+  }
+  return { map, body: out.join('\n') }
+}
+
 export function parseMarkdown(md: string, opts: ParseOptions = {}): Block[] {
+  // 参考式链接先展开，正文里就只剩行内链接一种写法了
+  const expanded = expandLinkRefs(md)
+  md = expanded.body
   const maxBlocks = opts.maxBlocks ?? 400
   const keepCode = opts.keepCode ?? true
   const lines = md.replace(/\r\n?/g, '\n').split('\n')

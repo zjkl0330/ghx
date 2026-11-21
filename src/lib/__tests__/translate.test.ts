@@ -403,3 +403,112 @@ describe('长自述分批', () => {
     expect(r.remaining).toBe(0)
   })
 })
+
+describe('翻译保链接（guard 钩子）', () => {
+  const G = '\u27E6'
+  const R = '\u27E7'
+
+  it('protect 改写送进通道的文字，restore 还原出带链接的块', async () => {
+    const f = vi.fn(async () =>
+      jsonResponse({ responseData: { translatedText: `详情见${G}安装指南${R}。` }, responseStatus: 200 }),
+    )
+    const blocks = [
+      {
+        kind: 'p' as const,
+        text: 'See the installation guide.',
+        spans: [
+          { t: 'text', v: 'See the ' },
+          { t: 'link', v: 'installation guide', href: 'https://x/guide' },
+        ] as never[],
+        spansFor: 'See the installation guide.',
+      },
+    ]
+    const r = await translateBlocks(blocks, {
+      fetchImpl: f as unknown as typeof fetch,
+      channel: 'mymemory',
+      guard: {
+        protect: (b) => {
+          const spans = (b as { spans?: { t: string; v: string; href?: string }[] }).spans ?? []
+          const hrefs: string[] = []
+          let out = ''
+          for (const sp of spans) {
+            if (sp.t === 'link') {
+              out += `${G}${sp.v}${R}`
+              hrefs.push(sp.href!)
+            } else out += sp.v
+          }
+          return hrefs.length ? { text: out.trim(), ctx: hrefs } : null
+        },
+        restore: (b, translated, ctx) => {
+          const hrefs = (ctx as string[]) ?? []
+          const re = /\u27E6([^\u27E6\u27E7]*)\u27E7/g
+          const spans: { t: string; v: string; href?: string }[] = []
+          let last = 0
+          let m: RegExpExecArray | null
+          let i = 0
+          while ((m = re.exec(translated))) {
+            const before = translated.slice(last, m.index)
+            if (before.trim()) spans.push({ t: 'text', v: before })
+            spans.push({ t: 'link', v: m[1], href: hrefs[i++] ?? '' })
+            last = re.lastIndex
+          }
+          const tail = translated.slice(last)
+          if (tail.trim()) spans.push({ t: 'text', v: tail })
+          const text = spans.map((sp) => sp.v).join('')
+          return { ...(b as object), text, spans } as never
+        },
+      },
+    })
+    expect(r.translated).toBe(1)
+    const b = r.blocks[0] as { text: string; spans?: { t: string; v?: string; href?: string }[] }
+    expect(b.text).toBe(`详情见安装指南。`)
+    const link = b.spans?.find((sp): sp is { t: 'link'; v: string; href: string } => sp.t === 'link')
+    expect(link?.href).toBe('https://x/guide')
+    expect(link?.v).toBe('安装指南')
+    // 断言通道收到的是改写后的文字（链接已换成占位符）
+    const sent = decodeURIComponent(String((f.mock.calls[0] as unknown[])[0]))
+    expect(sent).toContain(G)
+  })
+
+  it('restore 找不到占位符时退回纯译文，不崩', async () => {
+    const f = vi.fn(async () =>
+      jsonResponse({ responseData: { translatedText: '纯译文没有占位符' }, responseStatus: 200 }),
+    )
+    const r = await translateBlocks([{ kind: 'p' as const, text: 'some link text' }], {
+      fetchImpl: f as unknown as typeof fetch,
+      channel: 'mymemory',
+      guard: {
+        protect: () => ({ text: 'some link text', ctx: ['https://x'] }),
+        restore: (b, translated, ctx) => {
+          if (!(translated as string).includes(G)) return null
+          void ctx
+          return b
+        },
+      },
+    })
+    expect(r.blocks[0].text).toBe('纯译文没有占位符')
+  })
+
+  it('缓存键始终用未改写的原文，命中缓存也能还原链接', async () => {
+    const store = memoryStore()
+    const fetchOk = vi.fn(async () =>
+      jsonResponse({ responseData: { translatedText: `见${G}指南${R}` }, responseStatus: 200 }),
+    )
+    const opts = {
+      fetchImpl: fetchOk as unknown as typeof fetch,
+      channel: 'mymemory' as const,
+      store,
+      guard: {
+        protect: () => ({ text: `见${G}指南${R}`, ctx: ['https://x'] }),
+        restore: (b: { kind: string; text: string }, translated: string) => ({ ...b, text: translated }),
+      },
+    }
+    await translateBlocks([{ kind: 'p', text: 'See the guide.' }], opts)
+    // 第二次：fetch 不该被调用（缓存命中），restore 依然执行
+    fetchOk.mockClear()
+    const r2 = await translateBlocks([{ kind: 'p', text: 'See the guide.' }], opts)
+    expect(fetchOk).not.toHaveBeenCalled()
+    expect(r2.translated).toBe(1)
+    expect(r2.blocks[0].text).toContain(G)
+  })
+})

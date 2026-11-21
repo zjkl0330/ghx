@@ -61,8 +61,9 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `mirrors.ts` | 下载加速站：站点表、测速、URL 拼接、**自定义站点与改地址** |
 | `update.ts` | 自更新：版本比较、加速站 URL、打开外部链接、`headReachable` 下载探活 |
 | `releases.ts` `forks.ts` `workflows.ts` | 发行版/复刻/工作流的状态与校验 |
-| `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block、图片路径与镜像 |
-| `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
+| `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block（含参考式链接展开 `expandLinkRefs`）、图片路径与镜像 |
+| `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键，`translateBlocks` 支持 guard 钩子（翻译前改写/还原）；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
+| `linkguard.ts` | 机翻保链接：链接标签换成 ⟦⟧ 占位符（实测 Edge 幸存 6/6 且标签被顺便翻译），译文按出现顺序回填 spans；通道吞掉占位符时退回纯译文 |
 | `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策、审计、领域类型 |
 | `apkstore.ts` | 热门页「APK 商店」横滑区：komi-store 精选安卓应用目录（静态 JSON，非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
@@ -156,6 +157,9 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 - 历史教训：老端点 `GET edge.microsoft.com/translate/auth` 已于 2026-07-30 下线，固定 404，别再尝试。
 - 缓存键 = 通道 + 目标语言 + 内容哈希（中文默认不带语言段，兼容旧缓存）。
 - 长段落先按通道上限切分再翻，单段失败只留原文，不能让整篇崩。
+- **链接保活（v0.9.6）**：机翻只换 `block.text`，spans 一失效整段链接变死文字。解法在 `linkguard.ts`：翻译前把链接标签换成 ⟦标签⟧（U+27E6/27E7，实测 Edge 通道整存整取、标签还会被顺便翻译；**不要用数字序号**，会被中文化成「1个」），地址按出现顺序存数组，译文回来按出现顺序回填。占位符被通道吞掉时退回纯译文，不更糟。
+- **参考式链接（v0.9.6）**：`expandLinkRefs` 在解析前把 `[文字][ref]`、`[文字][]`、`![alt][ref]`、快捷式 `[ref]` 展开成行内链接，`[ref]: url` 定义行收集后从正文剔除；围栏代码块内的定义与引用原样保留。LocalSend、SoftEther 这类 README 以前会吐一屏 URL。
+- **GitHub 链接 App 内打开（v0.9.6）**：`mdlink.routeForGithubPath` 把 github.com 路径映射成 App 内 Route（repo/code/issues/pull/commits/actions/user），`SpanText` 有 `onRoute` 时优先 App 内跳转（收弹层、压路由），App 没有的页面（releases/wiki/discussions）与外站仍走外部浏览器。
 - **名字不翻**：`needsTranslation()` 先问 `isNameLike()`。单段纯字母、无空格、且（camelCase / 带数字下划线 / 能按拼音音节表切完 / 三字母内无元音）就判定为名字，直接返回 false。原因：机翻拿到纯拼音会按音硬凑，`MiyoQian` 被翻成「美代倩」；这类简介翻了只会得到一句不存在的中文。`looksLikePinyin()` 用 DP 逐段切音节（拼音没有词边界，正则不可靠），会有误伤（`case` = ca+se），代价只是少一次没必要的翻译，可以接受。
 
 ### 4. 加速站（`mirrors.ts`）
@@ -555,6 +559,7 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - **边界**：真机未验；komi-store 目录是第三方维护的精选（非官方 trending），若上游改版/仓库消失，入口会静默隐藏，不影响榜单。
 
 - **v0.9.5**：APK 商店重排 —— 页内横滑卡撤掉，收进标题栏入口 + 全屏弹层。
+- **v0.9.6**：翻译链接三连修复 —— 参考式链接支持（原文视图 + 定义行剔除）、机翻保链接（⟦⟧ 占位符方案，`translateBlocks` 加 guard 钩子）、GitHub 链接映射 App 内路由（不再跳系统浏览器）。`verify-trlink.py` 五段。
   - **为什么改**：v0.9.4 把商店横滑区插在筛选区和榜单之间，三张大卡占掉半屏，榜单被挤得看不见 —— 用户原话「丑成这个屌样了，入口放在这里不尴尬吗」。热门页的本职是看榜单，商店不该抢屏。
   - **现在的编排**：标题栏（刷新按钮左侧）一个包裹图标入口；点开是全屏弹层（`ApkStoreSheet`，新弹层类型 `apkstore`，返回键直接收起）：头部来源 + rotation 日期 + 总数，过滤框按名称/简介即时过滤，两列网格卡片（头像/名称/星数语言/版本 tag/两行简介），点应用收弹层、进现有仓库详情。
   - feed 拉不到时入口整个不出现，热门页无痕；单测净 +1（backnav 补 `apkstore` 层级）。`verify-apkstore.py` 九段重写（含「页内无内嵌区块」「feed 404 入口隐藏」「返回键收弹层」）。

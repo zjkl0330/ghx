@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { mirrorImage } from '../lib/images'
 import type { Block } from '../lib/markdown'
 import type { LinkContext } from '../lib/mdlink'
+import type { Route } from '../lib/routes'
 import { tocAnchor } from '../lib/toc'
 import { SpanText } from './SpanText'
 
@@ -78,10 +79,12 @@ export function Table({
   b,
   ctx,
   onAnchor,
+  onRoute,
 }: {
   b: Extract<Block, { kind: 'table' }>
   ctx?: LinkContext | null
   onAnchor?: (id: string) => void
+  onRoute?: (r: Route) => void
 }) {
   const alignStyle = (i: number) =>
     ({ textAlign: b.align[i] === 'r' ? 'right' : b.align[i] === 'c' ? 'center' : 'left' }) as const
@@ -92,7 +95,7 @@ export function Table({
           <tr>
             {b.head.map((h, i) => (
               <th key={i} style={alignStyle(i)}>
-                <SpanText text={h} ctx={ctx} onAnchor={onAnchor} />
+                <SpanText text={h} ctx={ctx} onAnchor={onAnchor} onRoute={onRoute} />
               </th>
             ))}
           </tr>
@@ -102,7 +105,7 @@ export function Table({
             <tr key={ri}>
               {b.head.map((_, ci) => (
                 <td key={ci} style={alignStyle(ci)}>
-                  <SpanText text={row[ci] ?? ''} ctx={ctx} onAnchor={onAnchor} />
+                  <SpanText text={row[ci] ?? ''} ctx={ctx} onAnchor={onAnchor} onRoute={onRoute} />
                 </td>
               ))}
             </tr>
@@ -118,15 +121,18 @@ export function MarkdownView({
   mirror,
   ctx,
   onAnchor,
+  onRoute,
 }: {
   blocks: Block[]
   mirror?: string
   /** 仓库上下文：有它自述里的相对链接才能解析成正确地址 */
   ctx?: LinkContext | null
   onAnchor?: (id: string) => void
+  /** GitHub 链接的 App 内打开入口；不传则全部走外部浏览器 */
+  onRoute?: (r: Route) => void
 }) {
   const rich = (b: Extract<Block, { kind: 'h' | 'p' | 'li' | 'quote' }>) => (
-    <SpanText text={b.text} spans={b.spans} spansFor={b.spansFor} ctx={ctx} onAnchor={onAnchor} />
+    <SpanText text={b.text} spans={b.spans} spansFor={b.spansFor} ctx={ctx} onAnchor={onAnchor} onRoute={onRoute} />
   )
 
   return (
@@ -171,7 +177,7 @@ export function MarkdownView({
           case 'img':
             return <MdImage key={i} b={b} mirror={mirror} />
           case 'table':
-            return <Table key={i} b={b} ctx={ctx} onAnchor={onAnchor} />
+            return <Table key={i} b={b} ctx={ctx} onAnchor={onAnchor} onRoute={onRoute} />
           default:
             return null
         }

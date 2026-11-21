@@ -857,6 +857,16 @@ export interface TranslateBlocksResult<B extends BlockLike> {
 }
 
 /**
+ * 翻译保护钩子：有的块在送进通道前要改写（比如链接换成占位符），
+ * 译文回来后再还原。protect 返回 null 表示该块不需要特殊处理。
+ * ctx 是 protect 与 restore 之间传递的不透明数据（restore 用它回填）。
+ */
+export interface BlockGuard<B> {
+  protect: (block: B) => { text: string; ctx?: unknown } | null
+  restore: (block: B, translated: string, ctx: unknown) => B | null
+}
+
+/**
  * 按块翻译，保留标题层级、列表缩进与代码块。
  * 每次只翻一批（默认 30 段）：长 README 全量翻要几分钟且很烧免费额度，
  * 所以分批判，翻完一批就把 next / remaining 交回界面，由用户决定继续。
@@ -872,7 +882,9 @@ export async function translateBlocks<B extends BlockLike>(
     skip?: number
     onProgress?: (done: number, total: number) => void
     /** 每翻好一段就回调，界面可以边翻边显示，不必等全部完成 */
-    onBlock?: (index: number, text: string) => void
+    onBlock?: (index: number, block: B) => void
+    /** 翻译前改写 / 翻译后还原（链接保活等），见 BlockGuard */
+    guard?: BlockGuard<B>
   } = {},
 ): Promise<TranslateBlocksResult<B>> {
   const maxBlocks = opts.maxBlocks ?? 30
@@ -905,21 +917,31 @@ export async function translateBlocks<B extends BlockLike>(
     while (cursor < targets.length) {
       const idx = targets[cursor]
       cursor += 1
-      const src = (blocks[idx].text ?? '').trim()
-      const key = cacheKeyFor(opts, src)
+      const plainSrc = (blocks[idx].text ?? '').trim()
+      // 缓存键永远用未改写的原文：换通道、换 guard 实现后同一段原文命中同一份缓存
+      const key = cacheKeyFor(opts, plainSrc)
+      const guarded = opts.guard?.protect(blocks[idx]) ?? null
+      const src = guarded ? guarded.text : plainSrc
+      const finish = (translated: string): B => {
+        if (!guarded) return { ...blocks[idx], text: translated }
+        return opts.guard?.restore(blocks[idx], translated, guarded.ctx) ?? { ...blocks[idx], text: translated }
+      }
       try {
         const hit = opts.store ? await opts.store.get(key) : null
         if (hit !== null) {
-          out[idx] = { ...out[idx], text: hit }
+          // 旧缓存（无 guard 时代）存的是纯译文，restore 找不到占位符时自然退回纯文字
+          const nb = finish(hit)
+          out[idx] = nb
           ok += 1
-          opts.onBlock?.(idx, hit)
+          opts.onBlock?.(idx, nb)
         } else {
           // 长段落先在块内按通道上限切分再翻，否则 MyMemory 直接拒绝、整段留在英文
           const r = await translateLongText(src, opts)
-          out[idx] = { ...out[idx], text: r.text }
+          const nb = finish(r.text)
+          out[idx] = nb
           channel = r.channel
           ok += 1
-          opts.onBlock?.(idx, r.text)
+          opts.onBlock?.(idx, nb)
           if (opts.store) await opts.store.set(key, r.text)
         }
       } catch {
