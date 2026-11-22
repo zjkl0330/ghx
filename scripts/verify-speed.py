@@ -27,7 +27,7 @@ OWNER = 'zjkl0330'
 
 # 每条线路的模拟延迟（毫秒）：与实测的相对快慢一致，官方最慢
 DELAY = {
-    'gh.zjkl0330.dpdns.org': 200,
+    'self.example.com': 200,
     'ghproxy.imciel.com': 120,
     'gh-proxy.com': 300,
     'ghfast.top': 400,
@@ -216,6 +216,17 @@ def main():
         )
         ctx = b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2)
         ctx.add_init_script(WRAP)
+        # v1.1.3 起包里不带加速站：先模拟用户填了 5 个站，才有「多线路测速」可言
+        ctx.add_init_script(
+            "try{localStorage.setItem('ghx.mirror.store',"
+            "JSON.stringify({overrides:{},custom:["
+            "{id:'self',label:'自建加速',base:'https://self.example.com',style:'path',page:true},"
+            "{id:'u1',label:'ghproxy.imciel.com',base:'https://ghproxy.imciel.com',style:'url'},"
+            "{id:'u2',label:'gh-proxy.com',base:'https://gh-proxy.com',style:'url'},"
+            "{id:'u3',label:'ghfast.top',base:'https://ghfast.top',style:'url'},"
+            "{id:'u4',label:'ghproxy.net',base:'https://ghproxy.net',style:'url'}]}));"
+            "localStorage.setItem('ghx.mirror','https://ghproxy.imciel.com');}catch(e){}"
+        )
         pg = ctx.new_page()
         pg.route('**/api.github.com/**', handle)
         pg.route(re.compile(r'.*\.(png|jpg|jpeg|svg|webp)(\?.*)?$'), lambda r: r.abort())

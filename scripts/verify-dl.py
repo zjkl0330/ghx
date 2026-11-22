@@ -129,6 +129,17 @@ def main():
             args=['--no-sandbox', '--force-color-profile=srgb', '--hide-scrollbars'],
         )
         ctx = b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2)
+        # v1.1.3 起包里不带加速站：模拟用户填了 5 个，才有「多线路候选」可看
+        ctx.add_init_script(
+            "try{localStorage.setItem('ghx.mirror.store',"
+            "JSON.stringify({overrides:{},custom:["
+            "{id:'self',label:'自建加速',base:'https://self.example.com',style:'path',page:true},"
+            "{id:'u1',label:'ghproxy.imciel.com',base:'https://ghproxy.imciel.com',style:'url'},"
+            "{id:'u2',label:'gh-proxy.com',base:'https://gh-proxy.com',style:'url'},"
+            "{id:'u3',label:'ghfast.top',base:'https://ghfast.top',style:'url'},"
+            "{id:'u4',label:'ghproxy.net',base:'https://ghproxy.net',style:'url'}]}));"
+            "localStorage.setItem('ghx.mirror','https://ghproxy.imciel.com');}catch(e){}"
+        )
         pg = ctx.new_page()
         pg.route('**/api.github.com/**', handle)
         pg.route(re.compile(r'.*\.(png|jpg|jpeg|svg|webp)(\?.*)?$'), lambda r: r.abort())
@@ -187,11 +198,6 @@ def main():
         for i, t in enumerate(texts):
             print(f'  {i + 1}. {t}')
         assert n >= 5, f'线路只有 {n} 条'
-        last = texts[-1]
-        assert '官方' in last, f'最后一条不是官方直连：{last!r}'
-        assert '后段慢' in last, f'官方线路没有写明慢在哪：{last!r}'
-        for t in texts[:-1]:
-            assert '官方' not in t, f'官方直连跑到前面去了：{t!r}'
 
         # 等测速跑完：按钮从「测速中 x/y」变回「重新测速」。最多等 90s ——
         # 这几条线路在沙箱里可能全 404（mock 的仓库并不存在），失败也算测完。
@@ -205,6 +211,12 @@ def main():
                  for i in range(pg.locator('.multi-row').count())]
         print('测速后第一行：', after[0])
         assert '官方' not in after[0], f'测速后官方被选成第一条：{after[0]!r}'
+        # 顺序断言放在测速之后：测速中未出结果的线路会被排到后面，那时看末位没有意义
+        last = after[-1]
+        assert '官方' in last, f'最后一条不是官方直连：{last!r}'
+        assert '后段慢' in last, f'官方线路没有写明慢在哪：{last!r}'
+        for t in after[:-1]:
+            assert '官方' not in t, f'官方直连跑到前面去了：{t!r}'
         pg.screenshot(path=f'{OUT}/dl-routes-083.png')
 
         # ── 3. 点选线路不重排：只高亮，不跳动 ──

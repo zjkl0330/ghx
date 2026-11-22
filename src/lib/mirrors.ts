@@ -4,8 +4,8 @@
  * 国内直连 github.com 基本不通，App 的安装包与 README 图片都靠这类代理。
  * 但代理有两种路径风格，传错就 404，所以风格必须跟着站点一起记，不能靠猜：
  *
- *   path：{base}/{owner}/{repo}/releases/...        自建 worker、gitproxy.click
- *   url ：{base}/https://github.com/{owner}/{repo}/...  gh-proxy 系（gh-proxy.com、ghfast.top）
+ *   path：{base}/{owner}/{repo}/releases/...        透明路径反代（自建 Worker 一般就是这样）
+ *   url ：{base}/https://github.com/{owner}/{repo}/... 整段 URL 反代（gh-proxy 系）
  *
  * 另外，HTML 页面（仓库页、Release 页）只有部分代理会转，下载型代理直接 403，
  * 所以「打开网页」单独走 pageUrl()：当前镜像不能翻页时退回自建站点。
@@ -24,20 +24,31 @@ export interface MirrorDef {
   note?: string
 }
 
-/** 自建站点：既是默认下载镜像，也是唯一保证能翻网页的镜像 */
-export const DEFAULT_MIRROR = 'https://gh.zjkl0330.dpdns.org'
+/**
+ * 默认站点：官方直连。
+ *
+ * v1.1.3 起包里不再预置任何加速站。原因不是技术上的 —— 自建反代的地址被
+ * 别人扒去用了，流量算在作者账上，而每一个装了这个包的人都默认走它，
+ * 等于把账单摊给一个不认识的服务器。现在要加速就自己填，填完存本地。
+ *
+ * 老版本存过地址的照旧生效（见 migrateLegacyMirrorStore）：升级只影响
+ * 「以后的新装包」，已经在用的机器不会被改配置。
+ */
+export const DEFAULT_MIRROR = 'https://github.com'
+
+/** 迁移后的老自建站沿用这个 id，好让候选表仍把它固定在靠前的位置 */
+export const SELF_ID = 'self'
 
 /**
- * 自建站当前的真实地址（设置页改过地址就用新的）。
+ * 用户自己配的自建站地址（没有就是空串）。
  *
- * 自建 worker 换域名比公共代理勤，所以站点表允许把 id=zjkl 的地址改掉；
- * 下载候选表必须跟着走，否则会出现「地址改完了，下载还在走旧域名」。
+ * 以前这里是内置地址兜底；现在内置表里根本没有加速站，返回值只可能来自
+ * 用户本地存的站点表，拿不到就返回空 —— 调用方要么跳过这一位，要么
+ * 自然退回官方直连，不会拼出别人的域名。
  */
 export function selfMirrorBase(): string {
-  const hit =
-    REGISTRY.find((m) => m.id === 'zjkl' && m.base) ??
-    BUILTIN_MIRRORS.find((m) => m.id === 'zjkl')
-  return normalizeBase(hit?.base ?? '') || DEFAULT_MIRROR
+  const hit = REGISTRY.find((m) => m.id === SELF_ID && m.base)
+  return normalizeBase(hit?.base ?? '')
 }
 
 /** 保序去重（大小写不敏感），地址列表通用 */
@@ -62,22 +73,13 @@ export const OFFICIAL_MIRROR: MirrorDef = {
   note: '不加速，能直连 github.com 时才快',
 }
 
-export const BUILTIN_MIRRORS: MirrorDef[] = [
-  {
-    id: 'zjkl',
-    label: '自建加速',
-    base: DEFAULT_MIRROR,
-    style: 'path',
-    page: true,
-    note: 'Cloudflare Worker',
-  },
-  { id: 'ghproxy', label: 'gh-proxy.com', base: 'https://gh-proxy.com', style: 'url', note: '下载型' },
-  { id: 'ghfast', label: 'ghfast.top', base: 'https://ghfast.top', style: 'url', note: '下载型' },
-  { id: 'ghproxynet', label: 'ghproxy.net', base: 'https://ghproxy.net', style: 'url', note: '下载型' },
-  { id: 'imciel', label: 'ghproxy.imciel.com', base: 'https://ghproxy.imciel.com', style: 'url' },
-  { id: 'gitproxy', label: 'gitproxy.click', base: 'https://gitproxy.click', style: 'path', note: '下载型' },
-  OFFICIAL_MIRROR,
-]
+/**
+ * 内置站点表：只有官方直连。
+ *
+ * 加速站一个都不预置 —— 包一旦发出去，里面的域名就跟着几十台设备走，
+ * 流量成本落在域名所有者的账单上。用户要加速，在面板里填一次，存在本机。
+ */
+export const BUILTIN_MIRRORS: MirrorDef[] = [OFFICIAL_MIRROR]
 
 /** 去掉结尾斜杠、补全协议；空串原样返回，交给调用方决定兜底 */
 export function normalizeBase(base: string): string {
@@ -165,6 +167,76 @@ export function effectiveMirrors(store: MirrorStore = EMPTY_STORE): MirrorDef[] 
   return [...builtin, ...custom]
 }
 
+/**
+ * 旧版本内置站的路径风格。**只有 id 与风格，没有地址**。
+ *
+ * 用途仅限 v1.1.3 的一次性迁移：用户改过地址的内置站，在新包里已经没有这个
+ * id 了，得转成自定义站；转的时候要沿用原来的路径风格，否则 url 型反代会被
+ * 按 path 拼，下载直接 404。这张表不参与任何候选生成。
+ */
+const LEGACY_STYLE: Record<string, { style: MirrorStyle; page?: boolean; label?: string }> = {
+  zjkl: { style: 'path', page: true, label: '自建加速' },
+  ghproxy: { style: 'url' },
+  ghfast: { style: 'url' },
+  ghproxynet: { style: 'url' },
+  imciel: { style: 'url' },
+  gitproxy: { style: 'path' },
+}
+
+/**
+ * v1.1.3 迁移：把失效的「内置站改地址」转成自定义站。
+ *
+ * 包里不再预置加速站，但**老用户机器上存过的地址一条都不能丢** ——
+ * 用户说「已经安装的不影响」，所以这里只做加法：地址搬到 custom 里，
+ * 选中项原样保留，不写任何新地址。
+ *
+ * `changed` 为真表示站点表被改写，调用方要把结果写回本地。
+ */
+export function migrateLegacyMirrorStore(
+  store: MirrorStore,
+  selected?: string | null,
+): { store: MirrorStore; selected: string; changed: boolean } {
+  const builtinIds = new Set(BUILTIN_MIRRORS.map((m) => m.id))
+  const custom = [...(store.custom ?? [])]
+  const overrides: Record<string, string> = {}
+  let changed = false
+
+  for (const [id, rawBase] of Object.entries(store.overrides ?? {})) {
+    const base = normalizeBase(rawBase)
+    if (!base) continue
+    if (builtinIds.has(id)) {
+      overrides[id] = base
+      continue
+    }
+    changed = true
+    if (custom.some((c) => c.base.toLowerCase() === base.toLowerCase())) continue
+    const meta = LEGACY_STYLE[id]
+    custom.push({
+      id: id === 'zjkl' ? SELF_ID : id,
+      label: meta?.label ?? base.replace(/^https?:\/\//, ''),
+      base,
+      style: meta?.style ?? 'path',
+      ...(meta?.page ? { page: true } : {}),
+    })
+  }
+
+  const sel = normalizeBase(selected ?? '') || DEFAULT_MIRROR
+  return { store: { overrides, custom }, selected: sel, changed }
+}
+
+/**
+ * 这个地址是不是站点表里登记过的。
+ *
+ * 用来区分「用户明确选了 path 风格」和「从旧版本继承来、风格未知」——
+ * 后者要同时给出两种拼法，让探活自己挑，不能因为猜错风格就下不动。
+ */
+export function mirrorKnown(base: string): boolean {
+  const t = normalizeBase(base).toLowerCase()
+  if (!t) return false
+  if (BUILTIN_MIRRORS.some((m) => m.base.toLowerCase() === t)) return true
+  return REGISTRY.some((m) => m.base.toLowerCase() === t)
+}
+
 /** 模块级注册表：给只拿到 base 的调用方（图片、release 下载）反查风格 */
 let REGISTRY: MirrorDef[] = []
 
@@ -181,10 +253,10 @@ export function mirrorRegistry(): MirrorDef[] {
   return REGISTRY
 }
 
-/** 可翻 HTML 页面的站点：注册表里第一个带 page 的，其次是自建站 */
+/** 可翻 HTML 页面的站点：注册表里第一个带 page 的自定义站；没有就交回官方 */
 export function fallbackPageBase(): string {
-  const hit = REGISTRY.find((m) => m.page && m.base)
-  return hit?.base ?? DEFAULT_MIRROR
+  const hit = REGISTRY.find((m) => m.page && m.base && m.id !== 'official')
+  return hit?.base ?? ''
 }
 
 /**
@@ -353,48 +425,35 @@ export function releasePageUrl(base: string, owner: string, repo: string, tag?: 
 /* ---------------- Release 资产：多站候选 ---------------- */
 
 /**
- * 能吃 release 资产的公共反代。
+ * 能吃 release 资产的公共反代：**一个都不内置**。
  *
- * 实测 2026-11-20（对 ghx 的 v0.8.2 APK 做 HEAD，四种都得 `200` 且
- * `content-length: 4392600`，与发布包逐字节一致）：
+ * v1.1.3 起这个表是空的。以前这里放的是实测过吞吐的四家公共代理，问题不在
+ * 它们本身 —— 而是「包里带地址」这件事等于替第三方做分发，谁被写进包里，
+ * 谁的带宽就被所有装了 App 的人一起用。所以留成空表 + 参数注入：
+ * 想加线路的用户自己填站，站点表里有的自然会进候选；单测也能显式传表。
  *
- *   ghproxy.imciel.com  1.07s   ← 最快
- *   gh-proxy.com        2.33s
- *   ghfast.top          3.28s
- *   ghproxy.net         3.46s
- *
- * gitproxy.click 实测对同一资产回 `200` 但只有 195 字节（是错误页），
- * 不能进表。
- *
- * 自建站同样不在这个表里 —— 它由 releaseCandidates() 单独、无条件地插进
- * 候选（见该函数注释），不用公共代理表兜。
+ * 历史实测（2026-11-20，对同一 APK 发 HEAD）：四家都能回 200 且长度一致，
+ * 另有某家回 200 但只有 195 字节（错误页），所以「能连上」不等于「能下包」，
+ * 加线路前必须比对长度。
  */
-export const KNOWN_RELEASE_PROXIES = [
-  'https://ghproxy.imciel.com',
-  'https://gh-proxy.com',
-  'https://ghfast.top',
-  'https://ghproxy.net',
-]
+export const KNOWN_RELEASE_PROXIES: string[] = []
 
 /**
- * 下载候选：能吃包的代理排前面，官方直连永远垫底。
+ * 下载候选：用户自己的站排前面，官方直连永远垫底。
  *
- * 三件事共同决定这个顺序：
+ * 顺序由三件事决定：
  *
  * - 用户选中的站排最前 —— 站点修好之后必须立刻恢复默认线路，不能因为兜底表
  *   存在就永久绕开它。它真的坏了也不会卡住，探活会跳过。
- * - **自建站固定占一位，紧跟在选中站后面**。这不是冗余：开了「自动选最快」
- *   之后 selected 会在后台被换成某条公共代理，自建站就不再是 selected，
- *   于是从表里整个消失 —— 用户看到的就是「我的加速站不见了」。它现在是好的
- *   （2026-11-20 实测：APK 走 Range 回 `206`、`content-range: 0-1023/21253906`
- *   与发布包一致；拉 3 MB 约 3.9 s；源码 ZIP 直接 `200` + `content-type: zip`），
- *   理应永远在候选里，只是排位交给测速决定。
+ * - **用户的自建站固定占一位，紧跟在选中站后面**。这不是冗余：开了「自动选最快」
+ *   之后 selected 会在后台被换掉，自建站就不再是 selected，于是从表里整个消失 ——
+ *   用户看到的就是「我的加速站不见了」。它由用户自己填，理应在候选里常驻。
  * - **官方直连不进前三**。它建连快、首包快，256 KB 测速常年第一，但长时段
  *   吞吐会掉下来（跨境链路 + 无缓存），几百 KB 的探针根本反映不出这一点。
- *   所以这里把它固定在末尾：只有代理全挂时才轮到它。
+ *   所以这里把它固定在末尾：只有前面的线路全挂时才轮到它。
  *
- * 上限 7 条 = 选中 1 + 自建 1 + 公共代理 4 + 官方 1，正好装得下，但截断时
- * 仍然单独保护官方那一条，避免以后加代理把它挤掉。
+ * `proxies` 默认是空表：包里不带任何第三方代理地址，要加线路由调用方显式传入
+ * （用户站点表里有的话），或用户自己在面板里填。
  */
 export function releaseCandidates(
   base: string,
@@ -402,7 +461,7 @@ export function releaseCandidates(
   repo: string,
   tag: string,
   asset: string,
-  proxies: string[] = KNOWN_RELEASE_PROXIES,
+  proxies?: string[],
   selfBase: string = selfMirrorBase(),
 ): string[] {
   const official = 'https://github.com'
@@ -410,13 +469,20 @@ export function releaseCandidates(
   const officialUrl = githubUrlAt(official, path)
   const chosen = normalizeBase(base)
   const self = normalizeBase(selfBase)
+  // 不传就是「用户填过的所有 url 型站」；传空数组表示只要选中站与自建站
+  const pool = proxies ?? userProxyBases([chosen, self])
 
   const head: string[] = []
-  if (chosen && chosen !== official) head.push(githubUrlAt(chosen, path))
+  if (chosen && chosen !== official) {
+    head.push(githubUrlAt(chosen, path))
+    // 从旧版本继承来的地址没有风格记录：再给一条 url 拼法，让探活自己挑对的。
+    // 猜错风格不该等于下不动包，代价只是多探一条。
+    if (!mirrorKnown(chosen)) head.push(`${chosen}/https://github.com/${path}`)
+  }
   if (self && self !== official && self.toLowerCase() !== chosen.toLowerCase()) {
     head.push(githubUrlAt(self, path))
   }
-  for (const p of proxies) if (p) head.push(githubUrlAt(p, path))
+  for (const p of pool) if (p) head.push(githubUrlAt(p, path))
 
   const others = uniqUrls(head).filter((u) => u !== officialUrl)
   return [...others.slice(0, 6), officialUrl]
@@ -424,6 +490,25 @@ export function releaseCandidates(
 
 /** 探活回调：true 表示这条线路能下 */
 export type ReachProbe = (url: string) => Promise<boolean>
+
+/**
+ * 站点表里所有 url 型站（用户自己填的），按登记顺序去重。
+ *
+ * v1.1.3 之前这里是内置的公共代理表；现在包里没有地址，能进候选的只能是
+ * 用户填过的站。`exclude` 用来把「已经单独占位的选中站 / 自建站」剔掉，
+ * 免得同一条线路在表里出现两次。
+ */
+export function userProxyBases(exclude: string[] = []): string[] {
+  const skip = new Set(exclude.map((b) => normalizeBase(b).toLowerCase()).filter(Boolean))
+  const out: string[] = []
+  for (const m of REGISTRY) {
+    if (m.style !== 'url' || m.id === 'official') continue
+    const base = normalizeBase(m.base)
+    if (!base || skip.has(base.toLowerCase())) continue
+    out.push(base)
+  }
+  return uniqUrls(out)
+}
 
 /**
  * 顺序探活，返回第一条通的。

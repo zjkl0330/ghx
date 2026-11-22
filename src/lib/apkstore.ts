@@ -10,12 +10,13 @@
  * 点进仓库详情就能走现有的发行版下载链路，不在 App 里另起炉灶。
  *
  * 源头是 raw.githubusercontent.com，国内直连经常不通，所以候选线路
- * 与下载同一套思路：自建站恒在队首（它还会顺手把 feed 里的
+ * 与下载同一套思路：用户自己填的站排在队首（它还会顺手把 feed 里的
  * avatars.githubusercontent.com 改写成可直连的镜像域名，等于头像也白捡一层加速），
- * 官方 raw 与公共代理殿后。JSON 每天只变一次，落盘缓存 6 小时内不再发请求。
+ * 官方 raw 殿后。包里不带任何第三方代理地址，没填就只剩官方一条。
+ * JSON 每天只变一次，落盘缓存 6 小时内不再发请求。
  */
 
-import { BUILTIN_MIRRORS, rawUrlAt, selfMirrorBase } from './mirrors'
+import { BUILTIN_MIRRORS, mirrorRegistry, rawUrlAt, selfMirrorBase } from './mirrors'
 import type { KV } from './storage'
 import type { Repo } from './types'
 
@@ -35,18 +36,33 @@ export const APK_STORE_SOURCES: readonly string[] = [
 export const APK_STORE_OFFICIAL_URL =
   `https://raw.githubusercontent.com/${FEED_OWNER}/${FEED_REPO}/${FEED_REF}/cached-data/${APK_STORE_SOURCES[0]}`
 
-/** 内置 url 风格公共代理（不含官方直连），头像改写与 feed 候选共用 */
+/**
+ * 能改写头像与 feed 的 url 型站点：内置（v1.1.3 起为空）+ 用户自己填的。
+ *
+ * 用户填的站必须参与这里 —— 否则他明明加了代理，头像和目录却还只走官方 raw，
+ * 看起来就像「加了没用」。包里依然不带任何地址：这里的 base 全部来自
+ * `ghx.mirror.store`。
+ */
 export function urlProxyBases(): string[] {
-  return BUILTIN_MIRRORS.filter((m) => m.style === 'url' && m.id !== 'official').map((m) => m.base)
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const m of [...BUILTIN_MIRRORS, ...mirrorRegistry()]) {
+    if (m.id === 'official' || m.style !== 'url' || !m.base) continue
+    const key = m.base.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(m.base)
+  }
+  return out
 }
 
 /**
- * 候选线路：自建站 → 官方 raw → 公共代理，保序去重。
+ * 候选线路：用户自建站（如有）→ 官方 raw，保序去重。
  *
  * 自建站排第一：它专为「国内直连 raw 不通」而生，而且会把 feed 里的
- * 头像域名一并改写成镜像地址（2026-11-21 实测 200，JSON 150 条完好）。
- * 官方 raw 放在公共代理前面 —— 沙箱实测它 1.16s，比 gh-proxy 的 0.8s
- * 略慢但更不容易被代理站限流；真机网络差时自建站已经兜住绝大多数场景。
+ * 头像域名一并改写成镜像地址。没有自建站时就只剩官方 raw 一条 —— 这是
+ * v1.1.3 的预期行为：包里不再预置加速站，装完直接连通不通取决于用户的网络，
+ * 要加速就自己填。
  */
 export function apkStoreCandidates(
   path: string = APK_STORE_SOURCES[0],
@@ -177,7 +193,7 @@ export function apkPlatforms(d: Record<string, unknown>): ApkPlatform[] {
  * 头像候选线路：原图恒在队首（海外/能直连时最准），
  * avatars.githubusercontent.com 在国内经常整站不通，所以按候选垫后：
  * ① 自建站的专用头像域名（avatars-githubusercontent-com-{host}，2026-11-21 实测 200）；
- * ② url 风格公共代理逐个改写（gh-proxy.com 代理头像 200，ghfast/ghproxy.net 403）。
+ * ② 用户填的 url 型站点逐个改写（有的站代理头像会 403，能用的那条留在表里）。
  * 原图若已被自建站改写成镜像域名就直接单线返回，不再二次包壳。
  */
 export function avatarSources(

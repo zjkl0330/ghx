@@ -26,6 +26,13 @@ import {
   urlProxyBases,
 } from '../apkstore'
 import type { ApkStore, ApkStoreHttp } from '../apkstore'
+import {
+  EMPTY_STORE,
+  addCustomMirror,
+  effectiveMirrors,
+  resetMirrorRegistry,
+  setMirrorRegistry,
+} from '../mirrors'
 
 const NOW = Date.parse('2026-11-21T08:00:00Z')
 
@@ -228,22 +235,32 @@ describe('apkStoreCandidates', () => {
   })
 
   it('自建站队首、官方 raw 恒在、公共代理殿后，保序去重', () => {
-    const urls = apkStoreCandidates(
-      APK_STORE_SOURCES[0],
-      ['https://gh-proxy.com', 'https://ghfast.top'],
-      'https://gh.example.com',
+    // 代理的路径风格来自用户站点表（包里不再内置），所以先登记再拼地址
+    const store = addCustomMirror(
+      addCustomMirror(EMPTY_STORE, { base: 'https://gh-proxy.com', style: 'url' }),
+      { base: 'https://ghfast.top', style: 'url' },
     )
-    expect(urls[0]).toBe(
-      'https://gh.example.com/komi-store/komi-store-backend-data/raw/main/cached-data/feed/android.json',
-    )
-    expect(urls[1]).toBe(APK_STORE_OFFICIAL_URL)
-    expect(urls[2]).toBe(
-      'https://gh-proxy.com/https://raw.githubusercontent.com/komi-store/komi-store-backend-data/main/cached-data/feed/android.json',
-    )
-    expect(urls[3]).toBe(
-      'https://ghfast.top/https://raw.githubusercontent.com/komi-store/komi-store-backend-data/main/cached-data/feed/android.json',
-    )
-    expect(new Set(urls).size).toBe(urls.length)
+    setMirrorRegistry(effectiveMirrors(store))
+    try {
+      const urls = apkStoreCandidates(
+        APK_STORE_SOURCES[0],
+        ['https://gh-proxy.com', 'https://ghfast.top'],
+        'https://gh.example.com',
+      )
+      expect(urls[0]).toBe(
+        'https://gh.example.com/komi-store/komi-store-backend-data/raw/main/cached-data/feed/android.json',
+      )
+      expect(urls[1]).toBe(APK_STORE_OFFICIAL_URL)
+      expect(urls[2]).toBe(
+        'https://gh-proxy.com/https://raw.githubusercontent.com/komi-store/komi-store-backend-data/main/cached-data/feed/android.json',
+      )
+      expect(urls[3]).toBe(
+        'https://ghfast.top/https://raw.githubusercontent.com/komi-store/komi-store-backend-data/main/cached-data/feed/android.json',
+      )
+      expect(new Set(urls).size).toBe(urls.length)
+    } finally {
+      resetMirrorRegistry()
+    }
   })
 
   it('自建站与官方重复时只留一条；空自建站跳过', () => {
@@ -252,11 +269,14 @@ describe('apkStoreCandidates', () => {
     expect(apkStoreCandidates(APK_STORE_SOURCES[0], [], '')).toEqual([APK_STORE_OFFICIAL_URL])
   })
 
-  it('默认代理来自内置 url 风格站点且不含官方直连', () => {
+  it('默认不带任何第三方代理：只有自建（如有）与官方 raw', () => {
     const urls = apkStoreCandidates(APK_STORE_SOURCES[0], undefined, 'https://gh.example.com')
     expect(urls.some((u) => u.startsWith('https://github.com/'))).toBe(false)
-    expect(urls.length).toBeGreaterThan(2)
-    expect(urls[1]).toBe(APK_STORE_OFFICIAL_URL)
+    expect(urlProxyBases()).toEqual([])
+    expect(urls).toEqual([
+      'https://gh.example.com/komi-store/komi-store-backend-data/raw/main/cached-data/feed/android.json',
+      APK_STORE_OFFICIAL_URL,
+    ])
   })
 })
 
@@ -338,23 +358,38 @@ describe('avatarSources', () => {
     ])
   })
 
-  it('默认代理来自 urlProxyBases()，与 feed 候选同一来源', () => {
-    expect(urlProxyBases().length).toBeGreaterThan(0)
+  it('用户自己填的 url 型站会参与头像改写', () => {
+    setMirrorRegistry(
+      effectiveMirrors(addCustomMirror(EMPTY_STORE, { base: 'https://p.example', style: 'url' })),
+    )
+    try {
+      expect(urlProxyBases()).toEqual(['https://p.example'])
+      const list = avatarSources('https://avatars.githubusercontent.com/u/3?v=4')
+      expect(list).toEqual([
+        'https://avatars.githubusercontent.com/u/3?v=4',
+        'https://p.example/https://avatars.githubusercontent.com/u/3?v=4',
+      ])
+    } finally {
+      resetMirrorRegistry()
+    }
+  })
+
+  it('默认没有任何第三方代理，头像只剩原图一条', () => {
+    expect(urlProxyBases()).toEqual([])
     const list = avatarSources(
       'https://avatars.githubusercontent.com/u/2?v=4',
       urlProxyBases(),
       '',
     )
-    expect(list.length).toBe(1 + urlProxyBases().length)
-    expect(list[1].startsWith(urlProxyBases()[0])).toBe(true)
+    expect(list).toEqual(['https://avatars.githubusercontent.com/u/2?v=4'])
   })
 
   it('已改写成镜像域名的头像不再二次包壳；空值返回空表', () => {
     const mirrored = avatarSources(
-      'https://avatars-githubusercontent-com-gh.zjkl0330.dpdns.org/u/1?v=4',
+      'https://avatars-githubusercontent-com-gh.example.com/u/1?v=4',
       ['https://gh-proxy.com'],
     )
-    expect(mirrored).toEqual(['https://avatars-githubusercontent-com-gh.zjkl0330.dpdns.org/u/1?v=4'])
+    expect(mirrored).toEqual(['https://avatars-githubusercontent-com-gh.example.com/u/1?v=4'])
     expect(avatarSources('')).toEqual([])
     expect(avatarSources('  ')).toEqual([])
     expect(avatarSources(undefined as unknown as string)).toEqual([])

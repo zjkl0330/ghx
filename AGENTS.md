@@ -66,7 +66,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `linkguard.ts` | 机翻保行内格式：**不再用 ⟦⟧ 占位符**（v1.1.1 起）。`planInline` 把 spans 拆成可翻片段（纯地址、emoji/符号、已是中文的片段不送翻），`applyInline` 按同顺序把译文填回本地结构 —— 链接 href/顺序/数量全程不经过翻译通道，通道怎么写坏都顶不掉链接。译文缺片段、出现 ◆/�、或原文的 emoji 变少 → 返回 null，调用方保留原块。`inlineGuard()` 供 README 与文档翻译共用。缓存命名空间 `.g4` + 片段哈希 |
 | `useDocTranslation.ts` | 一段 Markdown（发行说明等）的整块机翻 hook：guard 保链接/粗体、边翻边显示、失败如实报数、换文档先 cancel 防串台 |
 | `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策（软键盘视口启发式 `softKeyboardOpen`）、审计、领域类型 |
-| `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 三源合并目录（feed 轮换精选 + most-popular + new-releases，去重 ~174+，静态 JSON 非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h（缓存键 v2）、`avatarSources` 头像多线路回退（原图 → 自建站头像域名 → url 风格代理改写 → 首字母）、新旧 schema 双认（stargazersCount/stars、owner.avatarUrl/顶层 avatarUrl）、`apkPlatforms` 平台归属、`apkAppToRepo` 复用仓库详情链路 |
+| `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 三源合并目录（feed 轮换精选 + most-popular + new-releases，去重 ~174+，静态 JSON 非 GitHub API），多线路候选（用户自填站队首/官方 raw；v1.1.3 起不预置任何代理）、rotation 缓存 6h（缓存键 v2）、`avatarSources` 头像多线路回退（原图 → 自建站头像域名 → url 风格代理改写 → 首字母）、新旧 schema 双认（stargazersCount/stars、owner.avatarUrl/顶层 avatarUrl）、`apkPlatforms` 平台归属、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
 | `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
 | `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked` |
@@ -129,7 +129,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 
 > **用户主页的两个坑（v0.6.3）**：① `.avatar` 是固定尺寸容器（30 / 58px），往里塞 `<img>` 必须给 `width:100%; height:100%`，容器还要 `overflow:hidden` —— 少了这一步，460px 原图按自身尺寸绘制，整页被横向撑爆：统计卡飘到头像上、仓库列表被推出屏幕，表现上就是「个人主页打不开」。更稳的是照其它页面把 `.avatar` 直接写在 `<img>` 上。② `theme.css` 里 `.badge` 有两处定义，后一处是通知未读角标的红底方块，它会把仓库行的 Public / 私有 / 已归档标签一起染成红块。计数角标现在叫 `.badge.count`，新加标签类别再撞 `.badge`。
 
-> 下 zip 的坑：`/archive/refs/heads/<branch>.zip` 只是个 302，真字节在 `codeload.github.com`；自建站是透明路径代理，把 302 交出去就断了，只有 url 型反代能整段代理。实测只有 `gh-proxy.com` 能吃 codeload（`ghfast.top` / `ghproxy.net` 403、`ghproxy.imciel.com` 404），所以候选顺序是「当前镜像 codeload → gh-proxy → 当前镜像 archive → 官方」，并且必须 HEAD 探活（Capacitor 原生 HTTP 支持 HEAD，`HttpRequestHandler` 只在非 GET/HEAD 时才挂 body）。Web 端别探活，CORS 会把 HEAD 全判死。
+> 下 zip 的坑：`/archive/refs/heads/<branch>.zip` 只是个 302，真字节在 `codeload.github.com`；自建站是透明路径代理，把 302 交出去就断了，只有 url 型反代能整段代理。公共反代里能吃 codeload 的很少（多数 403/404），所以候选顺序是「当前镜像 codeload → 用户填的反代 → 当前镜像 archive → 官方」，并且必须 HEAD 探活（Capacitor 原生 HTTP 支持 HEAD，`HttpRequestHandler` 只在非 GET/HEAD 时才挂 body）。Web 端别探活，CORS 会把 HEAD 全判死。
 
 ## 七个核心机制（改之前必须懂）
 
@@ -178,9 +178,12 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 - `path`：`{base}/{owner}/{repo}/...`（自建 Worker、gitproxy）
 - `url`：`{base}/https://github.com/{owner}/{repo}/...`（gh-proxy 系）
 
+**内置表只有官方直连。** 加速站一律由用户自己填，不预置 —— 包里带地址等于替那台服务器分发流量（v1.1.3 的起因）。`DEFAULT_MIRROR` 现在就是 `https://github.com`。
+
 站点表存在 `ghx.mirror.store`：`{ overrides: {内置id→新地址}, custom: [自定义站点] }`。
-启动时 `parseMirrorStore` → `setMirrorRegistry(effectiveMirrors(store))`，**注册表是模块级变量**，因为 `githubUrlAt(base)` / `rawUrlAt(base)` 只拿到 base，得靠它反查风格。
+启动时 `parseMirrorStore` → `migrateLegacyMirrorStore`（把旧版内置站的改地址搬成自定义站）→ `setMirrorRegistry(effectiveMirrors(store))`，**注册表是模块级变量**，因为 `githubUrlAt(base)` / `rawUrlAt(base)` 只拿到 base，得靠它反查风格。
 改地址/加站/删站都要走 `App.saveMirrorStore`，它会同步注册表并作废本轮测速结果。
+风格未知的地址（从旧版本继承、还没落进站点表）在候选里会同时给 path 与 url 两种拼法，让探活自己挑 —— 猜错风格不该等于下不动包。
 
 ### 5. 导航与页面
 
@@ -211,7 +214,9 @@ user / notifications / search / profile / settings / tokens / audit
 
 三段路，各自有独立的坑，别把它们混成「下载」一件事：
 
-**候选表**（`mirrors.ts` 的 `releaseCandidates` / `archive.ts` 的 `archiveCandidates`）—— 顺序是实测出来的，**不要在新模块里重排**。要点：自建站常驻、官方恒沉底、ZIP 只有 `gh-proxy.com` 能吃 codeload。`slice(0, 6)` / `slice(0, 4)` 是探活成本的上限，加条目前先想清楚「多等一条要多久」。
+**候选表**（`mirrors.ts` 的 `releaseCandidates` / `archive.ts` 的 `archiveCandidates`）—— 顺序是实测出来的，**不要在新模块里重排**。要点：用户自己填的站常驻、官方恒沉底、ZIP 只有 url 型站能吃 codeload。`slice(0, 6)` / `slice(0, 5)` 是探活成本的上限，加条目前先想清楚「多等一条要多久」。
+
+**v1.1.3 起 `BUILTIN_MIRRORS` 只有官方直连，`KNOWN_RELEASE_PROXIES` / `KNOWN_CODELOAD_PROXIES` 都是空表。** 往里面塞地址等于替那台服务器做分发 —— 装了这个包的所有人都会默认走它，流量算在域名所有者账上（v1.1.3 就是因为自建站被滥用才清空的）。要加线路只能走「用户自己在面板里填」，存 `ghx.mirror.store`；单测需要具体线路时显式传参数或用 `setMirrorRegistry` 注册。老配置由 `migrateLegacyMirrorStore` 搬成自定义站，**只做加法，不许在升级时删用户地址**。
 
 **分片**（`ChunkedFetch`）—— 必须 206 才切；每跳重设 `Range`；`Accept-Encoding: identity`；定位写入。`MAX_PARTS = 32`、`MIN_PART = 256 KiB`：界面最高档 32 路，实际片数还要被总长与最小片再夹一次；线路不认 Range 就退回单连接。
 

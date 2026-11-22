@@ -1,5 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { EMPTY_STORE, addCustomMirror, effectiveMirrors, resetMirrorRegistry, setMirrorRegistry } from '../mirrors'
 import { mirrorImage, normalizeGithubImage, rawBase, resolveImageSrc } from '../images'
+
+/* 包里不再预置加速站，url 型风格只能来自用户自己的站点表 */
+beforeEach(() => {
+  setMirrorRegistry(
+    effectiveMirrors(addCustomMirror(EMPTY_STORE, { base: 'https://gh-proxy.com', style: 'url' })),
+  )
+})
+
+afterEach(() => {
+  resetMirrorRegistry()
+})
 
 const RAW = 'https://raw.githubusercontent.com'
 

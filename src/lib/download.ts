@@ -143,7 +143,7 @@ export interface DownloadTarget {
  *
  * 候选表里既有 path 型（`{base}/owner/repo/...`）也有 url 型
  * （`{base}/https://github.com/...`），两种都以 base 开头，所以统一按
- * 「前缀最长匹配」判定：`gh.zjkl0330.dpdns.org` 与 `github.com` 同时命中时，
+ * 「前缀最长匹配」判定：自建站域名与 `github.com` 同时命中时，
  * 取更长的那个才对（否则自建站会被认成官方）。
  */
 export function mirrorOfUrl(url: string): { base: string; label: string; style: MirrorStyle } {
@@ -694,7 +694,7 @@ export function routeLabelOf(route: DownloadRoute | null): string {
  * 线路副标题。
  *
  * 同一个站点可能占两行 —— 源码 ZIP 尤其明显：gh-proxy 既能直取 codeload，
- * 也能走 github 的 archive 302，两条都叫「gh-proxy.com」，光看名字分不清。
+ * 也能走 github 的 archive 302，两条都挂同一个站名，光看名字分不清。
  * 这里按地址形状补一句，让两行是不同的东西。
  */
 export function routeDetail(route: DownloadRoute): string {

@@ -12,20 +12,18 @@
  * 所以这里产出的是「候选列表」，按最可能通的顺序排列，交给调用方探活，
  * 第一个能通的才真正交给浏览器。
  */
-import { githubUrlAt, mirrorDefFor, normalizeBase, selfMirrorBase } from './mirrors'
+import { githubUrlAt, mirrorDefFor, mirrorKnown, normalizeBase, selfMirrorBase, userProxyBases } from './mirrors'
 
 export const CODELOAD_BASE = 'https://codeload.github.com'
 
 /**
- * 实测（2026-11）能吃 codeload 的公共反代只有 gh-proxy.com：
- * ghfast.top / ghproxy.net 直接 403，ghproxy.imciel.com 404。
- * 所以它要排在「当前镜像」后面单独占一位，不能指望运气。
+ * 能吃 codeload 的公共反代：**一个都不内置**。
  *
- * 自建站曾经也只代理 github.com（302 出去让浏览器自己连 codeload，国内常失败），
- * 但 2026-11-20 复查已能自己把 zip 取回来（`200` + `content-type: zip`，
- * 带 etag / cache-control），所以它作为独立候选固定留在表里。
+ * v1.1.3 起包里不带加速站地址。历史实测（2026-11）能吃 codeload 的公共反代
+ * 很少，其中多数直接 403，所以这里留空、由调用方显式传入；用户自己填的
+ * url 型站点会自动进候选（见下面的 def.style 分支）。
  */
-export const KNOWN_CODELOAD_PROXIES = ['https://gh-proxy.com']
+export const KNOWN_CODELOAD_PROXIES: string[] = []
 
 /** 分支里的斜杠 GitHub 会转成连字符：feat/x → repo-feat-x.zip */
 export function archiveFileName(repo: string, ref: string): string {
@@ -67,10 +65,10 @@ export function archiveViaMirror(mirror: string, owner: string, repo: string, re
 /**
  * 候选地址，按「最可能通」排序。顺序是踩出来的，不是拍脑袋：
  *
- * 1. 当前镜像是 url 型 → 先让它试 codeload（成了最快，一步到位）；
- * 2. 已知能吃 codeload 的公共反代（gh-proxy.com）；
- * 3. 自建站 —— 和 release 候选同理，不能只在「当前镜像就是它」时才出现，
- *    否则后台自动选最快一切换，用户自己的加速站就从列表里消失了；
+ * 1. 当前镜像能整段代理 codeload（url 型，或旧版本继承来、风格未知）→ 先试这条；
+ * 2. 调用方显式传入的 codeload 代理（包里默认不带，用户填了才有）；
+ * 3. 用户自己的自建站 —— 和 release 候选同理，不能只在「当前镜像就是它」时
+ *    才出现，否则后台自动选最快一切换，用户自己的加速站就从列表里消失了；
  * 4. 当前镜像的 github archive 路径 —— 能通就通，通不了还有下一条；
  * 5. 官方 codeload 兜底（能直连 GitHub 的环境走这条）。
  *
@@ -81,15 +79,19 @@ export function archiveCandidates(
   owner: string,
   repo: string,
   ref: string,
-  proxies: string[] = KNOWN_CODELOAD_PROXIES,
+  proxies?: string[],
   selfBase: string = selfMirrorBase(),
 ): string[] {
   const def = mirrorDefFor(mirror)
   const self = normalizeBase(selfBase)
+  // 不传就是用户填过的 url 型站；传空数组表示只要当前站与官方
+  const pool = proxies ?? userProxyBases([mirror])
   const out: string[] = []
+  // 风格未知（从旧版本继承的地址）时两种拼法都给：猜错不该等于下不动
+  const maybeUrl = def.style === 'url' || (!mirrorKnown(mirror) && !!def.base)
 
-  if (def.base && def.style === 'url') out.push(codeloadViaProxy(def.base, owner, repo, ref))
-  for (const base of proxies) {
+  if (maybeUrl) out.push(codeloadViaProxy(def.base, owner, repo, ref))
+  for (const base of pool) {
     if (base) out.push(codeloadViaProxy(base, owner, repo, ref))
   }
   if (self && self !== normalizeBase(def.base)) {

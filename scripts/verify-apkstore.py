@@ -267,6 +267,13 @@ MEASURE = """() => {
 
 def new_page(b, handle_feed=True):
     ctx = b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2)
+    # 包里不再预置加速站：先模拟「用户自己填了一个 url 型代理」，
+    # 头像改写与目录候选才会走它（否则只剩官方 raw，回退链无从验证）。
+    ctx.add_init_script(
+        "try{localStorage.setItem('ghx.mirror.store',"
+        "JSON.stringify({overrides:{},custom:["
+        "{id:'u1',label:'gh-proxy.com',base:'https://gh-proxy.com',style:'url'}]}));}catch(e){}"
+    )
     pg = ctx.new_page()
     errors = []
     pg.on('pageerror', lambda e: errors.append(str(e)))

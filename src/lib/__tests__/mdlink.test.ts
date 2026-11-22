@@ -1,5 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { EMPTY_STORE, addCustomMirror, effectiveMirrors, resetMirrorRegistry, setMirrorRegistry } from '../mirrors'
 import { dirOf, isRepoPath, joinPath, linkifyUrls, resolveBareHref, resolveHref, routeForGithubPath, safeHref, splitHash, type LinkContext } from '../mdlink'
+
+/* 包里不再预置加速站，url 型风格只能来自用户自己的站点表 */
+beforeEach(() => {
+  setMirrorRegistry(
+    effectiveMirrors(addCustomMirror(EMPTY_STORE, { base: 'https://gh-proxy.com', style: 'url' })),
+  )
+})
+
+afterEach(() => {
+  resetMirrorRegistry()
+})
 
 const ctx: LinkContext = {
   owner: 'zjkl0330',

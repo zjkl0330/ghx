@@ -757,9 +757,9 @@ export function SettingsPage(p: Props) {
                 <Icon name="chevron" size={13} className="linkrow-arrow" />
               </button>
               <div className="hint">
-                APK 与自述图片都从加速站下载，因为 github.com 直连通常不通。安装包、任意仓库的发行版附件、源码
-                ZIP 走的是同一套候选与测速：在下载面板里逐条测速后选最快，失败自动换下一条。站点域名换了不用重装
-                App：进页面点每个站点右边的铅笔直接改地址，改完立即全局生效（图片、安装包、发行版页一起跟着走）。
+                本版起不再预置任何加速站，默认直连 github.com（国内通常不通，建议自己加一个）。填一次存在本机，
+                换包不丢；安装包、发行版附件、源码 ZIP 与自述图片走同一套候选与测速。站点域名换了不用重装 App：
+                进页面点站点右边的铅笔直接改地址，改完立即全局生效。
               </div>
             </div>
           </div>

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { EMPTY_STORE, addCustomMirror, effectiveMirrors, resetMirrorRegistry, setMirrorRegistry } from '../mirrors'
 import {
   buildMirrorUrl,
   checkForUpdate,
@@ -65,13 +66,18 @@ describe('compareVersions / isNewer', () => {
 })
 
 describe('buildMirrorUrl', () => {
+  afterAll(() => resetMirrorRegistry())
+
   it('拼出加速前缀的下载路径', () => {
     expect(
-      buildMirrorUrl('https://gh.zjkl0330.dpdns.org', '827802685', 'ghx', 'v0.2.0', 'ghx-0.2.0.apk'),
-    ).toBe('https://gh.zjkl0330.dpdns.org/827802685/ghx/releases/download/v0.2.0/ghx-0.2.0.apk')
+      buildMirrorUrl('https://self.example.com', '827802685', 'ghx', 'v0.2.0', 'ghx-0.2.0.apk'),
+    ).toBe('https://self.example.com/827802685/ghx/releases/download/v0.2.0/ghx-0.2.0.apk')
   })
 
   it('url 风格站点拼成完整 GitHub 地址', () => {
+    setMirrorRegistry(
+      effectiveMirrors(addCustomMirror(EMPTY_STORE, { base: 'https://gh-proxy.com', style: 'url' })),
+    )
     expect(buildMirrorUrl('https://gh-proxy.com', '827802685', 'ghx', 'v0.2.0', 'x.apk')).toBe(
       'https://gh-proxy.com/https://github.com/827802685/ghx/releases/download/v0.2.0/x.apk',
     )
@@ -104,6 +110,17 @@ describe('pickApk', () => {
 })
 
 describe('parseRelease', () => {
+  /* 用户填过站之后的状态：一个能翻页的自建站 + 一个纯下载型反代 */
+  beforeAll(() => {
+    const store = addCustomMirror(
+      addCustomMirror(EMPTY_STORE, { base: 'https://self.example.com', style: 'path', page: true }),
+      { base: 'https://gh-proxy.com', style: 'url' },
+    )
+    setMirrorRegistry(effectiveMirrors(store))
+  })
+
+  afterAll(() => resetMirrorRegistry())
+
   const base = {
     tag_name: 'v0.2.0',
     name: 'ghx 0.2.0',
@@ -113,22 +130,22 @@ describe('parseRelease', () => {
   }
 
   it('生成加速下载地址与官方兜底地址', () => {
-    const info = parseRelease(base, 'https://gh.zjkl0330.dpdns.org')
+    const info = parseRelease(base, 'https://self.example.com')
     expect(info?.version).toBe('0.2.0')
     expect(info?.downloadUrl).toBe(
-      'https://gh.zjkl0330.dpdns.org/zjkl0330/ghx/releases/download/v0.2.0/ghx-0.2.0.apk',
+      'https://self.example.com/zjkl0330/ghx/releases/download/v0.2.0/ghx-0.2.0.apk',
     )
     expect(info?.fallbackUrl).toBe('https://github.com/x/y.apk')
   })
 
   it('带出可直接打开的 Release 页面', () => {
-    const info = parseRelease(base, 'https://gh.zjkl0330.dpdns.org')
-    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/zjkl0330/ghx/releases/tag/v0.2.0')
+    const info = parseRelease(base, 'https://self.example.com')
+    expect(info?.releasePage).toBe('https://self.example.com/zjkl0330/ghx/releases/tag/v0.2.0')
   })
 
   it('纯下载型镜像的 Release 页面退回自建站点，按钮不会 403', () => {
     const info = parseRelease(base, 'https://gh-proxy.com')
-    expect(info?.releasePage).toBe('https://gh.zjkl0330.dpdns.org/zjkl0330/ghx/releases/tag/v0.2.0')
+    expect(info?.releasePage).toBe('https://self.example.com/zjkl0330/ghx/releases/tag/v0.2.0')
   })
 
   it('draft 版本对外不可见，直接丢弃', () => {

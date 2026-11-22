@@ -1,15 +1,17 @@
-"""验证：自建加速站不再因为「自动选最快」而从下载线路里消失。
+"""验证：用户自己填的加速站不会因为「自动选最快」而从下载线路里消失。
 
-背景：mirrorAuto 默认打开，后台测速后会把当前镜像切成某条公共代理；
-原来的 releaseCandidates 只把「当前镜像」放进候选，自建站因此整行消失，
+背景：mirrorAuto 默认打开，后台测速后会把当前镜像切成别的线路；
+如果候选表只认「当前镜像」，用户填的自建站就会整行消失 ——
 用户看到的就是「我的加速站不见了」。
 
+v1.1.3 起包里不再预置任何加速站，所以这里先用 localStorage 模拟
+「用户填过一个自建站 + 一个别的站」，再验证候选表行为。
+
 断言口径（读 DOM，不看截图目测）：
-1. 预置「当前镜像 = gitproxy.click」等价于自动选线已经切走；
-2. 打开下载面板后仍是 7 行，第 2 行是「自建加速」，URL 指向 DEFAULT_MIRROR；
-3. 官方直连仍在最后一行，且只有它带「后段慢」；
-4. 自建站有真实测速结果（不 mock 这个域名，走真网络）；失败只告警不算断言失败，
-   因为沙箱到 Cloudflare 的链路会抖 — 真机复测看打印出来的速度；
+1. 预置两个用户站，当前镜像 = 其中第二个，等价于自动选线已经切走；
+2. 打开下载面板后 3 行：选中站、自建站、官方直连；
+3. 自建站钉在第 2 位，官方直连在最后一行且只出现一次；
+4. 关掉重开，自建站仍在、行数不变；
 5. 面板不横向溢出（390 宽）。
 
 用法：
@@ -25,9 +27,9 @@ from playwright.sync_api import sync_playwright
 BASE = 'http://127.0.0.1:4173/'
 OUT = '/workspace/ghx/docs/screenshots'
 OWNER = 'zjkl0330'
-SELF = 'https://gh.zjkl0330.dpdns.org'
-# 等价于「自动选最快」挑中了一条路径型公共代理
-CHOSEN = 'https://gitproxy.click'
+SELF = 'https://self.example.com'
+# 等价于「自动选最快」挑中了用户填的另一条线路
+CHOSEN = 'https://mirror.example.com'
 
 REPOS = [
     {
@@ -154,6 +156,13 @@ def main():
         ctx.add_init_script(
             """
             try {
+              localStorage.setItem('ghx.mirror.store', JSON.stringify({
+                overrides: {},
+                custom: [
+                  { id: 'self', label: '自建加速', base: %s, style: 'path', page: true },
+                  { id: 'u2', label: '自选中', base: %s, style: 'path' }
+                ]
+              }));
               localStorage.setItem('ghx.mirror', %s);
               localStorage.setItem('ghx.mirror.auto', 'on');
               localStorage.setItem('ghx.mirror.speed', JSON.stringify({
@@ -163,12 +172,18 @@ def main():
               }));
             } catch (e) {}
             """
-            % (json.dumps(CHOSEN), json.dumps(CHOSEN), json.dumps(CHOSEN))
+            % (
+                json.dumps(SELF),
+                json.dumps(CHOSEN),
+                json.dumps(CHOSEN),
+                json.dumps(CHOSEN),
+                json.dumps(CHOSEN),
+            )
         )
         pg = ctx.new_page()
         pg.route('**/api.github.com/**', handle)
         pg.route(re.compile(r'.*\.(png|jpg|jpeg|svg|webp)(\?.*)?$'), lambda r: r.abort())
-        for host in ('ghproxy.imciel.com', 'gh-proxy.com', 'ghfast.top', 'ghproxy.net', 'gitproxy.click'):
+        for host in ('self.example.com', 'mirror.example.com'):
             pg.route(f'**/{host}/**', fake_asset)
 
         pg.goto(BASE)
@@ -206,7 +221,7 @@ def main():
         pg.wait_for_timeout(1500)
 
         rows = pg.evaluate(MEASURE)
-        assert rows['count'] == 7, f'应为 7 条线路，实际 {rows["count"]} 条'
+        assert rows['count'] == 3, f'应为 3 条线路（选中 + 自建 + 官方），实际 {rows["count"]} 条'
         assert '自建加速' in rows['labels'], f'自建站不在表里：{rows["labels"]}'
         assert '官方' in rows['labels'][-1], f'官方不在末位：{rows["labels"][-1]!r}'
         assert rows['labels'].count('官方直连') == 1, '官方直连出现了不止一次'
@@ -233,9 +248,9 @@ def main():
         pg.wait_for_timeout(900)
         again = pg.evaluate(MEASURE)
         assert '自建加速' in again['labels'], f'重开后自建站又不见了：{again["labels"]}'
-        assert again['count'] == 7, f'重开后行数变了：{again["count"]}'
+        assert again['count'] == 3, f'重开后行数变了：{again["count"]}'
         pos = again['labels'].index('自建加速') + 1
-        print(f'[4] 重开面板仍是 7 行，自建站在第 {pos} 位')
+        print(f'[4] 重开面板仍是 3 行，自建站在第 {pos} 位')
         pg.screenshot(path=f'{OUT}/selfmirror-090-reopen.png')
 
         b.close()

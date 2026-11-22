@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   apkTarget,
   bgDownloadView,
@@ -33,6 +33,7 @@ import {
   DOWNLOAD_MODE_KEY,
   toRoutes,
   type DlParts,
+  type DownloadTarget,
   type SpeedEntry,
 } from '../download'
 import {
@@ -60,17 +61,49 @@ describe('下载方式设置', () => {
   })
 })
 
+/**
+ * 包里不再预置加速站，风格只能来自用户自己的站点表。
+ * 这组用例统一在「用户填过一个自建站 + 一个 url 型反代」的环境下跑。
+ */
+const SELF = 'https://self.example.com'
+const PROXY = 'https://gh-proxy.com'
+
+const STATIONS = {
+  overrides: {},
+  custom: [
+    { id: 'self', label: '自建加速', base: SELF, style: 'path' as const, page: true },
+    { id: 'purl', label: 'gh-proxy.com', base: PROXY, style: 'url' as const },
+  ],
+}
+
+function registerStations() {
+  setMirrorRegistry(effectiveMirrors(STATIONS))
+}
+
+function withSelf(fn: () => void) {
+  registerStations()
+  try {
+    fn()
+  } finally {
+    resetMirrorRegistry()
+  }
+}
+
 describe('地址反查站点', () => {
   it('自建站的 path 型地址认回自建站，不会被 github.com 抢走', () => {
-    const m = mirrorOfUrl(`${DEFAULT_MIRROR}/o/r/releases/download/v1/a.apk`)
-    expect(m.base).toBe(DEFAULT_MIRROR)
-    expect(m.style).toBe('path')
+    withSelf(() => {
+      const m = mirrorOfUrl(`${SELF}/o/r/releases/download/v1/a.apk`)
+      expect(m.base).toBe(SELF)
+      expect(m.style).toBe('path')
+    })
   })
 
   it('gh-proxy 的 url 型地址认回 gh-proxy，而不是 GitHub 官方', () => {
-    const m = mirrorOfUrl('https://gh-proxy.com/https://github.com/o/r/releases/download/v1/a.apk')
-    expect(m.base).toBe('https://gh-proxy.com')
-    expect(m.style).toBe('url')
+    withSelf(() => {
+      const m = mirrorOfUrl('https://gh-proxy.com/https://github.com/o/r/releases/download/v1/a.apk')
+      expect(m.base).toBe('https://gh-proxy.com')
+      expect(m.style).toBe('url')
+    })
   })
 
   it('官方地址回落到官方直连（站点表里已有该条目，用它的名字）', () => {
@@ -120,12 +153,29 @@ describe('三类目标', () => {
     expect(t.installable).toBe(true)
     expect(t.subtitle).toBe('zjkl0330/ghx · v0.7.8')
     expect(t.routes[0].base).toBe(DEFAULT_MIRROR)
-    // 自建站 + 四个能吃 release 的反代 + 官方兜底，最多六条
-    expect(t.routes.length).toBeGreaterThanOrEqual(5)
-    expect(t.routes.length).toBeLessThanOrEqual(6)
+    // 包里不带加速站：没填过站的机器上，候选就只有官方直连一条
+    expect(t.routes).toHaveLength(1)
     // 官方直连永远垫底：它首包快、后段慢，不能进候选前排
     expect(t.routes[t.routes.length - 1].official).toBe(true)
     expect(t.routes.filter((r) => r.official)).toHaveLength(1)
+  })
+
+  it('填了自建站之后：自建排第一，官方仍然垫底', () => {
+    withSelf(() => {
+      const t = apkTarget({
+        mirror: DEFAULT_MIRROR,
+        owner: 'zjkl0330',
+        repo: 'ghx',
+        tag: 'v0.7.8',
+        asset: 'ghx-0.7.8-debug.apk',
+        size: 4_500_000,
+      })
+      // 用户填了一个自建站 + 一个 url 型反代：两条都该进候选，官方垫底
+      expect(t.routes).toHaveLength(3)
+      expect(t.routes[0].base).toBe(SELF)
+      expect(t.routes[1].base).toBe(PROXY)
+      expect(t.routes[2].official).toBe(true)
+    })
   })
 
   it('发行版附件：zip 不可安装，但候选与安装包同一套', () => {
@@ -155,13 +205,18 @@ describe('三类目标', () => {
     expect(a.installable).toBe(true)
   })
 
-  it('源码 ZIP：文件名按分支拼，含 gh-proxy 的 codeload 候选', () => {
-    const t = archiveTarget({ mirror: DEFAULT_MIRROR, owner: 'o', repo: 'my-repo', ref: 'feat/x' })
-    expect(t.kind).toBe('archive')
-    expect(t.fileName).toBe('my-repo-feat-x.zip')
-    expect(t.installable).toBe(false)
-    expect(t.size).toBe(0)
-    expect(t.routes.some((r) => r.url.includes('gh-proxy.com/https://codeload.github.com'))).toBe(true)
+  it('源码 ZIP：文件名按分支拼，url 型站会先试 codeload', () => {
+    withSelf(() => {
+      const t = archiveTarget({ mirror: PROXY, owner: 'o', repo: 'my-repo', ref: 'feat/x' })
+      expect(t.kind).toBe('archive')
+      expect(t.fileName).toBe('my-repo-feat-x.zip')
+      expect(t.installable).toBe(false)
+      expect(t.size).toBe(0)
+      expect(t.routes.some((r) => r.url.includes('gh-proxy.com/https://codeload.github.com'))).toBe(true)
+      expect(t.routes[t.routes.length - 1].url).toBe(
+        'https://codeload.github.com/o/my-repo/zip/refs/heads/feat/x',
+      )
+    })
   })
 
   it('空分支名退回 main', () => {
@@ -188,15 +243,23 @@ function fakeHttp(map: Record<string, { status: number; bytes: number }>) {
 }
 
 describe('测速与选线', () => {
-  const t = apkTarget({
-    mirror: DEFAULT_MIRROR,
-    owner: 'o',
-    repo: 'r',
-    tag: 'v1',
-    asset: 'a.apk',
-    size: 1000,
+  let t: DownloadTarget
+
+  beforeAll(() => {
+    registerStations()
+    t = apkTarget({ mirror: PROXY, owner: 'o', repo: 'r', tag: 'v1', asset: 'a.apk', size: 1000 })
   })
 
+  afterAll(() => {
+    resetMirrorRegistry()
+  })
+
+  it('两条以上的线路才谈得上排序', () => {
+    expect(t.routes.length).toBe(3)
+    expect(t.routes[0].base).toBe(PROXY)
+    expect(t.routes[1].base).toBe(SELF)
+    expect(t.routes[2].official).toBe(true)
+  })
   it('concurrency 为 1 时退回串行，回调按顺序给结果', async () => {
     const slow = t.routes[0].url
     const fast = t.routes[1].url
@@ -364,14 +427,17 @@ describe('测速与选线', () => {
 /* ---------------- 测速看板 ---------------- */
 
 describe('测速看板：一天只测一次', () => {
-  const t = apkTarget({
-    mirror: DEFAULT_MIRROR,
-    owner: 'o',
-    repo: 'r',
-    tag: 'v1',
-    asset: 'a.apk',
-    size: 1000,
+  let t: DownloadTarget
+
+  beforeAll(() => {
+    registerStations()
+    t = apkTarget({ mirror: PROXY, owner: 'o', repo: 'r', tag: 'v1', asset: 'a.apk', size: 1000 })
   })
+
+  afterAll(() => {
+    resetMirrorRegistry()
+  })
+
   const baseOf = (i: number) => t.routes[i].base.toLowerCase()
 
   function entry(i: number, kbps: number, status: 'ok' | 'fail' = 'ok'): SpeedEntry {
@@ -429,7 +495,7 @@ describe('测速看板：一天只测一次', () => {
   it('按站点存：换一个包、换一个版本，测过的结果照样能用', () => {
     const b = boardOf([entry(0, 900), entry(1, 300)], day(20, 9))
     const other = assetTarget({
-      mirror: DEFAULT_MIRROR,
+      mirror: PROXY,
       owner: 'x',
       repo: 'y',
       tag: 'v9',
@@ -537,22 +603,21 @@ describe('设置项说明', () => {
     expect(routeDetail(direct)).toBe('codeload 直取')
     expect(routeDetail(viaGithub)).toBe('经 github 302')
     // 站点名与域名不同时直接给域名，不用补说明
-    expect(routeDetail(toRoutes([`${DEFAULT_MIRROR}/o/r/x.zip`])[0])).toBe('gh.zjkl0330.dpdns.org')
+    expect(routeDetail(toRoutes([`${DEFAULT_MIRROR}/o/r/x.zip`])[0])).toBe('github.com')
   })
 
   it('发行版附件的 url 型站点标「整段 URL 代理」', () => {
-    const r = toRoutes(['https://gh-proxy.com/https://github.com/o/r/releases/download/v1/a.apk'])[0]
-    expect(routeDetail(r)).toBe('整段 URL 代理')
+    withSelf(() => {
+      const r = toRoutes(['https://gh-proxy.com/https://github.com/o/r/releases/download/v1/a.apk'])[0]
+      expect(routeDetail(r)).toBe('整段 URL 代理')
+    })
   })
 
   it('自定义站点进注册表后能按名字显示', () => {
-    setMirrorRegistry(effectiveMirrors({ overrides: {}, custom: [] }))
-    try {
-      const m = mirrorOfUrl(`${DEFAULT_MIRROR}/o/r/x.apk`)
+    withSelf(() => {
+      const m = mirrorOfUrl(`${SELF}/o/r/x.apk`)
       expect(m.label).toBe('自建加速')
-    } finally {
-      resetMirrorRegistry()
-    }
+    })
   })
 })
 

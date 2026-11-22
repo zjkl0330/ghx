@@ -164,7 +164,8 @@ export function MirrorSheet(p: Props) {
         <div className="grab" />
         <h3>加速站</h3>
         <div className="sheet-sub">
-          域名会换，所以每个站点都能改地址：改完立即全局生效，图片、安装包、发行版页一起跟着走。
+          从这个版本起不再预置任何加速站，要加速请自己填一个（存本机，换包不会丢）。
+          填过的站点都能改地址：改完立即全局生效，图片、安装包、发行版页一起跟着走。
           {p.probe.light ? '轻量模式只测连通性。' : ''}
         </div>
 
@@ -319,7 +320,7 @@ export function MirrorSheet(p: Props) {
                 id="nm-base"
                 value={newBase}
                 onChange={(e) => setNewBase(e.target.value)}
-                placeholder={DEFAULT_MIRROR.replace(/^https?:\/\//, '')}
+                placeholder="例如 gh.example.com"
                 autoCapitalize="off"
                 spellCheck={false}
               />

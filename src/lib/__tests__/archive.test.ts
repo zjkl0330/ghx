@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   archiveCandidates,
   archiveFileName,
@@ -8,10 +8,34 @@ import {
   codeloadViaProxy,
   pickArchive,
 } from '../archive'
-import { resetMirrorRegistry, setMirrorRegistry, repoPageUrl } from '../mirrors'
+import {
+  EMPTY_STORE,
+  addCustomMirror,
+  effectiveMirrors,
+  resetMirrorRegistry,
+  setMirrorRegistry,
+  repoPageUrl,
+} from '../mirrors'
 
 const PROXY = 'https://gh-proxy.com'
-const SELF = 'https://gh.zjkl0330.dpdns.org'
+const SELF = 'https://gh.example.com'
+
+/*
+ * 包里不再预置加速站，风格只可能来自用户自己的站点表。这组用例统一在
+ * 「用户填过一个 url 型反代 + 一个能翻页的自建站」的环境下跑 —— 这也正是
+ * ZIP 下载能走通的前提。
+ */
+beforeEach(() => {
+  const store = addCustomMirror(
+    addCustomMirror(EMPTY_STORE, { base: PROXY, style: 'url' }),
+    { base: SELF, style: 'path', page: true },
+  )
+  setMirrorRegistry(effectiveMirrors(store))
+})
+
+afterEach(() => {
+  resetMirrorRegistry()
+})
 
 describe('archiveFileName', () => {
   it('用「仓库-分支.zip」，与 GitHub 自己给的文件名一致', () => {
@@ -79,8 +103,8 @@ describe('archiveCandidates', () => {
     expect(list[0]).toBe('https://gh-proxy.com/https://codeload.github.com/o/r/zip/refs/heads/main')
   })
 
-  it('自建站占不到 codeload 反代位，但它自己的 archive 路径仍在候选里', () => {
-    const list = archiveCandidates(SELF, 'o', 'r', 'main')
+  it('自建站占不到 codeload 反代位，代理先上', () => {
+    const list = archiveCandidates(SELF, 'o', 'r', 'main', [PROXY])
     expect(list[0]).toBe('https://gh-proxy.com/https://codeload.github.com/o/r/zip/refs/heads/main')
     expect(list).toContain(`${SELF}/o/r/archive/refs/heads/main.zip`)
     expect(list.indexOf(`${SELF}/o/r/archive/refs/heads/main.zip`)).toBeLessThan(
@@ -90,7 +114,7 @@ describe('archiveCandidates', () => {
 
   /* 自动选最快会在后台把当前镜像换成公共代理，自建站不能因此被挤掉 */
   it('当前镜像换成公共代理后，自建站仍在 ZIP 候选里', () => {
-    const list = archiveCandidates(PROXY, 'o', 'r', 'main')
+    const list = archiveCandidates(PROXY, 'o', 'r', 'main', [], SELF)
     const self = list.indexOf(`${SELF}/o/r/archive/refs/heads/main.zip`)
     expect(self).toBeGreaterThan(0)
     expect(self).toBeLessThan(list.indexOf('https://codeload.github.com/o/r/zip/refs/heads/main'))

@@ -257,7 +257,7 @@ export function DownloadSheet(p: Props) {
      * 不会。所以位置固定，速度照实显示在旁边，选不选由用户看着办。
      */
     const selfBase = selfMirrorBase().toLowerCase()
-    const selfAt = base.findIndex((r) => (r.base ?? '').toLowerCase() === selfBase)
+    const selfAt = selfBase ? base.findIndex((r) => (r.base ?? '').toLowerCase() === selfBase) : -1
     if (selfAt > 1) {
       const [self] = base.splice(selfAt, 1)
       base.splice(1, 0, self)

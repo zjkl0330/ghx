@@ -24,6 +24,7 @@ import {
   mirrorCandidates,
   mirrorDefFor,
   mirrorLabel,
+  migrateLegacyMirrorStore,
   normalizeBase,
   parseMirrorStore,
   parseSnapshot,
@@ -1152,11 +1153,19 @@ export default function App() {
 
         // 先恢复站点表再谈「当前用哪台」：改过地址的站点必须先进注册表，
         // 后面的 mirrorDefFor / githubUrlAt 才知道新域名该走哪种路径风格。
-        const store = parseMirrorStore(savedMirrorStore)
-        setMirrorStore(store)
-        setMirrorRegistry(effectiveMirrors(store))
-
-        if (savedMirror) setMirror(savedMirror)
+        //
+        // v1.1.3 起包里不再预置加速站。老版本存过地址的（改过内置站地址、
+        // 或当前正用着某个加速站）在这里搬成自定义站，一条都不丢 —— 升级
+        // 只是不再给新设备填默认值，已经装着的机器照旧。
+        const parsedStore = parseMirrorStore(savedMirrorStore)
+        const mig = migrateLegacyMirrorStore(parsedStore, savedMirror)
+        setMirrorStore(mig.store)
+        setMirrorRegistry(effectiveMirrors(mig.store))
+        setMirror(mig.selected)
+        if (mig.changed) {
+          void kv.set(MIRROR_STORE_KEY, serializeMirrorStore(mig.store))
+          void kv.set(MIRROR_KEY, mig.selected)
+        }
 
         // 下载方式：默认交给浏览器。老版本没这个键，解析成 outer。
         const savedDownloadMode = await kv.get(DOWNLOAD_MODE_KEY)
