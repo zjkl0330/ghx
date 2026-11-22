@@ -2,8 +2,6 @@ package dev.zjkl.ghx;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageInfo;
@@ -19,77 +17,93 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 
 /**
- * 启动失败时说人话。
+ * 启动失败时的记录与提示。
  *
- * 为什么需要这个类：App 打不开时，能拿到的唯一信息是「闪一下就回桌面」——
- * 没有 logcat 就完全抓瞎。这里把三件事同时做掉：
+ * <p>只做两件事，**不在界面上加任何调试面板**：
  *
- *  1. 用 Toast 抢在前头显示一行摘要（Toast 不依赖 WebView，也不依赖页面）；
- *  2. 弹一个纯原生对话框，把完整原因摊开，可一键复制；
- *  3. 落到 {@code Android/data/<包名>/files/boot-failure.txt} 与应用私有目录各一份，
- *     免得对话框也被系统拦掉时什么都留不下。
+ *  1. 进程级崩溃处理器：把栈落到 {@code files/crash.txt}，方便事后取；
+ *  2. 启动真的走不下去时（super.onCreate 抛异常这类），用 Toast + 原生对话框
+ *     告诉用户一句人话。
  *
- * 全部调用都包了 try：这个类本身就是「兜底」，它自己再抛异常就没有意义了。
+ * <p>排查用的「上次 App 是这么退出的」整屏面板、启动阶段流水账、白屏探针都已删除 ——
+ * 那个空指针修掉之后它们没有存在意义，留着只会挡住正常界面。
  */
 final class BootFailure {
 
     static final String FILE_NAME = "boot-failure.txt";
+    /** 崩溃栈单独一个文件，免得被普通日志覆盖 */
+    static final String CRASH_FILE = "crash.txt";
+
+    private static volatile boolean sinkInstalled;
 
     private BootFailure() {}
 
-    /** 致命：主流程挂了，把原因摆到屏幕上 */
-    static void show(Activity act, String stage, Throwable t) {
-        String text = describe(act, stage, t);
-        String brief = "启动失败（" + stage + "）：" + shortReason(t);
+    /**
+     * 装上进程级崩溃处理器。
+     *
+     * <p>在 {@link GhxApplication#attachBaseContext} 里调用：那时 MainActivity
+     * 这个类可能还没被加载，装在 Activity 里会漏掉类加载阶段的崩溃。
+     */
+    static void installCrashSink(Context context) {
+        if (sinkInstalled) return;
+        sinkInstalled = true;
+        final Context app = context.getApplicationContext() == null
+                ? context : context.getApplicationContext();
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    writeNamed(app, CRASH_FILE, describe(app, "uncaught:" + t.getName(), e));
+                } catch (Throwable ignored) {
+                    // 已经要死了，记不上也没别的办法
+                }
+                if (prev != null) prev.uncaughtException(t, e);
+            }
+        });
+    }
 
+    /** 非致命：只落盘，不打扰用户（例如插件登记失败，页面还能开） */
+    static void note(Activity act, String stage, Throwable t) {
+        writeNamed(act, FILE_NAME, describe(act, stage, t));
+    }
+
+    /** 致命：主流程挂了，给用户一句能看懂的话 */
+    static void show(Activity act, String stage, Throwable t) {
+        String brief = "启动失败（" + stage + "）：" + shortReason(t);
         try {
             Toast.makeText(act.getApplicationContext(), brief, Toast.LENGTH_LONG).show();
         } catch (Throwable ignored) {
-            // Toast 在没有 Looper 的极端情况下也会失败，继续走落盘
+            // 没有 Looper 的极端情况下 Toast 也会失败
         }
-
-        write(act, text);
-
+        writeNamed(act, FILE_NAME, describe(act, stage, t));
         try {
-            final String payload = text;
-            final Activity host = act;
             AlertDialog dlg = new AlertDialog.Builder(act)
                     .setTitle("ghx 启动失败")
-                    .setMessage(text)
-                    .setPositiveButton("复制详情", new DialogInterface.OnClickListener() {
+                    .setMessage(brief + "\n\n详细信息已写入应用目录下的 crash.txt")
+                    .setPositiveButton("关闭", new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface d, int w) {
-                            copy(host, payload);
-                        }
-                    })
-                    .setNegativeButton("关闭", new DialogInterface.OnClickListener() {
-                        @Override
-                        public void onClick(DialogInterface d, int w) {
-                            host.finish();
+                            act.finish();
                         }
                     })
                     .setCancelable(false)
                     .create();
             dlg.show();
         } catch (Throwable ignored) {
-            // super.onCreate 失败时窗口令牌可能无效，弹窗会 BadTokenException —— 上面已有 Toast 与文件
+            // 窗口令牌失效时弹不出来，Toast 已经说过了
         }
-    }
-
-    /** 非致命：只落盘，不打扰用户（例如插件登记失败，页面还能开） */
-    static void note(Activity act, String stage, Throwable t) {
-        write(act, describe(act, stage, t));
     }
 
     /* ---------------- 文本 ---------------- */
 
-    private static String describe(Activity act, String stage, Throwable t) {
+    private static String describe(Context ctx, String stage, Throwable t) {
         StringBuilder sb = new StringBuilder(1024);
         sb.append("阶段: ").append(stage == null ? "?" : stage).append('\n');
         sb.append("时间: ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
                 java.util.Locale.US).format(new java.util.Date())).append('\n');
-        sb.append("版本: ").append(versionName(act)).append('\n');
-        sb.append(env(act)).append('\n');
+        sb.append("版本: ").append(versionName(ctx)).append('\n');
+        sb.append(env()).append('\n');
         sb.append("---- 异常 ----\n");
         sb.append(stackOf(t));
         return sb.toString();
@@ -115,27 +129,20 @@ final class BootFailure {
             return String.valueOf(t);
         }
         String s = sw.toString();
-        // 对话框里放太长会卡在渲染上，留最上面的调用栈就够定位
-        if (s.length() > 2400) s = s.substring(0, 2400) + "\n…（已截断）";
+        if (s.length() > 8000) s = s.substring(0, 8000) + "\n…（已截断）";
         return s;
     }
 
-    /**
-     * 环境快照。WebView 那一行是重点：
-     * 系统 WebView 被停用、被降级、或版本低于页面要求的语法级别时，
-     * 表现就是「打开就退」，而这条信息在设置页里找不到。
-     */
-    private static String env(Activity act) {
+    /** 环境快照，写进日志用：WebView 版本是这类问题的关键线索 */
+    private static String env() {
         StringBuilder sb = new StringBuilder(320);
         try {
             sb.append("Android ").append(Build.VERSION.RELEASE)
               .append(" (API ").append(Build.VERSION.SDK_INT).append(')').append('\n');
             sb.append("设备: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');
-            String abi = "?";
             if (Build.SUPPORTED_ABIS != null && Build.SUPPORTED_ABIS.length > 0) {
-                abi = Build.SUPPORTED_ABIS[0];
+                sb.append("ABI: ").append(Build.SUPPORTED_ABIS[0]).append('\n');
             }
-            sb.append("ABI: ").append(abi).append('\n');
             sb.append("WebView: ").append(webViewInfo()).append('\n');
             sb.append("存储: ").append(storage()).append('\n');
         } catch (Throwable e) {
@@ -144,7 +151,7 @@ final class BootFailure {
         return sb.toString();
     }
 
-    static String webViewInfo() {
+    private static String webViewInfo() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return "API < 26，无法查询";
         }
@@ -175,9 +182,9 @@ final class BootFailure {
         return String.format(java.util.Locale.US, "%.0f MB", bytes / 1048576.0);
     }
 
-    private static String versionName(Activity act) {
+    private static String versionName(Context ctx) {
         try {
-            PackageInfo p = act.getPackageManager().getPackageInfo(act.getPackageName(), 0);
+            PackageInfo p = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0);
             String n = p.versionName == null ? "?" : p.versionName;
             long code = Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
             return n + " (" + code + ")";
@@ -188,26 +195,25 @@ final class BootFailure {
 
     /* ---------------- 落盘 ---------------- */
 
-    private static void write(Activity act, String text) {
+    private static void writeNamed(Context ctx, String name, String text) {
         try {
-            File ext = act.getExternalFilesDir(null);
-            writeTo(ext, text);
+            writeTo(ctx.getExternalFilesDir(null), name, text);
         } catch (Throwable ignored) {
             // 外部目录没挂载就只留私有目录那份
         }
         try {
-            writeTo(act.getFilesDir(), text);
+            writeTo(ctx.getFilesDir(), name, text);
         } catch (Throwable ignored) {
-            // 私有目录也写不进去时，屏幕上那份仍然有效
+            // 私有目录也写不进去就算了
         }
     }
 
-    private static void writeTo(File dir, String text) {
+    private static void writeTo(File dir, String name, String text) {
         if (dir == null) return;
         FileOutputStream out = null;
         try {
             if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, FILE_NAME);
+            File f = new File(dir, name);
             out = new FileOutputStream(f, false);
             out.write(text.getBytes("UTF-8"));
             out.flush();
@@ -221,17 +227,6 @@ final class BootFailure {
                     // 同上
                 }
             }
-        }
-    }
-
-    private static void copy(Context ctx, String text) {
-        try {
-            ClipboardManager cm = (ClipboardManager) ctx.getSystemService(Context.CLIPBOARD_SERVICE);
-            if (cm == null) return;
-            cm.setPrimaryClip(ClipData.newPlainText("ghx boot failure", text));
-            Toast.makeText(ctx.getApplicationContext(), "已复制", Toast.LENGTH_SHORT).show();
-        } catch (Throwable ignored) {
-            // 复制失败不影响用户手动截图
         }
     }
 }

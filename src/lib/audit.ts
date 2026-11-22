@@ -1,5 +1,6 @@
 import type { KV } from './storage'
 import type { AuditEntry } from './types'
+import { uuidV4 } from './uuid'
 
 const AUDIT_KEY = 'ghx.audit.v1'
 const MAX_ENTRIES = 200
@@ -11,7 +12,7 @@ export async function appendAudit(
 ): Promise<AuditEntry> {
   const entry: AuditEntry = {
     ...input,
-    id: globalThis.crypto.randomUUID(),
+    id: uuidV4(),
     at: new Date().toISOString(),
   }
   const list = await readAudit(kv)

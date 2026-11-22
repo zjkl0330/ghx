@@ -127,6 +127,23 @@ final class DownloadHub {
         LISTENERS.remove(l);
     }
 
+    /**
+     * 提前把 Context 交给下载中枢。
+     *
+     * <p>这一条是「打开就闪退」的真正病根：以前 {@code app} 只在 {@link #start}
+     * 里赋值，于是**还没下过任何东西**时，{@link #snapshot()} 仍会去查断点，
+     * 一路走到 {@link #downloadDir()} 上的 {@code app.getExternalFilesDir(...)} ——
+     * null 直接 NPE。异常抛在 Capacitor 的插件线程上，没人接，进程当场被杀。
+     *
+     * <p>启动时 JS 一定会调一次 {@code status()} 对账，所以这条路每次冷启动都会走。
+     * 现在插件一加载就先把 Context 装上，并且下面所有用到 app 的地方都判空。
+     */
+    static void install(Context context) {
+        if (context == null) return;
+        Context appCtx = context.getApplicationContext();
+        app = appCtx == null ? context : appCtx;
+    }
+
     static Snapshot snapshot() {
         Snapshot s = new Snapshot();
         s.running = running;
@@ -144,10 +161,17 @@ final class DownloadHub {
         // 断点信息只在没有下载在跑时查：下载中的 bytes 就是实时进度，
         // 没必要每 800ms 去读一次账本文件
         if (!running) {
-            File part = partOf(fileName);
-            long have = ResumeState.doneOf(part);
-            s.resumeBytes = have;
-            s.resumable = have > 0 && (total <= 0 || have < total);
+            try {
+                File part = partOf(fileName);
+                long have = ResumeState.doneOf(part);
+                s.resumeBytes = have;
+                s.resumable = have > 0 && (total <= 0 || have < total);
+            } catch (Throwable ignored) {
+                // 目录还没准备好（Context 尚未装上、外部存储没挂载）就当没有断点。
+                // 这里绝不能往外抛：调用方是插件线程，抛出去就是整进程崩。
+                s.resumeBytes = 0;
+                s.resumable = false;
+            }
         }
         return s;
     }
@@ -164,7 +188,8 @@ final class DownloadHub {
                          String repoName, String kindName, String tagName, int wantParts, boolean resume) {
         synchronized (LOCK) {
             if (running) return false;
-            app = context.getApplicationContext();
+            install(context);
+            if (app == null) return false;
             cancelled = false;
             running = true;
             hasResult = false;
@@ -292,7 +317,9 @@ final class DownloadHub {
 
     private static void acquireLocks() {
         try {
-            PowerManager pm = (PowerManager) app.getSystemService(Context.POWER_SERVICE);
+            Context ctx = app;
+            if (ctx == null) return;
+            PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
             if (pm != null) {
                 wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ghx:download");
                 wake.setReferenceCounted(false);
@@ -302,7 +329,9 @@ final class DownloadHub {
             // 拿不到锁就退化成「能下多少下多少」，不要让下载直接失败
         }
         try {
-            WifiManager wm = (WifiManager) app.getSystemService(Context.WIFI_SERVICE);
+            Context ctx = app;
+            if (ctx == null) return;
+            WifiManager wm = (WifiManager) ctx.getSystemService(Context.WIFI_SERVICE);
             if (wm != null) {
                 wifi = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ghx:download");
                 wifi.setReferenceCounted(false);
@@ -372,8 +401,12 @@ final class DownloadHub {
     /* ---------------- 下载本体 ---------------- */
 
     private static File downloadDir() {
-        File dir = app.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS);
-        if (dir == null) dir = new File(app.getFilesDir(), "Download");
+        // app 为空说明还没装 Context —— 调用方（snapshot/partOf）必须容忍返回 null。
+        // 这里不是断言的地方：插件线程上抛任何异常都会直接杀掉进程。
+        Context ctx = app;
+        if (ctx == null) return null;
+        File dir = ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS);
+        if (dir == null) dir = new File(ctx.getFilesDir(), "Download");
         if (!dir.exists() && !dir.mkdirs()) return null;
         return dir;
     }
@@ -402,8 +435,10 @@ final class DownloadHub {
     }
 
     private static String versionName() {
+        Context ctx = app;
+        if (ctx == null) return "0.0.0";
         try {
-            return app.getPackageManager().getPackageInfo(app.getPackageName(), 0).versionName;
+            return ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0).versionName;
         } catch (Exception e) {
             return "0.0.0";
         }

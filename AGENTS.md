@@ -181,9 +181,11 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 **内置表只有官方直连。** 加速站一律由用户自己填，不预置 —— 包里带地址等于替那台服务器分发流量（v1.1.3 的起因）。`DEFAULT_MIRROR` 现在就是 `https://github.com`。
 
 站点表存在 `ghx.mirror.store`：`{ overrides: {内置id→新地址}, custom: [自定义站点] }`。
-启动时 `parseMirrorStore` → `migrateLegacyMirrorStore`（把旧版内置站的改地址搬成自定义站）→ `setMirrorRegistry(effectiveMirrors(store))`，**注册表是模块级变量**，因为 `githubUrlAt(base)` / `rawUrlAt(base)` 只拿到 base，得靠它反查风格。
+启动时 `parseMirrorStore` → `migrateLegacyMirrorStore`（把旧版内置站的改地址搬成自定义站，**并从 `ghx.mirror` /
+`ghx.mirror.speed` 里把旧版用过的地址接回 custom**）→ `setMirrorRegistry(effectiveMirrors(store))`，**注册表是模块级变量**，因为 `githubUrlAt(base)` / `rawUrlAt(base)` 只拿到 base，得靠它反查风格。
+迁移只跑一次（`ghx.mirror.restored`）—— 否则用户删掉某个站，下次启动又会被测速快照补回来。
 改地址/加站/删站都要走 `App.saveMirrorStore`，它会同步注册表并作废本轮测速结果。
-风格未知的地址（从旧版本继承、还没落进站点表）在候选里会同时给 path 与 url 两种拼法，让探活自己挑 —— 猜错风格不该等于下不动包。
+从旧版本接回来的站带 `guess: true`：风格是猜的，候选里同时给 path 与 url 两种拼法，测速主拼法失败还会用 `altFor` 再试一次；用户在面板里选过风格后 `guess` 清掉。
 
 ### 5. 导航与页面
 

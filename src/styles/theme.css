@@ -142,6 +142,11 @@
   --radius: 10px;
   /* 底栏高度：只留图标时收窄到 50px，页面让位也跟着它走 */
   --tabbar-h: 58px;
+  /* 胶囊的圆角与离屏距离。玻璃背后的压暗层要跟它用同一组数，否则形状对不上 */
+  --tabbar-radius: 27px;
+  --tabbar-gap: 10px;
+  /* 胶囊左右各留多少 —— 压暗层、模糊层都按这个内缩 */
+  --tabbar-inset: 12px;
   /*
    * 系统栏内边距。两个来源取最大值：
    * - env(safe-area-inset-*)：iOS 与部分 Chromium 版本会给；
@@ -931,6 +936,35 @@ textarea {
   mask-image: linear-gradient(to top, #000 0 44%, rgba(0, 0, 0, 0) 72%);
 }
 
+/*
+ * 悬浮胶囊态：压暗层与模糊层必须跟胶囊同形同尺寸。
+ *
+ * 之前这一层是「整屏宽 × 132px 的矩形」，渐变模糊一路铺到屏幕两边与胶囊上方 ——
+ * 圆角之外照样在糊正文，肉眼看就是「一个模糊的方框里放着一枚胶囊」。
+ * 现在按胶囊的 inset / 高度 / 半径对齐：模糊只发生在玻璃背后，圆角以外恢复清晰。
+ *
+ * 竖向渐隐（把正文「化」进玻璃）只留给贴底通栏：那里没有圆角形状可依，
+ * 渐隐是消掉硬边的唯一手段；悬浮态自己就有圆角收边，再叠一层渐隐反而是漏出来的那圈。
+ */
+html:not([data-tabbar='dock']) .glass-backdrop {
+  left: var(--tabbar-inset);
+  right: var(--tabbar-inset);
+  bottom: calc(var(--tabbar-gap) + var(--safe-bottom));
+  height: var(--tabbar-h);
+  max-width: calc(var(--content-max, 100%) - var(--tabbar-inset) * 2);
+  border-radius: var(--tabbar-radius);
+  -webkit-mask-image: none;
+  mask-image: none;
+  /*
+   * 悬浮态不再自己糊一遍：模糊只由胶囊的 backdrop-filter 提供。
+   * 压暗层贴着胶囊边界时，它那 14px 的模糊会在圆角外面留一圈发白的光晕 ——
+   * 这是「圆角之外也糊」的第二种来源（第一种是它原本铺满整屏）。
+   * 这一层在这里只负责压暗，把对比度托住就够了。
+   */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 html[data-theme='light'] .glass-backdrop {
   /* 浅色下压暗层不能重：它铺在正文和底栏之间，压深了正文就变灰，
      玻璃反而更像一块实色板。留 3% 只为了让玻璃边缘和页面有分界。 */
@@ -968,18 +1002,21 @@ html[data-theme='light'] .glass-backdrop {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(10px + var(--safe-bottom));
+  bottom: calc(var(--tabbar-gap) + var(--safe-bottom));
   /* 居中不能用 left:50% + translateX(-50%)：自身带 transform 的元素在部分 WebView 上
      会让 backdrop-filter 采样失准，玻璃退化成纯半透明，正文直接从底栏里透出来。
      用 auto margin 居中，效果一样但不碰 transform。 */
   margin-inline: auto;
-  width: min(calc(100% - 24px), calc(var(--content-max, 100%) - 24px));
+  width: min(
+    calc(100% - var(--tabbar-inset) * 2),
+    calc(var(--content-max, 100%) - var(--tabbar-inset) * 2)
+  );
   height: var(--tabbar-h);
   padding: 5px;
   display: flex;
   align-items: stretch;
   gap: 2px;
-  border-radius: 27px;
+  border-radius: var(--tabbar-radius);
   /*
    * 不画边框。
    * 之前那 `1px solid transparent` 是为了给 conic 镜面环留位置；环已经换成
@@ -4684,15 +4721,21 @@ button.ustat:active {
 
   /* 底栏反过来要收窄：横屏宽，胶囊拉满会有两三百像素宽，浮起来像一根横杠 */
   .tabbar {
-    width: min(calc(100% - 24px), 460px);
+    width: min(calc(100% - var(--tabbar-inset) * 2), 460px);
+  }
+
+  /* 压暗层只能比胶囊更窄，不能更宽 —— 它要跟胶囊一起收 */
+  html:not([data-tabbar='dock']) .glass-backdrop {
+    max-width: 460px;
   }
 }
 
 @media (orientation: landscape) and (max-height: 620px) {
-  .tabbar {
-    height: 46px;
-    bottom: calc(6px + var(--safe-bottom));
-    border-radius: 21px;
+  /* 高度 / 圆角 / 离屏距离都走变量：压暗层读的是同一组数，改一处两边跟着变 */
+  :root {
+    --tabbar-h: 46px;
+    --tabbar-radius: 21px;
+    --tabbar-gap: 6px;
   }
 
   .tabbar button {
@@ -4702,7 +4745,7 @@ button.ustat:active {
   }
 
   .app.with-tabs > .page {
-    padding-bottom: calc(46px + 16px + var(--safe-bottom));
+    padding-bottom: calc(var(--tabbar-h) + 16px + var(--safe-bottom));
   }
 
   .topbar {
@@ -6171,6 +6214,16 @@ button.ustat:active {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/*
+ * 一行一张卡：宽度写死满行，不依赖父级 flex 方向。
+ * 这两条是给「布局降级」兜底的 —— 万一某个 WebView 不认父级的 flex-direction，
+ * 卡片会退回 <button> 的 inline-block 默认值，两张并排就变回两列。
+ * 写死 100% 之后，并列在物理上就不可能发生。
+ */
+.shop-grid > .shop-card {
+  width: 100%;
 }
 
 /* 单列清单行：头像 / 名称+版本 / 平台+星数 / 两行简介 / 箭头。

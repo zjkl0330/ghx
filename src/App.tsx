@@ -23,6 +23,7 @@ import {
   effectiveMirrors,
   mirrorCandidates,
   mirrorDefFor,
+  mirrorKnown,
   mirrorLabel,
   migrateLegacyMirrorStore,
   normalizeBase,
@@ -246,6 +247,13 @@ const MIRROR_AUTO_KEY = 'ghx.mirror.auto'
 const MIRROR_SPEED_KEY = 'ghx.mirror.speed'
 /** 站点表的「改地址 + 自定义站」，与当前选中的是哪台分开存 */
 const MIRROR_STORE_KEY = 'ghx.mirror.store'
+/**
+ * 旧版加速站只接回一次。
+ *
+ * 不设这个标记的话，用户手动删掉继承来的站，下次启动又会被测速快照
+ * 里的地址补回来 —— 删除操作必须算数。
+ */
+const MIRROR_RESTORED_KEY = 'ghx.mirror.restored'
 const SORT_KEY = 'ghx.sort'
 const AUTO_TRANSLATE_KEY = 'ghx.readme.auto'
 const TRANSLATE_CHANNEL_KEY = 'ghx.readme.channel'
@@ -1149,23 +1157,38 @@ export default function App() {
         const savedAutoMirror = await kv.get(MIRROR_AUTO_KEY)
         const savedSpeed = await kv.get(MIRROR_SPEED_KEY)
         const savedMirrorStore = await kv.get(MIRROR_STORE_KEY)
+        const savedRestored = await kv.get(MIRROR_RESTORED_KEY)
         if (cancelled) return
 
         // 先恢复站点表再谈「当前用哪台」：改过地址的站点必须先进注册表，
         // 后面的 mirrorDefFor / githubUrlAt 才知道新域名该走哪种路径风格。
         //
-        // v1.1.3 起包里不再预置加速站。老版本存过地址的（改过内置站地址、
-        // 或当前正用着某个加速站）在这里搬成自定义站，一条都不丢 —— 升级
-        // 只是不再给新设备填默认值，已经装着的机器照旧。
+        // v1.1.3 起包里不再预置加速站。老版本的加速站是写在包里的常量、从不落盘，
+        // 所以升级时要从**本机已有的两份记录**里把地址认回来：当前选中（ghx.mirror）
+        // 和上次测速快照（ghx.mirror.speed 的 results）。这样从没动过设置的用户
+        // 升级后站点表也还在；新装机这两个键都不存在，结果仍是只有官方直连。
+        //
+        // 只接一次（MIRROR_RESTORED_KEY）：否则用户删掉某个站，下次启动又被补回来。
         const parsedStore = parseMirrorStore(savedMirrorStore)
-        const mig = migrateLegacyMirrorStore(parsedStore, savedMirror)
-        setMirrorStore(mig.store)
-        setMirrorRegistry(effectiveMirrors(mig.store))
-        setMirror(mig.selected)
-        if (mig.changed) {
-          void kv.set(MIRROR_STORE_KEY, serializeMirrorStore(mig.store))
-          void kv.set(MIRROR_KEY, mig.selected)
+        let nextStore = parsedStore
+        let nextMirror = normalizeBase(savedMirror ?? '') || DEFAULT_MIRROR
+        if (savedRestored !== '1') {
+          const snap = parseSnapshot(savedSpeed)
+          const mig = migrateLegacyMirrorStore(parsedStore, {
+            selected: savedMirror,
+            probed: (snap?.results ?? []).map((r) => r.base),
+          })
+          nextStore = mig.store
+          nextMirror = mig.selected
+          void kv.set(MIRROR_RESTORED_KEY, '1')
+          if (mig.changed) {
+            void kv.set(MIRROR_STORE_KEY, serializeMirrorStore(mig.store))
+            void kv.set(MIRROR_KEY, mig.selected)
+          }
         }
+        setMirrorStore(nextStore)
+        setMirrorRegistry(effectiveMirrors(nextStore))
+        setMirror(nextMirror)
 
         // 下载方式：默认交给浏览器。老版本没这个键，解析成 outer。
         const savedDownloadMode = await kv.get(DOWNLOAD_MODE_KEY)
@@ -1975,8 +1998,16 @@ export default function App() {
           ? releaseDownloadUrl(b, UPDATE_OWNER, UPDATE_REPO, info.tag, asset.name)
           : rawUrlAt(b, UPDATE_OWNER, UPDATE_REPO, 'main', 'README.md')
 
+      /*
+       * 从旧版本继承来的站只记了地址、没记风格。主拼法按 path 猜，猜错时再试
+       * 一次 url 拼法 —— 否则这类站测速永远是 0，用户以为站废了。
+       */
+      const altFor = (b: string) =>
+        mirrorKnown(b) ? '' : `${b}/${urlFor('https://github.com')}`
+
       setProbe({ running: true, done: 0, total: bases.length, results: [], error: null, light, at: null })
       const results = await probeAll(bases, urlFor, {
+        altFor,
         onResult: (r, i) =>
           setProbe((prev) => ({ ...prev, done: i + 1, results: [...prev.results, r] })),
       })

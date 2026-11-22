@@ -22,6 +22,13 @@ export interface MirrorDef {
   /** 是否连 HTML 页面一起代理 */
   page?: boolean
   note?: string
+  /**
+   * 路径风格是猜的（从旧版本地址表继承来，没记过风格）。
+   *
+   * 这类站不能按 path 一条道走到黑：候选里同时给 url 拼法，测速失败时也再试
+   * 一次 url 拼法，否则「猜错」会被误判成「站挂了」。
+   */
+  guess?: boolean
 }
 
 /**
@@ -130,6 +137,7 @@ export function parseMirrorStore(raw: string | null | undefined): MirrorStore {
         base,
         style: item?.style === 'url' ? 'url' : 'path',
         ...(item?.page ? { page: true } : {}),
+        ...(item?.guess ? { guess: true } : {}),
       })
     }
     return { overrides, custom }
@@ -184,22 +192,71 @@ const LEGACY_STYLE: Record<string, { style: MirrorStyle; page?: boolean; label?:
 }
 
 /**
- * v1.1.3 迁移：把失效的「内置站改地址」转成自定义站。
+ * 旧版留在本地的线索。
  *
- * 包里不再预置加速站，但**老用户机器上存过的地址一条都不能丢** ——
- * 用户说「已经安装的不影响」，所以这里只做加法：地址搬到 custom 里，
- * 选中项原样保留，不写任何新地址。
+ * v1.1.0 的加速站表是**写死在安装包里**的，从来没有落过盘 —— 用户没手动改过
+ * 地址时，本地只有「当前选中」和「上次测速结果」两份数据里带着域名。
+ * 所以升级时要靠这两份数据反推，而不是靠包里再塞一份地址表。
+ */
+export interface LegacyHints {
+  /** 旧版「当前选中」的地址（本机键 ghx.mirror） */
+  selected?: string | null
+  /** 旧版测速快照里出现过的地址（本机键 ghx.mirror.speed 的 results[].base） */
+  probed?: string[]
+}
+
+/** 从旧版本继承来的站点用这个前缀，好和用户手填的站区分开 */
+const LEGACY_PREFIX = 'legacy-'
+
+/** 是不是「从旧版本地址表继承来、路径风格未知」的站点 */
+export function isLegacyMirrorId(id: string): boolean {
+  return id.startsWith(LEGACY_PREFIX)
+}
+
+/** 一次最多接回几条，避免旧快照里塞了几十条脏数据 */
+const LEGACY_MAX = 6
+
+function hostOf(base: string): string {
+  return base.replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+}
+
+/**
+ * v1.1.3 迁移：把旧版本用过的加速站接回本机站点表。
+ *
+ * 两件事：
+ *
+ * 1. 改过地址的内置站（overrides）转成自定义站 —— 老版本允许把内置站地址
+ *    改成新域名，新包里已经没有那个 id 了，不转就会「地址还在存着、界面里
+ *    却找不到」。
+ * 2. 当前选中项、上次测速出现过的地址，一并补成自定义站。这一步是「无痛升级」
+ *    的关键：老版本的默认站从来没写进本地配置，如果只做第 1 步，绝大多数
+ *    （从没动过设置的）用户升级后加速站会整张表消失。
+ *
+ * 只做加法：不写任何新地址，全部来自用户本机已有数据；新装机没有这些键，
+ * 结果仍是「只有官方直连」。
+ *
+ * 风格未知的条目 style 记作 path 但 id 带 legacy 前缀，候选生成会同时给
+ * 两种拼法（见 releaseCandidates / mirrorKnown），猜错不等于下不动。
  *
  * `changed` 为真表示站点表被改写，调用方要把结果写回本地。
  */
 export function migrateLegacyMirrorStore(
   store: MirrorStore,
-  selected?: string | null,
+  hints: string | null | LegacyHints = null,
+  probed: string[] = [],
 ): { store: MirrorStore; selected: string; changed: boolean } {
+  const h: LegacyHints = typeof hints === 'string' || hints == null
+    ? { selected: hints ?? null, probed }
+    : hints
+
   const builtinIds = new Set(BUILTIN_MIRRORS.map((m) => m.id))
   const custom = [...(store.custom ?? [])]
   const overrides: Record<string, string> = {}
   let changed = false
+
+  const has = (base: string) =>
+    custom.some((c) => c.base.toLowerCase() === base.toLowerCase()) ||
+    Object.values(overrides).some((b) => b.toLowerCase() === base.toLowerCase())
 
   for (const [id, rawBase] of Object.entries(store.overrides ?? {})) {
     const base = normalizeBase(rawBase)
@@ -209,18 +266,39 @@ export function migrateLegacyMirrorStore(
       continue
     }
     changed = true
-    if (custom.some((c) => c.base.toLowerCase() === base.toLowerCase())) continue
+    if (has(base)) continue
     const meta = LEGACY_STYLE[id]
     custom.push({
       id: id === 'zjkl' ? SELF_ID : id,
-      label: meta?.label ?? base.replace(/^https?:\/\//, ''),
+      label: meta?.label ?? hostOf(base),
       base,
       style: meta?.style ?? 'path',
       ...(meta?.page ? { page: true } : {}),
     })
   }
 
-  const sel = normalizeBase(selected ?? '') || DEFAULT_MIRROR
+  const sel = normalizeBase(h.selected ?? '') || DEFAULT_MIRROR
+  const official = OFFICIAL_MIRROR.base.toLowerCase()
+  let n = 0
+  // 选中项排最前：它是用户当时真的在用的那条，接回来时也占固定位
+  const seeds = uniqUrls([sel, ...(h.probed ?? [])].map(normalizeBase))
+  for (const base of seeds) {
+    if (n >= LEGACY_MAX) break
+    const low = base.toLowerCase()
+    if (!base || low === official || has(base)) continue
+    custom.push({
+      id: low === sel.toLowerCase() && !custom.some((c) => c.id === SELF_ID) ? SELF_ID : `${LEGACY_PREFIX}${n + 1}`,
+      label: hostOf(base),
+      base,
+      style: 'path',
+      note: '旧版继承',
+      guess: true,
+      ...(low === sel.toLowerCase() ? { page: true } : {}),
+    })
+    n += 1
+    changed = true
+  }
+
   return { store: { overrides, custom }, selected: sel, changed }
 }
 
@@ -234,7 +312,9 @@ export function mirrorKnown(base: string): boolean {
   const t = normalizeBase(base).toLowerCase()
   if (!t) return false
   if (BUILTIN_MIRRORS.some((m) => m.base.toLowerCase() === t)) return true
-  return REGISTRY.some((m) => m.base.toLowerCase() === t)
+  const hit = REGISTRY.find((m) => m.base.toLowerCase() === t)
+  // 风格是猜的（旧版本继承）不算已知：候选里要保留两种拼法
+  return !!hit && !hit.guess
 }
 
 /** 模块级注册表：给只拿到 base 的调用方（图片、release 下载）反查风格 */
@@ -473,16 +553,16 @@ export function releaseCandidates(
   const pool = proxies ?? userProxyBases([chosen, self])
 
   const head: string[] = []
-  if (chosen && chosen !== official) {
-    head.push(githubUrlAt(chosen, path))
-    // 从旧版本继承来的地址没有风格记录：再给一条 url 拼法，让探活自己挑对的。
-    // 猜错风格不该等于下不动包，代价只是多探一条。
-    if (!mirrorKnown(chosen)) head.push(`${chosen}/https://github.com/${path}`)
+  /** 一条线路可能出两种拼法：风格未知时两条都给，让探活自己挑 */
+  const add = (raw: string) => {
+    const b = normalizeBase(raw)
+    if (!b || b === official) return
+    head.push(githubUrlAt(b, path))
+    if (!mirrorKnown(b)) head.push(`${b}/https://github.com/${path}`)
   }
-  if (self && self !== official && self.toLowerCase() !== chosen.toLowerCase()) {
-    head.push(githubUrlAt(self, path))
-  }
-  for (const p of pool) if (p) head.push(githubUrlAt(p, path))
+  add(chosen)
+  add(self)
+  for (const p of pool) add(p)
 
   const others = uniqUrls(head).filter((u) => u !== officialUrl)
   return [...others.slice(0, 6), officialUrl]
@@ -502,7 +582,9 @@ export function userProxyBases(exclude: string[] = []): string[] {
   const skip = new Set(exclude.map((b) => normalizeBase(b).toLowerCase()).filter(Boolean))
   const out: string[] = []
   for (const m of REGISTRY) {
-    if (m.style !== 'url' || m.id === 'official') continue
+    // url 型站直接可用；风格未知（旧版继承）也放进候选，拼法在候选生成处补两条
+    if (m.style !== 'url' && !m.guess) continue
+    if (m.id === 'official') continue
     const base = normalizeBase(m.base)
     if (!base || skip.has(base.toLowerCase())) continue
     out.push(base)
@@ -674,12 +756,24 @@ export async function probeMirror(base: string, url: string, opts: ProbeOptions 
 export async function probeAll(
   bases: string[],
   urlFor: (base: string) => string,
-  opts: ProbeOptions & { onResult?: (r: ProbeResult, index: number) => void } = {},
+  opts: ProbeOptions & {
+    onResult?: (r: ProbeResult, index: number) => void
+    /** 备选拼法：风格未知的站主拼法失败时再试一条，避免「猜错风格 = 测出 0」 */
+    altFor?: (base: string) => string
+  } = {},
 ): Promise<ProbeResult[]> {
   const out: ProbeResult[] = []
   for (let i = 0; i < bases.length; i += 1) {
     const base = bases[i]
-    const r = await probeMirror(base, urlFor(base), opts)
+    const first = urlFor(base)
+    let r = await probeMirror(base, first, opts)
+    if (r.status !== 'ok' && opts.altFor) {
+      const alt = opts.altFor(base)
+      if (alt && alt !== first) {
+        const r2 = await probeMirror(base, alt, opts)
+        if (r2.status === 'ok') r = r2
+      }
+    }
     out.push(r)
     opts.onResult?.(r, i)
   }

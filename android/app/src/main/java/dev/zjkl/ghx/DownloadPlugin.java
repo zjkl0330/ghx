@@ -117,12 +117,36 @@ public class DownloadPlugin extends Plugin {
      * 页面正常活着时，下载一结束就会来取；页面被销毁重建、或者下载期间
      * 用户退出了 App，就等下次启动再来取。取走即清空，不会重复记。
      */
+    /**
+     * 插件创建时把 Context 交给下载中枢，并记一笔阶段。
+     *
+     * <p>这一句就是「打开就闪退」的补丁。冷启动时页面一定会调一次 {@code status()}
+     * 对账，而 {@code DownloadHub} 以前要等到 {@code start()} 才有 Context，
+     * 于是「这条手机重来没在这个进程里下过东西」时，snapshot() 里的
+     * {@code getExternalFilesDir(...)} 直接打在 null 上 —— NPE 抛在插件线程，
+     * 没人接，进程当场消失。表现就是开屏动画放完就闪退。
+     */
+    @Override
+    public void load() {
+        try {
+            DownloadHub.install(getContext());
+        } catch (Throwable ignored) {
+            // 实在拿不到 Context 也不会崩：DownloadHub 里所有用到 Context 的地方都已判空
+        }
+    }
+
     @PluginMethod
     public void takePending(PluginCall call) {
-        String raw = DownloadHub.takePending(getContext());
-        JSObject ret = new JSObject();
-        if (raw != null) ret.put("raw", raw);
-        call.resolve(ret);
+        try {
+            String raw = DownloadHub.takePending(getContext());
+            JSObject ret = new JSObject();
+            if (raw != null) ret.put("raw", raw);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            // 插件方法里抛出去会被 Capacitor 包成 RuntimeException 打死整个进程，
+            // 所以这里一律就地转成 JS 侧的错误
+            call.reject("读取待认领记录失败: " + t);
+        }
     }
 
     /**
@@ -131,41 +155,62 @@ public class DownloadPlugin extends Plugin {
      */
     @PluginMethod
     public void status(PluginCall call) {
-        DownloadHub.Snapshot s = DownloadHub.snapshot();
         JSObject ret = new JSObject();
-        ret.put("running", s.running);
-        ret.put("hasResult", s.hasResult);
-        ret.put("bytes", s.bytes);
-        ret.put("total", s.total);
-        ret.put("kbps", s.kbps);
-        ret.put("fileName", s.fileName);
-        ret.put("ms", s.ms);
-        ret.put("parts", s.parts);
-        ret.put("chunked", s.chunked);
-        ret.put("resumeBytes", s.resumeBytes);
-        ret.put("resumable", s.resumable);
-        ret.put("resumed", s.resumed);
-        if (s.path != null) ret.put("path", s.path);
-        if (s.error != null) ret.put("error", s.error);
-        call.resolve(ret);
+        try {
+            DownloadHub.Snapshot s = DownloadHub.snapshot();
+            ret.put("running", s.running);
+            ret.put("hasResult", s.hasResult);
+            ret.put("bytes", s.bytes);
+            ret.put("total", s.total);
+            ret.put("kbps", s.kbps);
+            ret.put("fileName", s.fileName);
+            ret.put("ms", s.ms);
+            ret.put("parts", s.parts);
+            ret.put("chunked", s.chunked);
+            ret.put("resumeBytes", s.resumeBytes);
+            ret.put("resumable", s.resumable);
+            ret.put("resumed", s.resumed);
+            if (s.path != null) ret.put("path", s.path);
+            if (s.error != null) ret.put("error", s.error);
+            call.resolve(ret);
+        } catch (Throwable t) {
+            // 对账失败不该让 App 打不开：给一个「没有在跑」的空状态，页面照常渲染
+            try {
+                ret.put("running", false);
+                ret.put("hasResult", false);
+                ret.put("error", "状态查询失败: " + t);
+                call.resolve(ret);
+            } catch (Throwable ignored) {
+                // 连 resolve 都不行就没别的办法了
+            }
+        }
     }
 
     /** 历史记录里那些落盘文件还在不在（用户可能清理过 App 存储） */
     @PluginMethod
     public void exists(PluginCall call) {
-        com.getcapacitor.JSArray paths = call.getArray("paths");
         JSObject ret = new JSObject();
         JSObject map = new JSObject();
-        if (paths != null) {
-            for (int i = 0; i < paths.length(); i += 1) {
-                String p = paths.optString(i, "");
-                if (p == null || p.isEmpty()) continue;
-                File f = new File(p);
-                map.put(p, f.exists() && f.length() > 0);
+        ret.put("exists", map);
+        try {
+            com.getcapacitor.JSArray paths = call.getArray("paths");
+            if (paths != null) {
+                for (int i = 0; i < paths.length(); i += 1) {
+                    String p = paths.optString(i, "");
+                    if (p == null || p.isEmpty()) continue;
+                    File f = new File(p);
+                    map.put(p, f.exists() && f.length() > 0);
+                }
+            }
+            call.resolve(ret);
+        } catch (Throwable t) {
+            // 同上：插件方法里绝不外抛
+            try {
+                call.resolve(ret);
+            } catch (Throwable ignored) {
+                // 无计可施
             }
         }
-        ret.put("exists", map);
-        call.resolve(ret);
     }
 
     @PluginMethod
@@ -227,7 +272,7 @@ public class DownloadPlugin extends Plugin {
         try {
             android.app.NotificationManager nm = (android.app.NotificationManager)
                     getContext().getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null) enabled = nm.areNotificationsEnabled();
+            if (nm != null && Build.VERSION.SDK_INT >= 24) enabled = nm.areNotificationsEnabled();
         } catch (Exception ignored) {
             // 查不到就按「能看见」处理，别把正常的机器误报成关了
         }

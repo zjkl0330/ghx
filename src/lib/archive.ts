@@ -92,7 +92,10 @@ export function archiveCandidates(
 
   if (maybeUrl) out.push(codeloadViaProxy(def.base, owner, repo, ref))
   for (const base of pool) {
-    if (base) out.push(codeloadViaProxy(base, owner, repo, ref))
+    if (!base) continue
+    out.push(codeloadViaProxy(base, owner, repo, ref))
+    // 风格未知（从旧版本继承）时补一条 github 路径拼法，猜错也不至于下不动
+    if (!mirrorKnown(base)) out.push(archiveViaMirror(base, owner, repo, ref))
   }
   if (self && self !== normalizeBase(def.base)) {
     out.push(archiveViaMirror(self, owner, repo, ref))

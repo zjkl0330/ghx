@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  BUILTIN_MIRRORS,
   DEFAULT_MIRROR,
   formatSpeed,
   isOverridden,
@@ -114,7 +115,10 @@ export function MirrorSheet(p: Props) {
     const isCustom = p.store.custom.some((c) => c.id === editId)
     if (isCustom) {
       next.custom = next.custom.map((c) =>
-        c.id === editId ? { ...c, base: check.base, style: editStyle, label: editLabel.trim() || c.label } : c,
+        // 用户在这里亲手选过风格了，就不该再按「猜的」处理（guess 清掉）
+        c.id === editId
+          ? { ...c, base: check.base, style: editStyle, label: editLabel.trim() || c.label, guess: undefined }
+          : c,
       )
     }
     p.onStore(next)
@@ -197,7 +201,12 @@ export function MirrorSheet(p: Props) {
             const on = cur.toLowerCase() === r.base.toLowerCase()
             const isBest = p.auto && !!best && normalizeBase(best.base).toLowerCase() === r.base.toLowerCase()
             const def = mirrorDefFor(r.base)
-            const isBuiltin = def.id !== 'custom'
+            /*
+             * 判断「内置站」要看内置表，不能看 id 是不是 'custom'：
+             * 自定义站也在注册表里，mirrorDefFor 会返回它自己的 id，
+             * 那样每个自定义站都会被当成内置 —— 删不掉，还只给一个没用的「恢复默认」。
+             */
+            const isBuiltin = BUILTIN_MIRRORS.some((m) => m.id === def.id)
             const overridden = isBuiltin && isOverridden(p.store, def.id)
             const editing = editId === def.id
             return (

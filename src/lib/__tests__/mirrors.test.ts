@@ -41,6 +41,7 @@ import {
   pickReachable,
   snapshotFresh,
   snapshotOf,
+  userProxyBases,
   type ProbeResult,
 } from '../mirrors'
 
@@ -771,5 +772,92 @@ describe('v1.1.3 迁移：老配置一条不丢', () => {
     const twice = migrateLegacyMirrorStore(once.store, once.selected)
     expect(twice.changed).toBe(false)
     expect(twice.store.custom).toHaveLength(1)
+  })
+})
+
+/**
+ * v1.1.3 的第一版迁移只处理了「改过内置站地址」这一种，漏掉了绝大多数用户：
+ * 老版本的默认站是写在包里的常量、从来没落盘，所以从没动过设置的人升级后
+ * 加速站会整张表消失。这一版改成从本机的「当前选中」和「测速快照」里认回来。
+ */
+describe('v1.1.12 升级无损：旧版本用过的加速站接回本机', () => {
+  const OLD_SELF = 'https://self.example'
+  const OLD_PUB = 'https://pub.example'
+
+  it('从没动过设置的用户也接得回原来的站与选中项', () => {
+    const mig = migrateLegacyMirrorStore(EMPTY_STORE, {
+      selected: OLD_SELF,
+      probed: [OLD_SELF, OLD_PUB, OFFICIAL_MIRROR.base],
+    })
+    expect(mig.changed).toBe(true)
+    expect(mig.selected).toBe(OLD_SELF)
+    expect(mig.store.custom.map((c) => c.base)).toEqual([OLD_SELF, OLD_PUB])
+    // 选中项占固定位，自动测速把 selected 换掉之后它也不会从候选里消失
+    expect(mig.store.custom[0].id).toBe('self')
+    expect(mig.store.custom[1].id).toMatch(/^legacy-/)
+  })
+
+  it('新装机（两个键都不存在）仍只有官方直连', () => {
+    const mig = migrateLegacyMirrorStore(EMPTY_STORE, { selected: null, probed: [] })
+    expect(mig.changed).toBe(false)
+    expect(mig.store.custom).toEqual([])
+    expect(mig.selected).toBe(DEFAULT_MIRROR)
+  })
+
+  it('二次迁移不重复添加', () => {
+    const once = migrateLegacyMirrorStore(EMPTY_STORE, { selected: OLD_SELF, probed: [OLD_PUB] })
+    const twice = migrateLegacyMirrorStore(once.store, { selected: OLD_SELF, probed: [OLD_PUB] })
+    expect(twice.changed).toBe(false)
+    expect(twice.store.custom).toHaveLength(2)
+  })
+
+  it('继承来的站风格未知：下载候选同时给 path 与 url 两种拼法', () => {
+    const mig = migrateLegacyMirrorStore(EMPTY_STORE, { selected: OLD_SELF })
+    setMirrorRegistry(effectiveMirrors(mig.store))
+    try {
+      expect(mirrorKnown(OLD_SELF)).toBe(false)
+      expect(mirrorKnown(OFFICIAL_MIRROR.base)).toBe(true)
+      const urls = releaseCandidates(OLD_SELF, 'o', 'r', 'v1', 'a.apk')
+      expect(urls).toContain(`${OLD_SELF}/o/r/releases/download/v1/a.apk`)
+      expect(urls).toContain(`${OLD_SELF}/https://github.com/o/r/releases/download/v1/a.apk`)
+      // 官方永远垫底
+      expect(urls[urls.length - 1]).toBe('https://github.com/o/r/releases/download/v1/a.apk')
+    } finally {
+      resetMirrorRegistry()
+    }
+  })
+
+  it('继承来的站进 userProxyBases，自动选最快换掉选中项后仍在候选里', () => {
+    const mig = migrateLegacyMirrorStore(EMPTY_STORE, { selected: OLD_SELF, probed: [OLD_PUB] })
+    setMirrorRegistry(effectiveMirrors(mig.store))
+    try {
+      expect(userProxyBases([OFFICIAL_MIRROR.base])).toEqual([OLD_SELF, OLD_PUB])
+      const urls = releaseCandidates(OFFICIAL_MIRROR.base, 'o', 'r', 'v1', 'a.apk')
+      expect(urls.some((u) => u.startsWith(OLD_PUB))).toBe(true)
+    } finally {
+      resetMirrorRegistry()
+    }
+  })
+
+  it('同一条线路只接一次，大小写不同也不重复', () => {
+    const mig = migrateLegacyMirrorStore(EMPTY_STORE, {
+      selected: 'https://SELF.example',
+      probed: ['https://self.example/', 'https://self.example'],
+    })
+    expect(mig.store.custom).toHaveLength(1)
+    expect(mig.store.custom[0].base).toBe('https://SELF.example')
+  })
+
+  it('接回来的站会出现在站点列表里，不是只写进存储', () => {
+    const mig = migrateLegacyMirrorStore(EMPTY_STORE, { selected: OLD_SELF, probed: [OLD_PUB] })
+    setMirrorRegistry(effectiveMirrors(mig.store))
+    try {
+      const rows = mirrorCandidates(mig.selected).map((r) => r.base)
+      expect(rows).toContain(OLD_SELF)
+      expect(rows).toContain(OLD_PUB)
+      expect(rows).toContain(OFFICIAL_MIRROR.base)
+    } finally {
+      resetMirrorRegistry()
+    }
   })
 })

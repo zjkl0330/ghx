@@ -116,13 +116,38 @@ export function planInline(
 function polluted(translated: string, source: string): boolean {
   if (BROKEN.test(translated) && !BROKEN.test(source)) return true
   // 箭头、星号这类「符号」不算 Extended_Pictographic，用 So 一起兜住
-  const SYMBOL = /\p{Extended_Pictographic}|\p{So}/gu
+  const SYMBOL = symbolPattern()
+  // 内核的 Unicode 数据太旧、这两个属性都不认时，退化成只靠替换符判断。
+  // 不能因为「数不清 emoji」就让整段翻译流程抛错。
+  if (!SYMBOL) return false
   const before = (source.match(SYMBOL) ?? []).length
   if (before > 0) {
     const after = (translated.match(SYMBOL) ?? []).length
     if (after < before) return true
   }
   return false
+}
+
+/**
+ * 符号正则。
+ *
+ * 刻意用 `new RegExp` 而不是字面量：`\p{Extended_Pictographic}` 要在
+ * Unicode 11 以上的数据里才有，老内核编译**字面量**会在解析阶段抛 SyntaxError，
+ * 那等于整个包一行都不执行（页面纯黑）。放到运行时构造，最坏也只是这条判断失效。
+ */
+let symbolRe: RegExp | null | undefined
+function symbolPattern(): RegExp | null {
+  if (symbolRe !== undefined) return symbolRe
+  try {
+    symbolRe = new RegExp('\\p{Extended_Pictographic}|\\p{So}', 'gu')
+  } catch {
+    try {
+      symbolRe = new RegExp('\\p{So}', 'gu')
+    } catch {
+      symbolRe = null
+    }
+  }
+  return symbolRe
 }
 
 /**

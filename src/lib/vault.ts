@@ -1,5 +1,6 @@
 import type { KV } from './storage'
 import type { TokenKind, TokenRecord } from './types'
+import { uuidV4 } from './uuid'
 
 const VAULT_KEY = 'ghx.vault.v1'
 const DEVICE_KEY = 'ghx.device.v1'
@@ -307,7 +308,7 @@ export class Vault {
     if (!looksLikeToken(secret)) throw new Error('令牌格式不正确')
 
     const record: TokenRecord = {
-      id: this.cryptoImpl.randomUUID(),
+      id: uuidV4(this.cryptoImpl),
       name: input.name.trim() || '未命名令牌',
       kind: kindOf(secret),
       preview: previewOf(secret),

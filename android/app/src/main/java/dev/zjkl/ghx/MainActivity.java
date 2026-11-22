@@ -14,6 +14,7 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -29,12 +30,10 @@ public class MainActivity extends BridgeActivity {
         /*
          * 第一件事：给整个进程装一个兜底处理器。
          *
-         * 打不开的 App 只能给出「闪一下回桌面」这一条线索，没有 adb 就完全没法定位。
-         * 这里在任何东西之前登记，之后无论崩在主线程还是下载线程，都会先把栈写进
-         * Android/data/<包名>/files/boot-failure.txt，再把异常交回系统原本的处理器
-         * （不吞异常，否则系统会当成没崩，卡住不弹「已停止」）。
+         * 正常情况下 GhxApplication 已经装过了（那边更早），这里再叫一次是幂等的，
+         * 只是为了防止有人把清单里的 application 改回去。
          */
-        installCrashSink();
+        BootFailure.installCrashSink(getApplicationContext());
 
         // 自定义插件要在 super 之前登记：BridgeActivity 在 onCreate 里就把 Bridge 建好了。
         // 登记失败不该拖垮整个启动 —— 网页层发现插件缺失会自己降级成「浏览器下载」。
@@ -71,26 +70,9 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 进程级兜底：先落盘，再交回系统。
-     *
-     * 只在 Activity 存在期间有意义 —— 进程被杀之后重新启动，onCreate 会再装一次，
-     * 所以不需要考虑「上一次的处理器还挂着」。
+     * 进程级兜底已经搬到 {@link BootFailure#installCrashSink} 与 {@link GhxApplication}：
+     * 装在 Application 里能比 Activity 早一步，连 Activity 类加载失败都能接住。
      */
-    private void installCrashSink() {
-        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
-        final MainActivity host = this;
-        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-            @Override
-            public void uncaughtException(Thread t, Throwable e) {
-                try {
-                    BootFailure.note(host, "uncaught:" + t.getName(), e);
-                } catch (Throwable ignored) {
-                    // 已经要死了，记不上也没别的办法
-                }
-                if (prev != null) prev.uncaughtException(t, e);
-            }
-        });
-    }
 
     /**
      * 窗口与 insets 的初始化。从原来的 onCreate 主体原样搬出来，
@@ -180,30 +162,59 @@ public class MainActivity extends BridgeActivity {
          * 四次覆盖前 5 秒：本地资源一般 1 秒内加载完，慢机型也不会超过 5 秒。
          * 之后由 onResume 与 JS 主动调用 Immersive.syncInsets 兜后续场景。
          */
-        webView.postDelayed(() -> InsetsBridge.sync(this, true), 300);
-        webView.postDelayed(() -> InsetsBridge.sync(this, true), 900);
-        webView.postDelayed(() -> InsetsBridge.sync(this, true), 2000);
-        webView.postDelayed(() -> InsetsBridge.sync(this, true), 4000);
+        webView.postDelayed(guarded("insets.300", () -> InsetsBridge.sync(this, true)), 300);
+        webView.postDelayed(guarded("insets.900", () -> InsetsBridge.sync(this, true)), 900);
+        webView.postDelayed(guarded("insets.2000", () -> InsetsBridge.sync(this, true)), 2000);
+        webView.postDelayed(guarded("insets.4000", () -> InsetsBridge.sync(this, true)), 4000);
 
-        /*
-         * 白屏自检。
-         *
-         * 有一种坏法不会抛异常，也没有崩溃栈：进程好好的，WebView 就是一点进度都没有，
-         * 用户看到黑屏，以为是「闪退」。本地资源正常情况下一两秒就加载完，
-         * 8 秒还是 0 基本可以断定页面没跑起来（WebView 内核异常、资源没进包、
-         * 或者脚本一上来就语法错误）。这时候把原因摊出来，比让用户对着黑屏猜强。
-         */
-        webView.postDelayed(() -> {
+        installRenderGuard();
+    }
+
+    /**
+     * 给延迟任务套一层保护：抛异常就记账，不让整个进程跟着崩。
+     *
+     * 主线程上 post 出去的 Runnable 一旦抛未捕获异常，进程会被直接杀掉，
+     * 而这类崩法没有任何界面提示 —— 与「闪一下就没了」完全吻合，所以先堵住。
+     */
+    private Runnable guarded(String stage, Runnable body) {
+        return () -> {
             try {
-                if (webView.getProgress() <= 0) {
-                    BootFailure.show(this, "webview-load",
-                            new IllegalStateException(
-                                    "WebView 8 秒内没有任何加载进度，url=" + webView.getUrl()));
-                }
-            } catch (Throwable ignored) {
-                // 自检本身失败就安静放弃，不要变成新的崩溃源
+                body.run();
+            } catch (Throwable t) {
+                BootFailure.note(this, stage, t);
             }
-        }, 8000);
+        };
+    }
+
+    /**
+     * 接管 WebViewClient，只为一件事：渲染进程死掉时别连累整个 App。
+     *
+     * Capacitor 的 BridgeWebViewClient 在 onRenderProcessGone 里返回 false，
+     * 系统的默认反应是把宿主进程也杀掉 —— 这就是「没有任何提示就闪退」的由来。
+     * 这里换成自己的子类，日志、弹窗、落盘都还能走。
+     */
+    private void installRenderGuard() {
+        installRenderGuard(0);
+    }
+
+    private void installRenderGuard(int attempt) {
+        try {
+            // RenderProcessGoneDetail 是 API 26 才有的类型，低版本连类都不许加载
+            if (Build.VERSION.SDK_INT < 26) return;
+            Bridge b = getBridge();
+            WebView wv = b == null ? null : b.getWebView();
+            if (wv == null) {
+                // Bridge 还没建好，等一会儿再试（最多四次）
+                if (attempt < 4) {
+                    new android.os.Handler(getMainLooper())
+                            .postDelayed(() -> installRenderGuard(attempt + 1), 400);
+                }
+                return;
+            }
+            wv.setWebViewClient(new GhxWebViewClient(b));
+        } catch (Throwable t) {
+            BootFailure.note(this, "installRenderGuard", t);
+        }
     }
 
     /**
