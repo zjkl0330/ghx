@@ -178,9 +178,9 @@ final class RendererGuard extends WebViewListener {
                             + "如果反复出现，用兼容模式重启（系统字体、关闭毛玻璃、精简动效）。")
                     .setPositiveButton("兼容模式重启", (d, w) -> {
                         setSafe(act, true);
-                        restart();
+                        restart(act);
                     })
-                    .setNeutralButton("重新加载", (d, w) -> restart())
+                    .setNeutralButton("重新加载", (d, w) -> restart(act))
                     .setNegativeButton("退出", (d, w) -> act.finish())
                     .setCancelable(false)
                     .show();
@@ -203,7 +203,7 @@ final class RendererGuard extends WebViewListener {
                     .setPositiveButton("保持兼容模式", null)
                     .setNegativeButton("恢复正常模式", (d, w) -> {
                         setSafe(act, false);
-                        restart();
+                        restart(act);
                     })
                     .setCancelable(true)
                     .show();
@@ -213,7 +213,7 @@ final class RendererGuard extends WebViewListener {
     }
 
     /** 重建 Activity 就是重建 WebView 与渲染进程；失败时把原因摆出来，别静默退出。 */
-    private void restart() {
+    private static void restart(MainActivity act) {
         try {
             act.recreate();
         } catch (Throwable t) {
