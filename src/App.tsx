@@ -81,6 +81,16 @@ import {
   type Workspace,
   type WorkspaceTable,
 } from './lib/workspace'
+import {
+  ACCOUNT_PREF_KEY,
+  DEFAULT_ACCOUNT_PREF,
+  dropWorkspaceKV,
+  loadWorkspace,
+  parseAccountPref,
+  persistWorkspace,
+  writeAccountPref,
+  type AccountPref,
+} from './lib/account-pref'
 import { createKV, type KV } from './lib/storage'
 import {
   applyTheme,
@@ -140,12 +150,15 @@ import {
 } from './lib/download'
 import { appendRecord, clearHistory, readHistory, recordFromPending, type DlRecord } from './lib/dl-history'
 import {
+  downloadStatus,
   filesExist,
   installApk,
+  nativeDownloadAvailable,
   openNotifySettings,
   readNotifyState,
   takePendingDownload,
 } from './lib/native-download'
+import { bgDownloadView } from './lib/download'
 import type {
   AuditEntry,
   BatchResult,
@@ -401,8 +414,8 @@ export default function App() {
   // ── 统一下载：更新包 / 发行版附件 / 源码 ZIP 共用一个面板 ─────────────
   /** 应用内下载还是交给浏览器。默认交给浏览器：环境不支持时不会卡住 */
   const [downloadMode, setDownloadMode] = useState<DownloadMode>('outer')
-  /** 应用内下载要不要切片并行。默认开：线路不认 Range 时原生侧会自己退回单线程 */
-  const [dlParts, setDlParts] = useState<DlParts>('multi')
+  /** 应用内下载切几路并行。默认「自动」：原生按文件大小算，封顶 32 路 */
+  const [dlParts, setDlParts] = useState<DlParts>('auto')
   /**
    * 通知栏进度能不能看见。null=还没查过。
    * 只在原生壳里有意义：Android 13+ 没给通知权限时，下载照跑但消息栏一片空白，
@@ -419,6 +432,8 @@ export default function App() {
   }, [refreshNotify])
 
   const [downloadTarget, setDownloadTarget] = useState<DownloadTarget | null>(null)
+  /** 本次会话里点过星标的仓库：列表上的 ☆ 立刻变 ★，不用等重新拉列表 */
+  const [starredSet, setStarredSet] = useState<Set<string>>(new Set())
   /** 关掉下载面板后回到哪一层：更新弹层 / 发行版面板 / 仓库详情 */
   const [downloadReturn, setDownloadReturn] = useState<SheetName>('none')
   /** 本机下载记录（面板打开时重读，写入发生在下载面板里） */
@@ -434,6 +449,37 @@ export default function App() {
   probeRef.current = probe
   const mirrorAutoRef = useRef(mirrorAuto)
   mirrorAutoRef.current = mirrorAuto
+  /**
+   * 后台下载横幅。
+   *
+   * 面板关掉后（点「后台下载」或从通知栏回来）还得有个地方能看见进度，
+   * 否则用户以为下载停了。原生侧只有一条下载，这里只是它的镜子。
+   */
+  const [bgDl, setBgDl] = useState<{ running: boolean; name: string; sub: string } | null>(null)
+
+  useEffect(() => {
+    if (!nativeDownloadAvailable()) return
+    let stop = false
+    let timer = 0
+    const tick = async () => {
+      const s = await downloadStatus()
+      if (stop) return
+      // 拼文案的规则抽在 download.ts 里（有单测）；这里只负责喂原生状态
+      setBgDl(bgDownloadView(s))
+      // 在跑的时候勤一点；停着的时候只是看有没有断点，6 秒足够
+      timer = window.setTimeout(() => void tick(), s.running ? 1200 : 6000)
+    }
+    void tick()
+    return () => {
+      stop = true
+      window.clearTimeout(timer)
+    }
+  }, [])
+
+  /** 账号偏好：切回某个账号时要不要接着上次的位置（v1.1.1 起可关） */
+  const [acctPref, setAcctPref] = useState<AccountPref>(DEFAULT_ACCOUNT_PREF)
+  const acctPrefRef = useRef<AccountPref>(DEFAULT_ACCOUNT_PREF)
+  acctPrefRef.current = acctPref
   /** 更新通道：正式版 / 测试版 / 关掉（v1.1.0 起由布尔开关升级为三档） */
   const [updateMode, setUpdateMode] = useState<UpdateMode>(readUpdateMode)
   /*
@@ -945,10 +991,12 @@ export default function App() {
       const source = list ?? records
       const rec = source.find((r) => r.id === id)
       if (!rec) return
-      // 切走之前先把当前账号的现场存下来
+      // 切走之前先把当前账号的现场存下来：内存一份（切回即用），磁盘一份（重启还在）
       const prevId = activeIdRef.current
       if (prevId && prevId !== id) {
         wsRef.current = saveWorkspace(wsRef.current, prevId, liveRef.current)
+        const prevWs = wsRef.current[prevId]
+        if (prevWs) void persistWorkspace(kvRef.current, prevId, prevWs)
       }
 
       const c = await ensureClient(id, source)
@@ -964,9 +1012,15 @@ export default function App() {
       setSheet('none')
       setRepoError(null)
 
-      // 恢复目标账号的现场；从没进过就按空的来
-      const saved = restoreWorkspace(wsRef.current, id)
-      setRouteStack(saved?.routeStack ?? [])
+      // 恢复目标账号的现场：先看内存（刚切走那份），再看磁盘（上次关 App 前那份）
+      const cached = restoreWorkspace(wsRef.current, id)
+      const fromDisk =
+        cached || !acctPrefRef.current.keepWorkspace ? null : await loadWorkspace(kvRef.current, id)
+      const saved = cached ?? fromDisk
+      // 从磁盘捞回来的填进内存表，后面切走时才有东西可存
+      if (!cached && fromDisk) wsRef.current = saveWorkspace(wsRef.current, id, fromDisk)
+      // 关掉「保留现场」就每次都回首页，只保留列表与筛选（不保留栈）
+      setRouteStack(saved && acctPrefRef.current.keepWorkspace ? saved.routeStack : [])
       setQuery(saved?.query ?? '')
       setVisibility(saved?.visibility ?? 'all')
       setSort(saved?.sort ?? DEFAULT_SORT)
@@ -1108,6 +1162,11 @@ export default function App() {
         const savedDownloadMode = await kv.get(DOWNLOAD_MODE_KEY)
         if (cancelled) return
         setDownloadMode(parseDownloadMode(savedDownloadMode))
+
+        // 账号偏好：默认「切回时接着上次看」，老版本没有这个键
+        const savedAcctPref = await kv.get(ACCOUNT_PREF_KEY)
+        if (cancelled) return
+        setAcctPref(parseAccountPref(savedAcctPref))
 
         // 分片下载：老版本没有这个键，按「开」处理
         const savedDlParts = await kv.get(DL_PARTS_KEY)
@@ -1373,6 +1432,7 @@ export default function App() {
     if (!v) return
     const rec = records.find((r) => r.id === id)
     await v.remove(id)
+    await dropWorkspaceKV(kvRef.current, id)
     // 账号删了，它名下的热门快照与筛选也一起清掉，别留明文仓库名在设备上
     void clearHotCache(kvRef.current, id)
     const list = await v.list()
@@ -1623,6 +1683,23 @@ export default function App() {
     [runCheck],
   )
 
+  /** 账号偏好落盘：只影响下次切号怎么恢复，不动当前页面 */
+  const changeAcctPref = useCallback((next: AccountPref) => {
+    const prev = acctPrefRef.current
+    acctPrefRef.current = next
+    setAcctPref(next)
+    void writeAccountPref(kvRef.current, next)
+    if (next.keepWorkspace !== prev.keepWorkspace) {
+      showToast(next.keepWorkspace ? '切回账号会接着上次看' : '切回账号会回到首页')
+      return
+    }
+    showToast(
+      next.multiCount === 0
+        ? 'Star / 复刻默认勾全部账号'
+        : `Star / 复刻默认勾 ${next.multiCount} 个账号`,
+    )
+  }, [showToast])
+
   /** 手动指定加速站：同时关掉自动测速，免得下次启动又被覆盖 */
   const useMirror = useCallback(
     (base: string) => {
@@ -1704,7 +1781,7 @@ export default function App() {
     (v: DlParts) => {
       setDlParts(v)
       if (kvRef.current) void kvRef.current.set(DL_PARTS_KEY, serializeDlParts(v))
-      showToast(v === 'multi' ? '下载会切 4 片并行' : '已改为单线程下载')
+      showToast(v === 'single' ? '已改为单线程下载' : `下载会切 ${PARTS_OF[v]} 路并行` )
     },
     [showToast],
   )
@@ -1980,9 +2057,12 @@ export default function App() {
   )
 
   const openMulti = useCallback(
-    async (kind: MultiKind) => {
-      const repo = detailRepo
+    async (kind: MultiKind, repoArg?: Repo) => {
+      const repo = repoArg ?? detailRepo
       if (!repo || multiAccounts.length < 2) return
+      // 从列表星标直接进来的：顺手把详情目标换成这个仓库，
+      // 面板关掉后落在它的详情页，而不是上一次看过的那一个
+      if (repoArg) setDetailRepo(repoArg)
       setMultiReturn(sheet === 'forks' ? 'forks' : 'detail')
       setMultiKind(kind)
       setMultiResults(null)
@@ -2020,12 +2100,49 @@ export default function App() {
           }
         }
         setMultiStates(states)
-        setMultiSel(defaultSelection(planMultiTasks(multiAccounts, kind, states)))
+        // 默认勾几个由「多账号偏好」定：0 全部、1/2/3 取前几个（当前账号永远第一）
+        setMultiSel(
+          defaultSelection(planMultiTasks(multiAccounts, kind, states), acctPrefRef.current.multiCount),
+        )
       } finally {
         setMultiLoading(false)
       }
     },
     [detailRepo, multiAccounts, client, ensureClient, sheet],
+  )
+
+  /**
+   * 列表行内的星标。
+   *
+   * 单账号：直接 PUT/DELETE，乐观更新那一行的星标；多账号：开面板让用户确认
+   * 要对几个账号动手（默认勾选数来自设置里的偏好）。
+   */
+  const quickStar = useCallback(
+    async (r: Repo) => {
+      const on = starredSet.has(r.full_name)
+      if (multiAccounts.length > 1) {
+        void openMulti(on ? 'unstar' : 'star', r)
+        return
+      }
+      if (!client) {
+        showToast('未连接令牌')
+        return
+      }
+      try {
+        await client.setStarred(r.owner, r.name, !on)
+        setStarredSet((prev) => {
+          const next = new Set(prev)
+          if (on) next.delete(r.full_name)
+          else next.add(r.full_name)
+          return next
+        })
+        showToast(on ? '已取消 star' : '已 star')
+        setStarTick((v) => v + 1)
+      } catch (e) {
+        showToast((e as Error).message)
+      }
+    },
+    [starredSet, multiAccounts.length, client, openMulti, showToast],
   )
 
   const runMulti = useCallback(async () => {
@@ -2326,6 +2443,17 @@ export default function App() {
           pins={pins}
           onTogglePin={(r) => void toggleRepoPin(r.full_name)}
           pkgBadges={pkgBadges}
+          starred={starredSet}
+          onStar={(r) => void quickStar(r)}
+          dl={bgDl}
+          onOpenDownload={() => {
+            if (downloadTarget) {
+              setSheet('download')
+              return
+            }
+            setSheet('dlHistory')
+            showToast('下载在后台进行，完成后会出现在这里')
+          }}
           onCreate={() => {
             setCreateError(null)
             setSheet('create')
@@ -2442,6 +2570,8 @@ export default function App() {
           latestIsBeta={!!updateResult?.info?.prerelease}
           updateMode={updateMode}
           onUpdateMode={changeUpdateMode}
+          acctPref={acctPref}
+          onAcctPref={changeAcctPref}
           themePref={themePref}
           resolvedTheme={resolvedTheme}
           onTheme={changeTheme}

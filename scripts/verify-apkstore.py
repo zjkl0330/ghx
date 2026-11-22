@@ -11,7 +11,7 @@ v0.9.7/v0.9.9 要证：
   · 弹层有平台筛选 tabs（全部/安卓/Win/macOS/Linux，带计数），点切生效；
   · 热门页内不再有内嵌商店区块，标题栏出现入口按钮（feed 可用时）；
   · 点入口拉起弹层：标题、来源副标题（含 rotation 日期与应用总数）、
-    两列网格卡片渲染名称 / 版本 tag / 星数；
+    单列清单：卡片占满整行，名称 / 版本 tag / 平台标 / 星数都在一行内；
   · 名称/简介过滤与平台筛选可叠加，清空恢复；
   · 点应用：弹层关、仓库详情开（走现有链路）；
   · 页面 390 宽不溢出；
@@ -238,6 +238,7 @@ MEASURE = """() => {
     letter: !!n.querySelector('.shop-letter'),
   }));
   const grid = document.querySelector('.shop-grid');
+  const first = document.querySelector('.shop-card:not(.shop-skel)');
   return {
     width: de.scrollWidth,
     client: de.clientWidth,
@@ -253,7 +254,11 @@ MEASURE = """() => {
     })),
     activeTab: (document.querySelector('.shop-tab.on') || {}).textContent || '',
     cards,
-    gridCols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
+    // v1.1.1 起是单列清单：grid 改成 flex 列，卡片应占满整行
+    gridCols: grid ? (getComputedStyle(grid).display === 'flex' ? 1 : getComputedStyle(grid).gridTemplateColumns.split(' ').length) : 0,
+    rowWide: grid && first ? first.getBoundingClientRect().width >= grid.getBoundingClientRect().width - 2 : false,
+    hasBody: !!document.querySelector('.shop-card .shop-body'),
+    hasGo: !!document.querySelector('.shop-card .shop-go'),
     gridOverflow: grid ? grid.getBoundingClientRect().right <= window.innerWidth + 1 : true,
     body: document.body.innerText,
   };
@@ -304,7 +309,9 @@ def main():
         assert 'komi-store' in m['sub'] and '2026-11-20' in m['sub'], f'副标题应含来源与 rotation：{m["sub"]}'
         assert '13 个应用' in m['sub'], f'副标题应含总数（三源合并）：{m["sub"]}'
         assert len(m['cards']) == 13, f'三源合并去重后应 13 张卡，实际 {len(m["cards"])}'
-        assert m['gridCols'] == 2, f'网格应 2 列，实际 {m["gridCols"]}'
+        assert m['gridCols'] == 1, f'清单应为单列，实际 {m["gridCols"]}'
+        assert m['rowWide'], '卡片没有占满整行'
+        assert m['hasBody'] and m['hasGo'], '卡片缺少内容列或右侧箭头'
         assert m['gridOverflow'], '网格卡片溢出屏幕'
         assert m['width'] <= m['client'] + 1, f'弹层把页面撑宽：{m["width"]}'
         first = m['cards'][0]
@@ -326,7 +333,7 @@ def main():
         assert tab_texts == expect_tabs, f'tabs 应为 {expect_tabs}：{tab_texts}'
         assert m['activeTab'].startswith('全部'), f'默认应选中「全部」：{m["activeTab"]}'
         pg.screenshot(path=f'{OUT}/apkstore-097-sheet.png')
-        print(f'[2] 弹层：{m["title"]} · {m["sub"]}；2 列网格 10 张卡，平台小标/tabs 就位')
+        print(f'[2] 弹层：{m["title"]} · {m["sub"]}；单列 10 行，卡片占满整行，平台小标/tabs 就位')
         print(f'[3] 前 3 张卡：{[(c["name"], c["plats"]) for c in m["cards"][:3]]}')
 
         # ── 3. 头像多线路：原图被掐死，gh-proxy 改写线路接管 ──

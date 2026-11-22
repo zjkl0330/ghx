@@ -65,6 +65,12 @@ export interface NativeStatus {
   parts?: number
   /** 这一次有没有真的切片 */
   chunked?: boolean
+  /** 上次停下时已写入的字节数（没有下载在跑时才有意义） */
+  resumeBytes?: number
+  /** 有没有可以接着下的断点 */
+  resumable?: boolean
+  /** 本次是不是从断点接着下的 */
+  resumed?: boolean
 }
 
 interface DownloaderBridge {
@@ -80,9 +86,14 @@ interface DownloaderBridge {
     tag?: string
     /** 期望并发数，1 表示单线程。原生侧会按总长与硬上限再夹一次 */
     parts?: number
+    /** 是否接着上次的断点下，默认 true */
+    resume?: boolean
+    /** 先清掉断点再下（用户点「重新下载」时） */
+    reset?: boolean
   }): Promise<NativeDownloadResult>
   install(o: { path: string }): Promise<InstallResult>
   cancel(): Promise<void>
+  discard(o: { fileName: string }): Promise<void>
   status(): Promise<NativeStatus>
   exists(o: { paths: string[] }): Promise<{ exists: Record<string, boolean> }>
   takePending(): Promise<{ raw?: string }>
@@ -123,8 +134,12 @@ export interface InnerDownloadOptions {
   repo?: string
   kind?: DownloadKind
   tag?: string
-  /** 期望并发数，1 表示单线程；不传由原生决定（默认 4 路） */
+  /** 期望并发数，1 表示单线程；不传由原生决定（默认 8 路） */
   parts?: number
+  /** 是否接着上次的断点下，默认 true */
+  resume?: boolean
+  /** 先清掉断点再下 */
+  reset?: boolean
   onProgress?: (p: NativeProgress) => void
 }
 
@@ -154,6 +169,8 @@ export async function innerDownload(o: InnerDownloadOptions): Promise<NativeDown
       ...(o.kind ? { kind: o.kind } : {}),
       ...(o.tag ? { tag: o.tag } : {}),
       ...(o.parts && o.parts > 1 ? { parts: o.parts } : {}),
+      ...(o.resume === false ? { resume: false } : {}),
+      ...(o.reset ? { reset: true } : {}),
     })
   } catch (err) {
     throw new Error(humanError(err))
@@ -163,6 +180,19 @@ export async function innerDownload(o: InnerDownloadOptions): Promise<NativeDown
     } catch {
       // 忽略
     }
+  }
+}
+
+/**
+ * 丢掉某个文件的断点。用户点「清除断点，重新下载」时调用 ——
+ * 半截文件与账本一起删，下次从零开始。
+ */
+export async function discardResume(fileName: string): Promise<void> {
+  if (!nativeDownloadAvailable()) return
+  try {
+    await Downloader.discard({ fileName })
+  } catch {
+    // 删不掉就算了，下次仍然是续传
   }
 }
 

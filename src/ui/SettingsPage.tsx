@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { DEFAULT_BASE_URL } from '../lib/api'
 import { formatSpeed, mirrorLabel } from '../lib/mirrors'
-import { modeHint, type DownloadMode, type DlParts } from '../lib/download'
+import { modeHint, PARTS_LABEL, type DownloadMode, type DlParts } from '../lib/download'
 import {
   ACCENTS,
   accentSwatch,
@@ -20,6 +20,7 @@ import {
   type TranslateScope,
 } from '../lib/translate'
 import type { UpdateMode } from '../lib/update-pref'
+import { MULTI_COUNT_LABEL, type AccountPref, type MultiCount } from '../lib/account-pref'
 import { Icon } from './icons'
 
 interface Props {
@@ -33,6 +34,9 @@ interface Props {
   updateCheckedAt: number | null
   latestVersion: string | null
   hasUpdate: boolean
+  /** 账号偏好：切回某个账号时是否接着上次的页面 */
+  acctPref: AccountPref
+  onAcctPref: (p: AccountPref) => void
   /** 更新通道：stable 只提示正式版，beta 连预发布，off 关掉 */
   updateMode: UpdateMode
   onUpdateMode: (m: UpdateMode) => void
@@ -514,6 +518,35 @@ export function SettingsPage(p: Props) {
               <Icon name="chevron" size={13} className="linkrow-arrow" />
             </button>
 
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              多账号
+            </div>
+            <SwitchRow
+              label="切回账号时接着上次看"
+              hint="每个账号各自记住停在哪个页面、搜索词、筛选、排序与置顶，切回来原样恢复，重启也在。关掉则每次切换都回首页。"
+              on={p.acctPref.keepWorkspace}
+              onChange={(on) => p.onAcctPref({ ...p.acctPref, keepWorkspace: on })}
+            />
+
+            <div className="tgl-label" style={{ marginTop: 14 }}>
+              Star / 复刻默认勾几个账号
+            </div>
+            <div className="seg sm multi-count-seg" style={{ margin: 0 }}>
+              {([0, 1, 2, 3] as MultiCount[]).map((n) => (
+                <button
+                  key={n}
+                  className={p.acctPref.multiCount === n ? 'on' : ''}
+                  onClick={() => p.onAcctPref({ ...p.acctPref, multiCount: n })}
+                >
+                  {MULTI_COUNT_LABEL[n]}
+                </button>
+              ))}
+            </div>
+            <div className="hint" style={{ marginTop: 8 }}>
+              点 Star 或复刻时，面板默认勾选几个账号。当前账号永远排在第一位，
+              所以选「1 个」就是只对正在用的这个账号动手；「全部」= 所有可用账号。面板里还能临时改。
+            </div>
+
             <div className="field" style={{ marginTop: 12 }}>
               <label htmlFor="base">API 地址</label>
               <input
@@ -674,19 +707,18 @@ export function SettingsPage(p: Props) {
             {p.downloadMode === 'inner' && (
               <>
                 <div className="tgl-label" style={{ marginTop: 14 }}>
-                  分片下载
+                  分片下载 · 最高 32 路
                 </div>
-                <div className="seg" style={{ margin: 0 }}>
-                  <button className={p.dlParts === 'multi' ? 'on' : ''} onClick={() => p.onDlParts('multi')}>
-                    4 路并行
-                  </button>
-                  <button className={p.dlParts === 'single' ? 'on' : ''} onClick={() => p.onDlParts('single')}>
-                    单线程
-                  </button>
+                <div className="seg sm dl-parts-seg" style={{ margin: 0, flexWrap: 'wrap' }}>
+                  {(['auto', '4', '8', '16', '32', 'single'] as DlParts[]).map((k) => (
+                    <button key={k} className={p.dlParts === k ? 'on' : ''} onClick={() => p.onDlParts(k)}>
+                      {PARTS_LABEL[k]}
+                    </button>
+                  ))}
                 </div>
                 <div className="hint" style={{ marginTop: 8 }}>
-                  把安装包切成 4 段同时下。线路不支持断点分段时会自动退回单线程，不会下坏。
-                  带宽已经跑满时并行不会更快，反而可能被站点限流 —— 那时选单线程。
+                  「自动」按文件大小切：每片至少 256 KB，21 MB 的包切 32 片。线路不认 Range 时
+                  自动退回单线程，不会下坏。带宽已经跑满时开太多路反而会被站点限流 —— 那时选 4 路或单线程。
                 </div>
 
                 <div className="tgl-label" style={{ marginTop: 14 }}>

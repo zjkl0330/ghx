@@ -103,18 +103,20 @@ def main():
 
     # ── 6. 分片下载：探针 → 并发定位写 → 失败降级 ──
     check('分片核心不依赖 android（能在普通 JVM 上真跑测试）', 'import android' not in chunk)
-    check('并发硬上限 4 路', re.search(r'MAX_PARTS\s*=\s*4\b', plan) is not None,
-          '实测 8 路会被 CDN 限流，比单路还慢')
-    check('单片下限 1 MiB', re.search(r'MIN_PART\s*=\s*1L\s*<<\s*20', plan) is not None)
+    check('并发硬上限 32 路', re.search(r'MAX_PARTS\s*=\s*32\b', plan) is not None,
+          '界面最高档就是 32，再高容易被 CDN 判异常流量')
+    check('单片下限 256 KiB', re.search(r'MIN_PART\s*=\s*256L\s*\*\s*1024', plan) is not None)
     check('发 Range 请求', 'c.setRequestProperty("Range", "bytes=" + start' in chunk)
     check('探针拿到 206 + Content-Range 才切片',
           'o.code == 206 && total > 0' in chunk and 'Content-Range' in chunk)
     check('显式关掉压缩，否则分段偏移会错位', '"Accept-Encoding", "identity"' in chunk)
-    check('重定向每一跳都重设 Range', 'openAt(url, null, start, end' in chunk)
+    check('重定向每一跳都重设 Range', 'openAt(url, null, from, end' in chunk
+          and 'c.setRequestProperty("Range", "bytes=" + start' in chunk)
     check('并发写用定位写而不是各写各的流', 'ch.write(bb, pos)' in chunk)
     check('支持 Range 才有分片，否则单连接', 'private static Outcome single(' in chunk)
-    check('分片失败会删掉半截、改走单连接', 'deleteQuietly(part)' in chunk
+    check('分片这条路走不通时才清掉、改走单连接', 'deleteQuietly(part)' in chunk
           and 'catch (Partial pf)' in chunk)
+    check('取消/断网保留 .part，下次续传', '保留' in chunk and 'ResumeState.clear(part)' in chunk)
     check('已经下过大半就不再重下', 'pf.done >= total / 2' in chunk)
     check('单片失败会重试一次', 'PART_ATTEMPTS' in chunk and 'for (int attempt = 1' in chunk)
     check('取消掐断所有在途连接', 'static void abortAll()' in chunk
@@ -123,6 +125,23 @@ def main():
     check('结束前校验字节数，短了就算失败', 'if (got != total)' in chunk)
     check('Plugin 把 parts 夹在合法区间', 'Math.min(parts, ChunkPlan.MAX_PARTS)' in plugin)
     check('状态里带实际并发数', 'put("parts", s.parts)' in plugin)
+
+    # ── 6c. 断点续传：账本 + 分片/单连接两条路 ──
+    resume = read(os.path.join(JAVA, 'ResumeState.java'))
+    check('账本纯 Java（JVM 上能真跑续传测试）',
+          re.search(r'^import\s+android', resume, re.M) is None)
+    check('账本记每片已写位置', 'pos=' in resume and 'static long[] parsePos' in resume)
+    check('总长/片数对不上就不认账本', 'gotTotal != total || gotParts != parts' in resume)
+    check('账本是原子写（临时文件 + 改名）', '.tmp' in resume and 'renameTo' in resume)
+    check('分片按账本跳过已完成区间', 'ranges[i][0] + wrote.get(i)' in chunk)
+    check('分片期间周期性落账本', 'saveResume(part, total, n, wrote)' in chunk)
+    check('单连接从文件长度续（Range: bytes=N-）', 'openAt(p.url, null, have > 0 ? have : -1' in chunk)
+    check('单连接不把预分配的花文件当已下完', 'boolean foreign' in chunk)
+    check('Hub 失败时保留半截文件', 'part.length() == 0' in hub and 'breakpoint' not in hub)
+    check('Hub 提供清除断点', 'static void discard(' in hub)
+    check('Plugin 暴露 discard', 'public void discard(' in plugin)
+    check('status 带续传信息', 'put("resumable", s.resumable)' in plugin)
+    check('通知栏标注续传', 'wasResumed()' in svc)
 
     # ── 6b. 通知栏：用户唯一能看见下载的地方 ──
     recv = read(os.path.join(JAVA, 'DownloadActionReceiver.java'))

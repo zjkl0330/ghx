@@ -406,115 +406,84 @@ describe('长自述分批', () => {
 })
 
 describe('翻译保链接（guard 钩子）', () => {
-  const G = '\u27E6'
-  const R = '\u27E7'
+  const linkBlock = {
+    kind: 'p' as const,
+    text: 'See the installation guide.',
+    spans: [
+      { t: 'text' as const, v: 'See the ' },
+      { t: 'link' as const, v: 'installation guide', href: 'https://x/guide' },
+    ],
+    spansFor: 'See the installation guide.',
+  }
 
-  it('protect 改写送进通道的文字，restore 还原出带链接的块', async () => {
+  it('只把文字片段送进通道，链接地址全程不出本机', async () => {
     const f = vi.fn(async () =>
-      jsonResponse({ responseData: { translatedText: `详情见${G}安装指南${R}。` }, responseStatus: 200 }),
+      jsonResponse({ responseData: { translatedText: '译:installation guide' }, responseStatus: 200 }),
     )
-    const blocks = [
-      {
-        kind: 'p' as const,
-        text: 'See the installation guide.',
-        spans: [
-          { t: 'text', v: 'See the ' },
-          { t: 'link', v: 'installation guide', href: 'https://x/guide' },
-        ] as never[],
-        spansFor: 'See the installation guide.',
-      },
-    ]
-    const r = await translateBlocks(blocks, {
+    const r = await translateBlocks([linkBlock], {
       fetchImpl: f as unknown as typeof fetch,
       channel: 'mymemory',
       guard: {
-        protect: (b) => {
-          const spans = (b as { spans?: { t: string; v: string; href?: string }[] }).spans ?? []
-          const hrefs: string[] = []
-          let out = ''
-          for (const sp of spans) {
-            if (sp.t === 'link') {
-              out += `${G}${sp.v}${R}`
-              hrefs.push(sp.href!)
-            } else out += sp.v
-          }
-          return hrefs.length ? { text: out.trim(), ctx: hrefs } : null
-        },
-        restore: (b, translated, ctx) => {
-          const hrefs = (ctx as string[]) ?? []
-          const re = /\u27E6([^\u27E6\u27E7]*)\u27E7/g
-          const spans: { t: string; v: string; href?: string }[] = []
-          let last = 0
-          let m: RegExpExecArray | null
-          let i = 0
-          while ((m = re.exec(translated))) {
-            const before = translated.slice(last, m.index)
-            if (before.trim()) spans.push({ t: 'text', v: before })
-            spans.push({ t: 'link', v: m[1], href: hrefs[i++] ?? '' })
-            last = re.lastIndex
-          }
-          const tail = translated.slice(last)
-          if (tail.trim()) spans.push({ t: 'text', v: tail })
-          const text = spans.map((sp) => sp.v).join('')
-          return { ...(b as object), text, spans } as never
-        },
+        protect: () => ({ parts: ['See the ', 'installation guide'], ctx: 'ctx' }),
+        restore: (b, tr) => ({
+          ...b,
+          text: tr.join(''),
+          spans: [
+            { t: 'text' as const, v: tr[0] },
+            { t: 'link' as const, v: tr[1], href: 'https://x/guide' },
+          ],
+        }),
       },
     })
     expect(r.translated).toBe(1)
-    const b = r.blocks[0] as { text: string; spans?: { t: string; v?: string; href?: string }[] }
-    expect(b.text).toBe(`详情见安装指南。`)
-    const link = b.spans?.find((sp): sp is { t: 'link'; v: string; href: string } => sp.t === 'link')
-    expect(link?.href).toBe('https://x/guide')
-    expect(link?.v).toBe('安装指南')
-    // 断言通道收到的是改写后的文字（链接已换成占位符）
-    const sent = decodeURIComponent(String((f.mock.calls[0] as unknown[])[0]))
-    expect(sent).toContain(G)
+    // 两个片段各发一次
+    expect(f).toHaveBeenCalledTimes(2)
+    for (const call of f.mock.calls) {
+      expect(decodeURIComponent(String((call as unknown[])[0]))).not.toContain('https://x/guide')
+    }
+    const b = r.blocks[0] as { spans?: { t: string; v?: string; href?: string }[] }
+    expect(b.spans?.find((sp) => sp.t === 'link')?.href).toBe('https://x/guide')
   })
 
-  it('restore 找不到占位符时退回纯译文，不崩', async () => {
+  it('restore 拒绝时保留原文，不写半截译文', async () => {
     const f = vi.fn(async () =>
-      jsonResponse({ responseData: { translatedText: '纯译文没有占位符' }, responseStatus: 200 }),
+      jsonResponse({ responseData: { translatedText: '纯译文' }, responseStatus: 200 }),
     )
     const r = await translateBlocks([{ kind: 'p' as const, text: 'some link text' }], {
       fetchImpl: f as unknown as typeof fetch,
       channel: 'mymemory',
       guard: {
-        protect: () => ({ text: 'some link text', ctx: ['https://x'] }),
-        restore: (b, translated, ctx) => {
-          if (!(translated as string).includes(G)) return null
-          void ctx
-          return b
-        },
+        protect: () => ({ parts: ['some link text'] }),
+        restore: () => null,
       },
     })
-    expect(r.blocks[0].text).toBe('纯译文没有占位符')
+    expect(r.blocks[0].text).toBe('some link text')
+    expect(r.translated).toBe(0)
   })
 
-  it('缓存键始终用未改写的原文，命中缓存也能还原链接', async () => {
+  it('片段译文走缓存：第二次不再请求，仍能拼回原结构', async () => {
     const store = memoryStore()
-    const fetchOk = vi.fn(async () =>
-      jsonResponse({ responseData: { translatedText: `见${G}指南${R}` }, responseStatus: 200 }),
+    const f = vi.fn(async () =>
+      jsonResponse({ responseData: { translatedText: '译:the guide' }, responseStatus: 200 }),
     )
     const opts = {
-      fetchImpl: fetchOk as unknown as typeof fetch,
+      fetchImpl: f as unknown as typeof fetch,
       channel: 'mymemory' as const,
       store,
       guard: {
-        protect: () => ({ text: `见${G}指南${R}`, ctx: ['https://x'] }),
-        restore: (b: { kind: string; text: string }, translated: string) => ({ ...b, text: translated }),
+        protect: () => ({ parts: ['See the guide.'] }),
+        restore: (b: { kind: string; text: string; spans?: unknown }, tr: string[]) => ({ ...b, text: tr[0] }) as { kind: string; text: string },
       },
     }
     await translateBlocks([{ kind: 'p', text: 'See the guide.' }], opts)
-    // 第二次：fetch 不该被调用（缓存命中），restore 依然执行
-    fetchOk.mockClear()
+    const calls = f.mock.calls.length
     const r2 = await translateBlocks([{ kind: 'p', text: 'See the guide.' }], opts)
-    expect(fetchOk).not.toHaveBeenCalled()
+    expect(f.mock.calls.length).toBe(calls)
     expect(r2.translated).toBe(1)
-    expect(r2.blocks[0].text).toContain(G)
+    expect(r2.blocks[0].text).toContain('the guide')
   })
 
-  it('带 guard 的缓存另开命名空间：无 guard 时代的旧纯译文条目不再命中', async () => {
-    // 模拟旧缓存：无 guard 时代按旧键（无 .g 后缀）存下的纯译文
+  it('带 guard 的缓存另开命名空间：旧纯译文条目不再命中，新条目存片段数组', async () => {
     const { cacheKeyFor } = await import('../translate')
     const oldKey = cacheKeyFor({ channel: 'mymemory' }, 'See the guide.')
     const written: string[] = []
@@ -530,7 +499,7 @@ describe('翻译保链接（guard 钩子）', () => {
     let fetched = 0
     const f = vi.fn(async () => {
       fetched += 1
-      return jsonResponse({ responseData: { translatedText: `见${G}指南${R}` }, responseStatus: 200 })
+      return jsonResponse({ responseData: { translatedText: '指南' }, responseStatus: 200 })
     })
     const r = await translateBlocks(
       [
@@ -545,20 +514,21 @@ describe('翻译保链接（guard 钩子）', () => {
         channel: 'mymemory',
         store,
         guard: {
-          protect: () => ({ text: `见${G}指南${R}`, ctx: ['https://x/guide'] }),
-          restore: (b: { kind: string; text: string }, translated: string, ctx: unknown) => ({
+          protect: () => ({ parts: ['the guide'], ctx: ['https://x/guide'] }),
+          restore: (b: { kind: string; text: string; spans?: unknown }, tr: string[]) => ({
             ...b,
-            text: translated,
-            spans: [{ t: 'link', v: '指南', href: (ctx as string[])[0] }],
-          }),
+            text: tr[0],
+            spans: [{ t: 'link', v: tr[0], href: 'https://x/guide' }],
+          }) as never,
         },
       },
     )
-    // 旧条目没被命中，重新走了通道；新条目写进了 .g3 命名空间
-    // （v1.0.1 起 guard 也保粗体，token 结构变了才再升一档）
     expect(fetched).toBe(1)
-    expect(r.blocks[0].text).toContain('指南')
-    expect(written.some((k) => k.endsWith('.g3'))).toBe(true)
+    expect(r.blocks[0].text).toBe('指南')
+    expect(written.some((k) => k.includes('.g4.'))).toBe(true)
     expect(written.every((k) => k !== oldKey)).toBe(true)
+    // 存进去的是片段数组，不是一整段纯译文
+    const saved = await base.get(written.find((k) => k.includes('.g4.'))!)
+    expect(JSON.parse(saved!)).toEqual(['指南'])
   })
 })

@@ -26,6 +26,7 @@ trap 'rm -rf "$OUT"' EXIT
 
 "$JAVAC" -encoding UTF-8 -d "$OUT" \
   android/app/src/main/java/dev/zjkl/ghx/ChunkPlan.java \
+  android/app/src/main/java/dev/zjkl/ghx/ResumeState.java \
   android/app/src/main/java/dev/zjkl/ghx/ChunkedFetch.java \
   android/test-jvm/dev/zjkl/ghx/ChunkTest.java
 

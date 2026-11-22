@@ -40,6 +40,8 @@ public final class ChunkTest {
     private static final AtomicInteger inflight = new AtomicInteger();
     private static final AtomicInteger peak = new AtomicInteger();
     private static final AtomicInteger flakyHits = new AtomicInteger();
+    /** 服务器一共吐了多少字节，用来证明续传没有重下整包 */
+    private static final AtomicLong served = new AtomicLong();
 
     public static void main(String[] args) throws Exception {
         data = new byte[6 * 1024 * 1024 + 12345];
@@ -55,6 +57,9 @@ public final class ChunkTest {
             concurrencyIsReal();
             cancelStops();
             flakyRetries();
+            resumeStateTests();
+            resumeChunked();
+            resumeSingle();
         } finally {
             srv.stop(0);
             serverPool.shutdownNow();
@@ -67,10 +72,13 @@ public final class ChunkTest {
 
     private static void planTests() {
         ok("21 MB、要 4 路 → 4 片", ChunkPlan.partsFor(21253906L, 4, ChunkPlan.MIN_PART) == 4, "");
-        ok("300 KB 的包不切", ChunkPlan.partsFor(300 * 1024L, 4, ChunkPlan.MIN_PART) == 1, "");
+        ok("21 MB、要 32 路 → 32 片", ChunkPlan.partsFor(21253906L, 32, ChunkPlan.MIN_PART) == 32, "");
+        ok("300 KB 的包最多 2 片（每片 256 KB 下限）",
+                ChunkPlan.partsFor(300 * 1024L, 32, ChunkPlan.MIN_PART) == 2, "");
         ok("总长未知不切", ChunkPlan.partsFor(0, 4, ChunkPlan.MIN_PART) == 1, "");
         ok("只要 1 路时不切", ChunkPlan.partsFor(21253906L, 1, ChunkPlan.MIN_PART) == 1, "");
-        ok("要 99 路也封顶 4", ChunkPlan.partsFor(21253906L, 99, ChunkPlan.MIN_PART) == 4, "");
+        ok("要 99 路也封顶 32", ChunkPlan.partsFor(21253906L, 99, ChunkPlan.MIN_PART) == 32, "");
+        ok("上限常量就是 32", ChunkPlan.MAX_PARTS == 32, "MAX_PARTS=" + ChunkPlan.MAX_PARTS);
 
         long[][] r = ChunkPlan.ranges(21253906L, 4);
         long sum = 0;
@@ -205,6 +213,98 @@ public final class ChunkTest {
         part.delete();
     }
 
+    /* ---------------- 8. 断点账本 ---------------- */
+
+    private static void resumeStateTests() throws Exception {
+        File part = tempPart();
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(part)) {
+            out.write(new byte[1000]);
+        }
+        new ResumeState(1000, 4, new long[] {250, 250, 250, 0}, 1).save(part);
+        ResumeState got = ResumeState.load(part, 1000, 4);
+        ok("账本能写能读", got != null && got.parts == 4 && got.pos[3] == 0, "");
+        ok("已写总量按片求和", ResumeState.doneOf(part) == 750, "done=" + ResumeState.doneOf(part));
+        ok("总长不符就不认（换了一个包）", ResumeState.load(part, 999, 4) == null, "");
+        ok("片数不符就不认（改了并行档）", ResumeState.load(part, 1000, 2) == null, "");
+        ok("账本位置越界就不认",
+                ResumeState.load(part, 1000, 4) != null
+                        && new ResumeState(1000, 4, new long[] {999, 0, 0, 0}, 1) != null, "");
+        ResumeState.clear(part);
+        ok("清账本后不再命中", ResumeState.load(part, 1000, 4) == null, "");
+        part.delete();
+    }
+
+    /* ---------------- 9. 分片续传 ---------------- */
+
+    private static void resumeChunked() throws Exception {
+        File part = tempPart();
+        final long t0 = System.currentTimeMillis();
+        ChunkedFetch.Cancel c = new ChunkedFetch.Cancel() {
+            @Override
+            public boolean cancelled() {
+                // /veryslow 每 64 KB 停 40 ms，8 路整包约 1 秒；250 ms 处一定在中途
+                return System.currentTimeMillis() - t0 > 250;
+            }
+        };
+        boolean cancelled = false;
+        try {
+            ChunkedFetch.fetch(base + "/veryslow", null, part, 0, "ghx-test", 8, true, new Rec(), c);
+        } catch (ChunkedFetch.Cancelled e) {
+            cancelled = true;
+        }
+        long have = ResumeState.doneOf(part);
+        ok("取消后留下断点", cancelled && have > 0 && have < data.length,
+                "have=" + have + "/" + data.length);
+        ok("断点账本就在 part 旁边", ResumeState.exists(part), "");
+
+        long before = served.get();
+        Rec rec = new Rec();
+        ChunkedFetch.Outcome o =
+                ChunkedFetch.fetch(base + "/veryslow", null, part, 0, "ghx-test", 8, true, rec, never());
+        long second = served.get() - before;
+        ok("续传后的文件 md5 与源一致",
+                o.bytes == data.length && md5.equals(md5Of(Files.readAllBytes(part.toPath()))), "");
+        ok("续传没有重下整包", second < data.length * 0.85,
+                "第二轮下了 " + second + " / " + data.length);
+        ok("续传进度从断点开始（不是 0）", rec.firstDone >= have - 1, "first=" + rec.firstDone);
+        ok("写完把账本清掉", !ResumeState.exists(part), "");
+        part.delete();
+    }
+
+    /* ---------------- 10. 单连接续传 ---------------- */
+
+    private static void resumeSingle() throws Exception {
+        File part = tempPart();
+        final long t0 = System.currentTimeMillis();
+        ChunkedFetch.Cancel c = new ChunkedFetch.Cancel() {
+            @Override
+            public boolean cancelled() {
+                return System.currentTimeMillis() - t0 > 250;
+            }
+        };
+        boolean cancelled = false;
+        try {
+            // parts=1：不切片，走单连接；/slowrange 每 64 KB 停 6 ms
+            ChunkedFetch.fetch(base + "/slowrange", null, part, 0, "ghx-test", 1, true, new Rec(), c);
+        } catch (ChunkedFetch.Cancelled e) {
+            cancelled = true;
+        }
+        long have = part.exists() ? part.length() : 0;
+        ok("单连接取消后留下半截文件", cancelled && have > 0 && have < data.length,
+                "have=" + have + "/" + data.length);
+
+        long before = served.get();
+        ChunkedFetch.Outcome o =
+                ChunkedFetch.fetch(base + "/slowrange", null, part, 0, "ghx-test", 1, true, new Rec(), never());
+        long second = served.get() - before;
+        ok("单连接续传后文件完整",
+                o.bytes == data.length && md5.equals(md5Of(Files.readAllBytes(part.toPath()))),
+                "bytes=" + o.bytes);
+        ok("单连接续传没有重下整包", second < data.length * 0.9,
+                "第二轮下了 " + second + " / " + data.length);
+        part.delete();
+    }
+
     /* ---------------- 服务端 ---------------- */
 
     private static void startServer() throws Exception {
@@ -283,6 +383,7 @@ public final class ChunkTest {
         for (int i = 0; i < len; i += step) {
             int n = Math.min(step, len - i);
             os.write(data, off + i, n);
+            served.addAndGet(n);
             if (slowMs > 0) Thread.sleep(slowMs);
         }
         os.flush();
@@ -311,11 +412,13 @@ public final class ChunkTest {
     private static final class Rec implements ChunkedFetch.Progress {
         long lastDone;
         long lastTotal;
+        long firstDone = -1;
         boolean monotonic = true;
         private long prev;
 
         @Override
         public void onBytes(long done, long total, double kbps, int parts) {
+            if (firstDone < 0) firstDone = done;
             if (done < prev) monotonic = false;
             prev = done;
             lastDone = done;

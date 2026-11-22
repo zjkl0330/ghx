@@ -51,21 +51,48 @@ export function serializeDownloadMode(mode: DownloadMode): string {
  * 只在「服务器认 Range」时真正生效 —— 原生侧会先发一个 2 字节的探针，
  * 拿到 206 才敢切片，否则自动退回单连接。所以这个开关最坏也只是「没变快」，
  * 不会把本来能下的包下坏。
+ *
+ * v1.1.2 起从「开/关」升级为档位：auto 交给原生按文件大小算（256 KB 一片、
+ * 封顶 32），其余是用户写死的路数。32 是硬上限 —— 再多容易被 CDN 判成异常流量。
  */
-export type DlParts = 'multi' | 'single'
+export type DlParts = 'auto' | '4' | '8' | '16' | '32' | 'single'
 
 export const DL_PARTS_KEY = 'ghx.download.parts'
 
-/** 每档对应的并发数。原生侧还会按总长与硬上限再夹一次 */
-export const PARTS_OF: Record<DlParts, number> = { multi: 4, single: 1 }
+/**
+ * 每档对应的并发数。auto 传 32（上限），实际片数由原生按总长与最小片长再夹一次；
+ * 819 KB 的包哪怕选了 32 路也只切 4 片。
+ */
+export const PARTS_OF: Record<DlParts, number> = {
+  auto: 32,
+  '4': 4,
+  '8': 8,
+  '16': 16,
+  '32': 32,
+  single: 1,
+}
 
-/** 容错解析：只有明确存了 'single' 才关分片，旧版本没有这个键时按开处理 */
+/** 档位显示名，设置页与下载面板共用，避免两处文案漂掉 */
+export const PARTS_LABEL: Record<DlParts, string> = {
+  auto: '自动',
+  '4': '4 路',
+  '8': '8 路',
+  '16': '16 路',
+  '32': '32 路',
+  single: '单线程',
+}
+
+/** 容错解析：旧版本存的是 'multi'（当时固定 4 路），迁移成 auto；坏值也按 auto */
 export function parseDlParts(raw: string | null | undefined): DlParts {
-  return raw === 'single' ? 'single' : 'multi'
+  const v = (raw ?? '').trim()
+  if (v === 'single') return 'single'
+  if (v === '4' || v === '8' || v === '16' || v === '32') return v
+  // 'multi' 是 v1.1.1 及更早的唯一「开」值，语义就是自动多路
+  return 'auto'
 }
 
 export function serializeDlParts(v: DlParts): string {
-  return v === 'single' ? 'single' : 'multi'
+  return parseDlParts(v)
 }
 
 export interface DownloadRoute {
@@ -538,6 +565,66 @@ export function entriesFromBoard(routes: DownloadRoute[], board: SpeedBoard | nu
 export function routesWithoutSample(routes: DownloadRoute[], board: SpeedBoard | null): DownloadRoute[] {
   if (!board) return [...routes]
   return routes.filter((r) => !board.samples[(r.base || '').toLowerCase()])
+}
+
+/* ---------------- 后台下载横幅 ---------------- */
+
+export interface BgDownload {
+  running: boolean
+  name: string
+  sub: string
+}
+
+function kbText(kbps: number): string {
+  if (!Number.isFinite(kbps) || kbps <= 0) return ''
+  return kbps >= 1024 ? `${(kbps / 1024).toFixed(1)} MB/s` : `${Math.round(kbps)} KB/s`
+}
+
+function sizeText(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0 B'
+  if (n >= 1024 * 1024 * 1024) return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`
+  return `${n} B`
+}
+
+/**
+ * 列表顶部那条「下载进行中」该显示什么；没有可显示的就返回 null。
+ *
+ * 抽成纯函数是为了能测：网页端没有原生通道，这条横幅在 Playwright 里
+ * 永远跑不出来，但「什么情况下出现、副标题怎么拼」必须是对的。
+ *
+ * 两种情况出现：
+ *  - 正在下载：显示百分比、路数、速度；
+ *  - 没在跑但有断点：显示已下多少，引导用户点回去继续。
+ */
+export function bgDownloadView(s: {
+  running: boolean
+  fileName?: string
+  bytes: number
+  total: number
+  kbps: number
+  parts?: number
+  resumable?: boolean
+  resumeBytes?: number
+}): BgDownload | null {
+  const resume = Math.max(0, s.resumeBytes ?? 0)
+  if (!s.running && !(s.resumable && resume > 0)) return null
+  const name = (s.fileName ?? '').trim() || '下载'
+
+  if (s.running) {
+    const pct = s.total > 0 ? progressOf(s.bytes, s.total) : 0
+    const bits = [`${pct}%`]
+    if ((s.parts ?? 1) > 1) bits.push(`${s.parts} 路`)
+    const speed = kbText(s.kbps)
+    if (speed) bits.push(speed)
+    return { running: true, name, sub: bits.join(' · ') }
+  }
+
+  const bits = [`已下 ${sizeText(resume)}`]
+  if (s.total > 0) bits.push(`/ ${sizeText(s.total)}`)
+  bits.push('点此继续')
+  return { running: false, name, sub: bits.join(' ') }
 }
 
 /* ---------------- 进度与文案 ---------------- */

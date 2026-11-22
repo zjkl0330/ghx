@@ -2767,6 +2767,61 @@ h1.title {
   background: var(--surface-2);
 }
 
+.dlbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 16px 0;
+  padding: 9px 12px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.dlbar.on {
+  border-color: var(--blue);
+}
+
+.dlbar-ic {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--blue);
+}
+
+.dlbar-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dlbar-main b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dlbar-main i {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dlbar-act {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--blue);
+}
+
 .snapbar {
   margin: 10px 16px 0;
   padding: 6px 10px;
@@ -6113,21 +6168,22 @@ button.ustat:active {
 /* ============ APK 商店清单弹层（komi-store 精选目录） ============ */
 
 .shop-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.shop-card {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 11px;
+  gap: 8px;
+}
+
+/* 单列清单行：头像 / 名称+版本 / 平台+星数 / 两行简介 / 箭头。
+   两列在 390 宽度下名字常被省略、简介挤成竖条，读起来比列表更慢。 */
+.shop-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 12px;
   text-align: left;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 11px;
 }
 
 .shop-card:active {
@@ -6138,17 +6194,10 @@ button.ustat:active {
   pointer-events: none;
 }
 
-.shop-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .shop-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   object-fit: cover;
   background: var(--surface-2);
   flex: none;
@@ -6159,21 +6208,30 @@ button.ustat:active {
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--text);
   text-transform: uppercase;
   background: linear-gradient(135deg, #1f6feb, #8957e5);
 }
 
-.shop-main {
+.shop-body {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
+}
+
+.shop-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .shop-name {
-  font-size: 13px;
+  min-width: 0;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
@@ -6181,27 +6239,40 @@ button.ustat:active {
   white-space: nowrap;
 }
 
-.shop-meta {
-  font-size: 10.5px;
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
 .shop-tag {
-  align-self: flex-start;
-  max-width: 100%;
-  padding: 1px 6px;
+  flex: none;
+  max-width: 44%;
+  padding: 0 6px;
   border-radius: 20px;
   font-size: 10px;
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--text-dim);
   background: var(--surface-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.shop-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-stars {
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.shop-go {
+  flex: none;
+  margin-top: 13px;
+  color: var(--text-dim);
+  opacity: 0.5;
 }
 
 /* 平台归属筛选 tabs（全部/安卓/Win/macOS/Linux，带计数） */
@@ -6245,13 +6316,7 @@ button.ustat:active {
   font-variant-numeric: tabular-nums;
 }
 
-/* 卡片平台小标（安卓 / Win / macOS / Linux） */
-.shop-plats {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
+/* 行内平台小标（安卓 / Win / macOS / Linux） */
 .shop-plat {
   padding: 0 5px;
   border-radius: 4px;
@@ -6342,3 +6407,25 @@ button.ustat:active {
 .trans-head-err {
   margin: 2px 0 6px;
 }
+
+.row-star {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 5px;
+  margin-left: -3px;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.row-star:active {
+  background: var(--surface-2);
+}
+
+.row-star.on {
+  color: #e3b341;
+  font-weight: 600;
+}
+

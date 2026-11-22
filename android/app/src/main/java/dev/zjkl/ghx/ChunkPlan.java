@@ -6,18 +6,19 @@ package dev.zjkl.ghx;
  *
  * 两条边界：
  *
- *  - 太小的包不值得切。每片至少 {@link #MIN_PART}，否则 300 KB 的 zip 会被切成
- *    四段，多出来的是三次建连与 TLS 握手；
- *  - 片数有上限。真机上同时开八条 socket 会被部分 CDN 判成异常流量（实测自建站
- *    8 路并发比单路慢八倍），{@link #MAX_PARTS} 卡在 4。
+ *  - 太小的包不值得切。每片至少 {@link #MIN_PART}（256 KiB），否则 300 KB 的 zip
+ *    会被切成几十段，多出来的是几十次建连与 TLS 握手；
+ *  - 片数有上限。部分 CDN 会把「同 IP 同时开几十条连接」判成异常流量，所以
+ *    {@link #MAX_PARTS} 卡在 32：这是用户能选的最高档，实际片数还要被总长与
+ *    MIN_PART 再夹一次（21 MB 的包最多切 32 片，每片约 650 KB）。
  */
 final class ChunkPlan {
 
-    /** 硬上限：再多就不是加速而是自找限流 */
-    static final int MAX_PARTS = 4;
+    /** 硬上限：界面最高档就是 32 路，再高容易被判异常流量 */
+    static final int MAX_PARTS = 32;
 
-    /** 单片最小长度：1 MiB */
-    static final long MIN_PART = 1L << 20;
+    /** 单片最小长度：256 KiB。低于这个长度，建连开销比并行省下的时间还多 */
+    static final long MIN_PART = 256L * 1024;
 
     private ChunkPlan() {}
 

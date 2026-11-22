@@ -58,6 +58,12 @@ final class DownloadHub {
         /** 本次实际并发数：1 表示单连接（线路不支持分段，或用户选了单线程） */
         int parts = 1;
         boolean chunked;
+        /** 上次停下时已写入的字节数（断点续传用），0 表示没有断点 */
+        long resumeBytes;
+        /** 有没有可以接着下的断点 */
+        boolean resumable;
+        /** 本次是不是从断点接着下的 */
+        boolean resumed;
     }
 
     private static final long WAKE_TIMEOUT_MS = 30 * 60 * 1000L;
@@ -91,6 +97,8 @@ final class DownloadHub {
     private static volatile long lastMs;
     /** 本次落盘路径，doDownload 一开始就写；start 时清空 */
     private static volatile String outPath;
+    /** 本次是否命中了断点（探针之前就已有 .part 与账本） */
+    private static volatile boolean resumed;
 
     private static PowerManager.WakeLock wake;
     private static WifiManager.WifiLock wifi;
@@ -104,6 +112,11 @@ final class DownloadHub {
     /** 本次下载实际用了几条连接：1 表示单线程，>1 表示在切片 */
     static int currentParts() {
         return parts;
+    }
+
+    /** 本次是不是从断点接着下的，通知栏据此标一个「续传」 */
+    static boolean wasResumed() {
+        return resumed;
     }
 
     static synchronized void addListener(Listener l) {
@@ -127,6 +140,15 @@ final class DownloadHub {
         s.ms = lastMs;
         s.parts = parts;
         s.chunked = chunked;
+        s.resumed = resumed;
+        // 断点信息只在没有下载在跑时查：下载中的 bytes 就是实时进度，
+        // 没必要每 800ms 去读一次账本文件
+        if (!running) {
+            File part = partOf(fileName);
+            long have = ResumeState.doneOf(part);
+            s.resumeBytes = have;
+            s.resumable = have > 0 && (total <= 0 || have < total);
+        }
         return s;
     }
 
@@ -139,7 +161,7 @@ final class DownloadHub {
      * 而不是悄悄把上一条掐掉 —— 用户可能是从另一个仓库点进来的。
      */
     static boolean start(Context context, String url, String name, long expect, Map<String, String> headers,
-                         String repoName, String kindName, String tagName, int wantParts) {
+                         String repoName, String kindName, String tagName, int wantParts, boolean resume) {
         synchronized (LOCK) {
             if (running) return false;
             app = context.getApplicationContext();
@@ -155,6 +177,7 @@ final class DownloadHub {
             parts = 1;
             chunked = false;
             fileName = name;
+            resumed = resume && ResumeState.doneOf(partOf(name)) > 0;
             repo = repoName == null ? "" : repoName;
             kind = kindName == null ? "" : kindName;
             tag = tagName == null ? "" : tagName;
@@ -166,10 +189,11 @@ final class DownloadHub {
         final long fExpect = expect;
         final Map<String, String> fHeaders = headers;
         final int fParts = wantParts;
+        final boolean fResume = resume;
 
         worker = new Thread(() -> {
             try {
-                long ms = doDownload(fUrl, fName, fExpect, fHeaders, fParts);
+                long ms = doDownload(fUrl, fName, fExpect, fHeaders, fParts, fResume);
                 lastPath = outPath;
                 lastBytes = bytes;
                 lastMs = ms;
@@ -354,6 +378,29 @@ final class DownloadHub {
         return dir;
     }
 
+    /** 某个文件对应的半截文件（断点就在这里） */
+    private static File partOf(String rawName) {
+        File dir = downloadDir();
+        if (dir == null) return null;
+        return new File(dir, safeName(rawName) + ".part");
+    }
+
+    /**
+     * 丢掉断点。用户点「清除断点」时调用：删半截文件与账本，下次从零开始。
+     * 下载在跑时不动 —— 那时删文件只会把正在写的连接弄坏。
+     */
+    static void discard(String rawName) {
+        synchronized (LOCK) {
+            if (running) return;
+            File part = partOf(rawName);
+            if (part == null) return;
+            //noinspection ResultOfMethodCallIgnored
+            part.delete();
+            ResumeState.clear(part);
+            resumed = false;
+        }
+    }
+
     private static String versionName() {
         try {
             return app.getPackageManager().getPackageInfo(app.getPackageName(), 0).versionName;
@@ -370,7 +417,7 @@ final class DownloadHub {
     }
 
     private static long doDownload(String url, String rawName, long expect, Map<String, String> headers,
-                                   int wantParts) throws IOException {
+                                   int wantParts, boolean resume) throws IOException {
         File dir = downloadDir();
         if (dir == null) throw new IOException("无法创建下载目录");
         String fileName = safeName(rawName);
@@ -379,7 +426,9 @@ final class DownloadHub {
         File part = new File(dir, fileName + ".part");
         // 同名旧包先清掉；清不掉（被安装器占着）就换一个带时间戳的名字，
         // 不要因为「上一版还没装完」就整个下载失败。
-        if (part.exists() && !part.delete()) throw new IOException("无法清理临时文件");
+        // 注意：**不再无条件删 .part** —— 那是上次的断点，留着才能续。
+        if (!resume && part.exists() && !part.delete()) throw new IOException("无法清理临时文件");
+        if (!resume) ResumeState.clear(part);
         if (out.exists() && !out.delete()) {
             out = new File(dir, System.currentTimeMillis() + "-" + fileName);
         }
@@ -388,7 +437,7 @@ final class DownloadHub {
         long started = System.currentTimeMillis();
         try {
             ChunkedFetch.Outcome r = ChunkedFetch.fetch(
-                    url, headers, part, expect, "ghx-android/" + versionName(), wantParts,
+                    url, headers, part, expect, "ghx-android/" + versionName(), wantParts, resume,
                     new ChunkedFetch.Progress() {
                         @Override
                         public void onBytes(long done, long len, double speed, int n) {
@@ -413,10 +462,12 @@ final class DownloadHub {
             if (!part.renameTo(out)) throw new IOException("无法保存文件");
             return System.currentTimeMillis() - started;
         } finally {
-            // 中途失败或取消：删掉半截文件，别占着空间
-            if (part.exists() && !out.exists()) {
+            // 中途失败或取消：**保留** .part 与账本，下次点下载接着下。
+            // 只有「一字节都没写」才清掉，免得留下 0 字节垃圾。
+            if (part.exists() && part.length() == 0 && !out.exists()) {
                 //noinspection ResultOfMethodCallIgnored
                 part.delete();
+                ResumeState.clear(part);
             }
         }
     }

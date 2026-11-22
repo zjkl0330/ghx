@@ -86,9 +86,17 @@ export function planMultiTasks(
   })
 }
 
-/** 默认勾选：跳过的不选，其余的选上。用户进面板就能直接点确认。 */
-export function defaultSelection(tasks: MultiTask[]): Set<string> {
-  return new Set(tasks.filter((t) => !t.skip).map((t) => t.id))
+/**
+ * 默认勾选。
+ *
+ * v1.1.2 起由偏好决定勾几个：count=0 表示全部（老行为），1/2/3 就只勾前几个。
+ * tasks 的顺序来自 buildAccounts —— **当前账号永远排第一**，所以「只勾 1 个」
+ * 勾的就是用户正在用的那个，不会莫名其妙选到小号。
+ */
+export function defaultSelection(tasks: MultiTask[], count = 0): Set<string> {
+  const open = tasks.filter((t) => !t.skip)
+  const n = count > 0 ? Math.min(count, open.length) : open.length
+  return new Set(open.slice(0, n).map((t) => t.id))
 }
 
 /** 勾选/取消，返回新 Set。React 比对引用，不能就地改。 */

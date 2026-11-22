@@ -100,6 +100,13 @@ interface Props {
    * 所以这里允许缺项，缺了就是「还没查到」或「没有」。
    */
   pkgBadges?: Record<string, PkgKind[]>
+  /** 后台下载：有下载在跑（或有断点）时，顶部挂一条，点一下回到下载页 */
+  dl?: { running: boolean; name: string; sub: string } | null
+  onOpenDownload?: () => void
+  /** 本次会话里 star 过的仓库（full_name），用来把星标点亮 */
+  starred?: Set<string>
+  /** 点行内的星标：直接 star / 取消 star，不打开仓库 */
+  onStar?: (repo: Repo) => void
 }
 
 export function RepoList(p: Props) {
@@ -213,6 +220,19 @@ export function RepoList(p: Props) {
           </div>
         )}
 
+        {p.dl && (
+          <button className={`dlbar${p.dl.running ? ' on' : ''}`} onClick={p.onOpenDownload}>
+            <span className="dlbar-ic">
+              <Icon name="download" size={14} />
+            </span>
+            <span className="dlbar-main">
+              <b className="ellipsis">{p.dl.name}</b>
+              <i>{p.dl.sub}</i>
+            </span>
+            <span className="dlbar-act">{p.dl.running ? '查看' : '继续'}</span>
+          </button>
+        )}
+
         {p.snapshotAt !== null && p.loading && (
           <div className="snapbar">
             显示 {snapshotAge(p.snapshotAt)} 的本地数据，正在刷新…
@@ -307,7 +327,25 @@ export function RepoList(p: Props) {
                           {r.language}
                         </span>
                       )}
-                      <span>★ {r.stargazers_count}</span>
+                      {(() => {
+                        const on = p.starred?.has(r.full_name) ?? false
+                        return (
+                          <span
+                            className={`row-star${on ? ' on' : ''}`}
+                            role="button"
+                            tabIndex={-1}
+                            aria-label={on ? '取消 star' : 'star 这个仓库'}
+                            title={on ? '点一下取消 star' : '点一下 star'}
+                            onClick={(e) => {
+                              // 行本身是 button，不拦住冒泡就会顺手打开仓库
+                              e.stopPropagation()
+                              p.onStar?.(r)
+                            }}
+                          >
+                            {on ? '★' : '☆'} {r.stargazers_count + (on ? 1 : 0)}
+                          </span>
+                        )
+                      })()}
                       <span>⑂ {r.forks_count}</span>
                       <span>{relTime(r.pushed_at)}</span>
                     </span>

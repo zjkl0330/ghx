@@ -59,6 +59,27 @@ describe('默认勾选', () => {
     expect([...defaultSelection(tasks)]).toEqual(['b', 'c'])
   })
 
+  it('偏好选 1 个：只勾第一个（当前账号排第一）', () => {
+    const tasks = planMultiTasks([A, B, C], 'star', {})
+    expect([...defaultSelection(tasks, 1)]).toEqual(['a'])
+  })
+
+  it('偏好选 2 个：按顺序取前两个，跳过的不占名额', () => {
+    const tasks = planMultiTasks([A, B, C], 'star', { a: { starred: true } })
+    expect([...defaultSelection(tasks, 2)]).toEqual(['b', 'c'])
+  })
+
+  it('偏好要的比可执行的还多：全勾上，不会越界', () => {
+    const tasks = planMultiTasks([A, B], 'star', { b: { starred: true } })
+    expect([...defaultSelection(tasks, 3)]).toEqual(['a'])
+  })
+
+  it('0 / 不传 都表示全部', () => {
+    const tasks = planMultiTasks([A, B], 'star', {})
+    expect([...defaultSelection(tasks, 0)]).toEqual(['a', 'b'])
+    expect([...defaultSelection(tasks)]).toEqual(['a', 'b'])
+  })
+
   it('切换勾选返回新集合，不改原来的', () => {
     const base = new Set(['a'])
     const off = toggleSelection(base, 'a')

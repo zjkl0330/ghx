@@ -26,6 +26,7 @@ import { formatSpeed, pickReachable, selfMirrorBase } from '../lib/mirrors'
 import { formatBytes, headReachable, openExternal } from '../lib/update'
 import {
   cancelInnerDownload,
+  discardResume,
   downloadStatus,
   innerDownload,
   installApk,
@@ -88,6 +89,8 @@ export function DownloadSheet(p: Props) {
   } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [savedPath, setSavedPath] = useState<string | null>(null)
+  /** 上次停下时已下的字节数；>0 表示有断点可续 */
+  const [resumeAt, setResumeAt] = useState(0)
   const cancelledRef = useRef(false)
   const aliveRef = useRef(true)
 
@@ -110,7 +113,12 @@ export function DownloadSheet(p: Props) {
     let stop = false
     void (async () => {
       const s = await downloadStatus()
-      if (stop || !s.running) return
+      if (stop) return
+      if (!s.running) {
+        // 没在跑：看有没有上次留下的断点，进面板就明说能接着下
+        if (s.resumable && (s.resumeBytes ?? 0) > 0) setResumeAt(s.resumeBytes ?? 0)
+        return
+      }
       if (s.fileName && s.fileName !== safeFileName(p.target.fileName)) {
         setErr(`另一个文件正在下载：${s.fileName}`)
         return
@@ -150,9 +158,11 @@ export function DownloadSheet(p: Props) {
         if (!s.hasResult) return
         if (s.path) {
           setSavedPath(s.path)
+          setResumeAt(0)
           setPhase('done')
         } else {
           setErr(s.error ?? '下载已停止')
+          if (s.resumable && (s.resumeBytes ?? 0) > 0) setResumeAt(s.resumeBytes ?? 0)
           setPhase('error')
         }
       })()
@@ -352,6 +362,7 @@ export function DownloadSheet(p: Props) {
         void claimRecord({ ok: true, path: res.path })
         if (!aliveRef.current) return
         setSavedPath(res.path)
+        setResumeAt(0)
         // 只有安装包才需要调安装器；产物是 zip，交给系统查看器即可
         if (!p.target.installable) {
           setPhase('done')
@@ -402,6 +413,13 @@ export function DownloadSheet(p: Props) {
     }
   }
 
+  /** 用户明确不想接着上次那条半截文件：删掉它，从头来 */
+  async function clearResume() {
+    await discardResume(safeFileName(p.target.fileName))
+    setResumeAt(0)
+    p.onToast('已清除断点，下次从头下载')
+  }
+
   async function cancel() {
     cancelledRef.current = true
     await cancelInnerDownload()
@@ -441,6 +459,18 @@ export function DownloadSheet(p: Props) {
             </i>
           </span>
         </div>
+
+        {resumeAt > 0 && !busy && (
+          <div className="dl-note dl-resume">
+            <span>
+              上次下到 {formatBytes(resumeAt)}
+              {p.target.size > 0 ? `（${progressOf(resumeAt, p.target.size)}%）` : ''}，继续会接着下
+            </span>
+            <button className="linkbtn" onClick={() => void clearResume()}>
+              清除断点
+            </button>
+          </div>
+        )}
 
         <div className="tgl-label" style={{ marginTop: 14 }}>
           下载方式
@@ -558,9 +588,15 @@ export function DownloadSheet(p: Props) {
 
         <div className="btns">
           {busy ? (
-            <button className="btn ghost" onClick={() => void cancel()}>
-              取消下载
-            </button>
+            <>
+              <button className="btn ghost" onClick={() => void cancel()}>
+                取消下载
+              </button>
+              <button className="btn primary" onClick={p.onClose}>
+                <Icon name="download" size={14} />
+                后台下载
+              </button>
+            </>
           ) : (
             <button className="btn ghost" onClick={p.onClose}>
               {phase === 'done' ? '关闭' : '稍后'}
@@ -584,9 +620,13 @@ export function DownloadSheet(p: Props) {
                 : phase === 'probing'
                   ? '正在选择线路…'
                   : effectiveMode === 'inner'
-                    ? p.target.installable
-                      ? '下载并安装'
-                      : '下载'
+                    ? resumeAt > 0
+                      ? p.target.installable
+                        ? '继续下载并安装'
+                        : '继续下载'
+                      : p.target.installable
+                        ? '下载并安装'
+                        : '下载'
                     : '用浏览器下载'}
             </button>
           )}
@@ -596,7 +636,7 @@ export function DownloadSheet(p: Props) {
           {p.target.kind === 'artifact'
             ? 'CI 产物要走令牌才能取，浏览器拿不到，所以只能由 App 下载；产物有保留期限，过期后需要重新跑一次工作流。'
             : effectiveMode === 'inner'
-              ? '测速只拉每条线路的前 256 KB，不会把整个包下两遍。'
+              ? '点「后台下载」可以退出这一页，下载会在通知栏继续；回来还能接着看进度。测速只拉每条线路的前 256 KB。'
               : p.target.installable
                 ? '交给浏览器后进度在通知栏；下载完成后点通知即可安装。'
                 : '交给浏览器后进度在通知栏，完成后可直接打开，也能在下载目录里找到。'}

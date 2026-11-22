@@ -56,15 +56,24 @@ public class DownloadPlugin extends Plugin {
         // 分片路数：JS 传 1 表示单线程。夹在 [1, ChunkPlan.MAX_PARTS] 之间，
         // 免得某个手滑的值把手机的连接数打爆。
         Integer partsBoxed = call.getInt("parts");
-        int parts = partsBoxed == null ? ChunkPlan.MAX_PARTS : partsBoxed;
+        int parts = partsBoxed == null ? 8 : partsBoxed;
         parts = Math.max(1, Math.min(parts, ChunkPlan.MAX_PARTS));
+        // 断点续传默认开：上次没下完的接着下。用户点「重新下载」时传 resume=false
+        Boolean resumeBoxed = call.getBoolean("resume");
+        boolean resume = resumeBoxed == null || resumeBoxed;
+        Boolean resetBoxed = call.getBoolean("reset");
+        if (resetBoxed != null && resetBoxed) {
+            DownloadHub.discard(fileName);
+            resume = false;
+        }
 
         // 先挂监听再起线程：否则第一帧进度可能早于监听注册
         attachBridge(call);
 
         boolean ok = DownloadHub.start(
                 getContext().getApplicationContext(), url.trim(), fileName, expect, headers,
-                repo == null ? "" : repo, kind == null ? "" : kind, tag == null ? "" : tag, parts);
+                repo == null ? "" : repo, kind == null ? "" : kind, tag == null ? "" : tag, parts,
+                resume);
         if (!ok) {
             detachBridge();
             call.reject("已有下载正在进行");
@@ -133,6 +142,9 @@ public class DownloadPlugin extends Plugin {
         ret.put("ms", s.ms);
         ret.put("parts", s.parts);
         ret.put("chunked", s.chunked);
+        ret.put("resumeBytes", s.resumeBytes);
+        ret.put("resumable", s.resumable);
+        ret.put("resumed", s.resumed);
         if (s.path != null) ret.put("path", s.path);
         if (s.error != null) ret.put("error", s.error);
         call.resolve(ret);
@@ -159,6 +171,21 @@ public class DownloadPlugin extends Plugin {
     @PluginMethod
     public void cancel(PluginCall call) {
         DownloadHub.cancel();
+        call.resolve();
+    }
+
+    /**
+     * 丢掉断点。界面上的「清除断点，重新下载」走这里 ——
+     * 用户明确不想接着上次那条半截文件时，才删 .part 与账本。
+     */
+    @PluginMethod
+    public void discard(PluginCall call) {
+        String name = call.getString("fileName", "");
+        if (name == null || name.trim().isEmpty()) {
+            call.reject("缺少文件名");
+            return;
+        }
+        DownloadHub.discard(name.trim());
         call.resolve();
     }
 

@@ -866,13 +866,28 @@ export interface TranslateBlocksResult<B extends BlockLike> {
 }
 
 /**
- * 翻译保护钩子：有的块在送进通道前要改写（比如链接换成占位符），
- * 译文回来后再还原。protect 返回 null 表示该块不需要特殊处理。
- * ctx 是 protect 与 restore 之间传递的不透明数据（restore 用它回填）。
+ * 翻译保护钩子：把一块拆成若干片段分别送翻，回来按本地结构拼回。
+ *
+ * v1.1.0 之前是「整段送翻 + ⟦⟧ 占位符」，通道会改写/吞掉占位符，
+ * 于是要么丢链接、要么正文里残留 〖〗。现在链接地址与顺序完全留在本机，
+ * protect 只交出「要翻的文字片段」，restore 拿到同样顺序的译文数组。
+ * protect 返回 null 表示该块不需要特殊处理（纯文字块走原管线）。
  */
 export interface BlockGuard<B> {
-  protect: (block: B) => { text: string; ctx?: unknown } | null
-  restore: (block: B, translated: string, ctx: unknown) => B | null
+  protect: (block: B) => { parts: string[]; ctx?: unknown } | null
+  restore: (block: B, translated: string[], ctx: unknown) => B | null
+}
+
+/** 缓存里存的是片段译文数组；格式不对就当没命中 */
+function parsePartCache(raw: string | null): string[] | null {
+  if (raw === null) return null
+  try {
+    const v = JSON.parse(raw) as unknown
+    if (Array.isArray(v) && v.every((x) => typeof x === 'string')) return v as string[]
+  } catch {
+    /* 旧格式或坏值，重翻 */
+  }
+  return null
 }
 
 /**
@@ -926,36 +941,59 @@ export async function translateBlocks<B extends BlockLike>(
     while (cursor < targets.length) {
       const idx = targets[cursor]
       cursor += 1
-      const plainSrc = (blocks[idx].text ?? '').trim()
-      const guarded = opts.guard?.protect(blocks[idx]) ?? null
-      // 缓存键带 guard 命名空间：无 guard 时代的旧缓存存的是纯译文，
-      // 拿来 restore 会因为找不到 ⟦⟧ 而退回死链接文字（v0.9.9 真机踩到）。
-      // v1.0.1 起 guard 也保粗体/斜体，v1.0.3 起裸 URL 也算链接，
-      // token 数量一变旧条目就会让整段降级（丢链接）。命名空间跟着升档，
-      // 宁可多翻一次，也不能拿旧译文去还原新结构。
-      const key = cacheKeyFor(opts, plainSrc) + (guarded ? '.g3' : '')
-      const src = guarded ? guarded.text : plainSrc
-      const finish = (translated: string): B => {
-        if (!guarded) return { ...blocks[idx], text: translated }
-        return opts.guard?.restore(blocks[idx], translated, guarded.ctx) ?? { ...blocks[idx], text: translated }
+      const srcBlock = blocks[idx]
+      const plainSrc = (srcBlock.text ?? '').trim()
+      const guarded = opts.guard?.protect(srcBlock) ?? null
+      // 缓存键带 guard 命名空间：无 guard 时代的旧条目存的是纯译文，
+      // 拿来 restore 会拼出死链接（v0.9.9 真机踩到）。v1.1.1 起片段化，
+      // 键里再混入片段内容哈希 —— 同一段文字换了链接也要重翻，不能串。
+      const key =
+        cacheKeyFor(opts, plainSrc) +
+        (guarded ? `.g4.${hashText(guarded.parts.join('\u0000'))}` : '')
+      /** 把译文片段数组还原成块；restore 拒绝时返回 null 表示「这段不翻」 */
+      const finish = (parts: string[]): B | null => {
+        if (!guarded) return null
+        return opts.guard?.restore(srcBlock, parts, guarded.ctx) ?? null
+      }
+      /** 采用译文；restore 拒绝就保持原文，绝不写半截译文 */
+      const accept = (nb: B | null) => {
+        if (!nb) return false
+        out[idx] = nb
+        ok += 1
+        opts.onBlock?.(idx, nb)
+        return true
       }
       try {
-        const hit = opts.store ? await opts.store.get(key) : null
-        if (hit !== null) {
-          // 旧缓存（无 guard 时代）存的是纯译文，restore 找不到占位符时自然退回纯文字
-          const nb = finish(hit)
-          out[idx] = nb
-          ok += 1
-          opts.onBlock?.(idx, nb)
+        if (!guarded) {
+          // 无行内结构的纯文字块：整段送翻，失败保持原文
+          const hit = opts.store ? await opts.store.get(key) : null
+          if (hit !== null) {
+            accept({ ...srcBlock, text: hit })
+          } else {
+            // 长段落先在块内按通道上限切分再翻，否则 MyMemory 直接拒绝、整段留在英文
+            const r = await translateLongText(plainSrc, opts)
+            accept({ ...srcBlock, text: r.text })
+            channel = r.channel
+            if (opts.store) await opts.store.set(key, r.text)
+          }
+        } else if (guarded.parts.length === 0) {
+          // 只有链接/符号、没有可翻文字：把本地结构原样拼回即可
+          accept(finish([]))
         } else {
-          // 长段落先在块内按通道上限切分再翻，否则 MyMemory 直接拒绝、整段留在英文
-          const r = await translateLongText(src, opts)
-          const nb = finish(r.text)
-          out[idx] = nb
-          channel = r.channel
-          ok += 1
-          opts.onBlock?.(idx, nb)
-          if (opts.store) await opts.store.set(key, r.text)
+          const hit = parsePartCache(opts.store ? await opts.store.get(key) : null)
+          if (hit) {
+            accept(finish(hit))
+          } else {
+            const got: string[] = []
+            for (const part of guarded.parts) {
+              // 逐个片段送翻：一道失败就整块保持原文，不拿半份译文硬拼
+              const r = await translateLongText(part, opts)
+              got.push(r.text)
+              channel = r.channel
+            }
+            const nb = finish(got)
+            if (accept(nb) && opts.store) await opts.store.set(key, JSON.stringify(got))
+          }
         }
       } catch {
         /* 这一段保持原文 */

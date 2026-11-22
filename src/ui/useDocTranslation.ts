@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { guardInline, unguardInline } from '../lib/linkguard'
+import { inlineGuard } from '../lib/linkguard'
 import type { Block } from '../lib/markdown'
 import {
   translateBlocks,
@@ -35,7 +35,7 @@ export interface DocTransState {
  * 一段 Markdown（发行说明、Issue 正文…）的整块机翻。
  *
  * 和 README 那套是同一个思路，抽出来共用：
- * - 链接用 ⟦标签⟧ 占位保住，译文回来按出现顺序回填 spans，否则整段链接变死字；
+ * - 行内结构按片段拆翻、本地拼回，链接地址与顺序不经过翻译通道；
  * - 边翻边显示（onBlock），长说明不用干等着；
  * - 每次只翻当前这一份，切换对象前先 cancel，避免串台。
  *
@@ -91,18 +91,7 @@ export function useDocTranslation(opts: DocTransOptions): DocTransState {
           azureKey: opts.azureKey,
           maxBlocks: bulk ? 60 : 20,
           concurrency: bulk ? 6 : 3,
-          guard: {
-            protect: (b) => {
-              if (!('spans' in b)) return null
-              const g = guardInline(b.spans)
-              return g ? { text: g.text, ctx: g.ctx } : null
-            },
-            restore: (b, translated, ctx) => {
-              const r = unguardInline(translated, ctx)
-              if (!r) return null
-              return { ...b, text: r.text, spans: r.spans, spansFor: r.text }
-            },
-          },
+          guard: inlineGuard<Block>(opts.target),
           onBlock: (index, block) => {
             if (!live()) return
             setZh((prev) => {

@@ -58,8 +58,9 @@ const PLATFORM_TABS: (ApkPlatform | 'all')[] = ['all', 'android', 'windows', 'ma
  * APK 商店清单（komi-store 精选安卓应用目录）。
  *
  * 入口在热门页标题栏，内容收进全屏弹层：平台归属筛选 tabs + 名称/简介过滤
- * + 两列网格（卡片带平台小标与版本 tag）。点应用交给调用方走现有仓库详情
- * 链路，装包复用发行版下载，零特例。
+ * + 单列清单。390 宽度下两列会把简介压成两行碎字、名字频繁省略，
+ * 所以改成「头像 + 名称/版本/平台 + 两行简介 + 箭头」的横向行。
+ * 点应用交给调用方走现有仓库详情链路，装包复用发行版下载，零特例。
  */
 export function ApkStoreSheet(p: {
   kv: KV | null
@@ -165,11 +166,13 @@ export function ApkStoreSheet(p: {
 
         {!done && (
           <div className="shop-grid" aria-hidden>
-            {Array.from({ length: 6 }, (_, i) => (
+            {Array.from({ length: 5 }, (_, i) => (
               <div className="shop-card shop-skel" key={i}>
                 <span className="skel shop-avatar" />
-                <span className="skel skel-bar" style={{ width: '70%' }} />
-                <span className="skel skel-bar sm" style={{ width: '88%' }} />
+                <span className="shop-body">
+                  <span className="skel skel-bar" style={{ width: '46%' }} />
+                  <span className="skel skel-bar sm" style={{ width: '82%' }} />
+                </span>
               </div>
             ))}
           </div>
@@ -197,25 +200,26 @@ export function ApkStoreSheet(p: {
                 onClick={() => p.onOpenApp(a)}
                 aria-label={`打开 ${a.fullName}`}
               >
-                <span className="shop-top">
-                  <ShopAvatar app={a} />
-                  <span className="shop-main">
+                <ShopAvatar app={a} />
+                <span className="shop-body">
+                  <span className="shop-line1">
                     <span className="shop-name">{a.name}</span>
-                    <span className="shop-meta">
+                    {a.latestTag && <span className="shop-tag">{a.latestTag}</span>}
+                  </span>
+                  <span className="shop-meta">
+                    <span className="shop-stars">
                       ★ {compactNumber(a.stars)}
                       {a.language ? ` · ${a.language}` : ''}
                     </span>
+                    {a.platforms.map((pf) => (
+                      <span className="shop-plat" key={pf}>
+                        {APK_PLATFORM_LABEL[pf]}
+                      </span>
+                    ))}
                   </span>
+                  {a.description && <span className="shop-desc">{a.description}</span>}
                 </span>
-                <span className="shop-plats">
-                  {a.platforms.map((pf) => (
-                    <span className="shop-plat" key={pf}>
-                      {APK_PLATFORM_LABEL[pf]}
-                    </span>
-                  ))}
-                </span>
-                {a.latestTag && <span className="shop-tag">{a.latestTag}</span>}
-                {a.description && <span className="shop-desc">{a.description}</span>}
+                <Icon name="chevron" size={14} className="shop-go" />
               </button>
             ))}
           </div>

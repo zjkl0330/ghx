@@ -172,13 +172,14 @@ public class DownloadService extends Service {
 
             long eta = NotifText.etaSeconds(bytes, total, kbps);
             sub = pct + "%";
+            if (DownloadHub.wasResumed()) sub = "续传 · " + sub;
             if (parts > 1) sub += " · " + parts + " 路并行";
             if (eta >= 0) sub += " · 还剩 " + NotifText.eta(eta);
         } else {
             // 服务器没给长度（少见，个别线路的 chunked 响应）：只能转圈 + 报已下量
             b.setProgress(0, 0, true);
             b.setContentText(NotifText.bytes(bytes) + (kbps > 0 ? " · " + NotifText.speed(kbps) : ""));
-            sub = "正在下载";
+            sub = DownloadHub.wasResumed() ? "续传中" : "正在下载";
             if (parts > 1) sub += " · " + parts + " 路并行";
         }
         b.setSubText(sub);

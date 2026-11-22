@@ -1,4 +1,4 @@
-"""验证：设置里的「分片下载」开关。
+"""验证：设置里的「分片下载」档位（自动/4/8/16/32/单线程）。
 
 网页端跑不到原生下载，但这一层要证的是**开关本身可靠**：默认开、切了会落盘、
 刷新还记得、切回浏览器下载后整块消失。真正切片的正确性由
@@ -106,9 +106,9 @@ def parts(store):
     return store.get('ghx.download.parts')
 
 
-def on_button(pg, text):
-    """某一档是不是高亮（.seg 里的 button.on）"""
-    return pg.locator('.seg button.on', has_text=text).count() == 1
+def on_button(pg, text, scope='.seg'):
+    """某一档是不是高亮。scope 限定到某一块，避免别的 seg 里也有「自动」这种词"""
+    return pg.locator(f'{scope} button.on', has_text=text).count() >= 1
 
 
 def main():
@@ -132,46 +132,52 @@ def main():
         login(pg)
         open_settings(pg)
 
-        seg = pg.locator('.seg', has_text='4 路并行')
-        assert seg.count() == 1, '设置里没找到「分片下载」开关'
-        assert on_button(pg, '4 路并行'), '默认不是 4 路并行'
-        assert not on_button(pg, '单线程'), '默认高亮了单线程'
-        assert parts(pg.evaluate('() => Object.assign({}, localStorage)')) in (None, 'multi'), \
+        seg = pg.locator('.dl-parts-seg')
+        assert seg.count() == 1, '设置里没找到「分片下载」档位'
+        btns = seg.locator('button')
+        assert btns.count() == 6, f'档位应有 6 个，实际 {btns.count()}'
+        for label in ('自动', '4 路', '8 路', '16 路', '32 路', '单线程'):
+            assert btns.locator(f'text="{label}"').count() == 1, f'缺档位 {label}'
+        assert on_button(pg, '自动', '.dl-parts-seg'), '默认不是「自动」'
+        assert not on_button(pg, '单线程', '.dl-parts-seg'), '默认高亮了单线程'
+        assert parts(pg.evaluate('() => Object.assign({}, localStorage)')) in (None, 'auto'), \
             '没点过就不该写存储'
+        seg.scroll_into_view_if_needed()
+        pg.wait_for_timeout(300)
+        pg.screenshot(path=f'{OUT}/dlparts-091-setting.png')
         seg.first.scroll_into_view_if_needed()
         pg.wait_for_timeout(300)
         pg.screenshot(path=f'{OUT}/dlparts-091-setting.png')
-        print('[1] 设置里出现「分片下载」，默认高亮「4 路并行」，未点过不写存储')
+        print('[1] 设置里出现 6 档分片下载，默认「自动」，未点过不写存储')
 
-        pg.locator('.seg', has_text='4 路并行').first.locator('button', has_text='单线程').click()
+        seg.locator('button', has_text='32 路').click()
         pg.wait_for_timeout(500)
         store = pg.evaluate('() => Object.assign({}, localStorage)')
-        assert parts(store) == 'single', f'切单线程后存储不对：{parts(store)!r}'
-        assert on_button(pg, '单线程'), '切了单线程但没高亮'
-        toast = pg.inner_text('body')
-        assert '单线程' in toast, '没给出切换提示'
-        print('[2] 点「单线程」→ 高亮切换、localStorage 写入 single')
-        pg.screenshot(path=f'{OUT}/dlparts-091-single.png')
+        assert parts(store) == '32', f'切 32 路后存储不对：{parts(store)!r}'
+        assert on_button(pg, '32 路', '.dl-parts-seg'), '切了 32 路但没高亮'
+        body = pg.inner_text('body')
+        assert '32 路' in body, '没给出切换提示'
+        print('[2] 点「32 路」→ 高亮切换、localStorage 写入 32')
+        pg.screenshot(path=f'{OUT}/dlparts-091-32.png')
 
         # 刷新后应当记住
         pg.reload()
         pg.wait_for_timeout(1200)
         pg.wait_for_selector('.rows .row', timeout=25000)
         open_settings(pg)
-        assert on_button(pg, '单线程'), '刷新后没记住单线程'
-        print('[3] 刷新后仍是「单线程」')
+        assert on_button(pg, '32 路', '.dl-parts-seg'), '刷新后没记住 32 路'
+        print('[3] 刷新后仍是「32 路」')
 
-        pg.locator('.seg', has_text='4 路并行').first.locator('button', has_text='4 路并行').click()
+        pg.locator('.dl-parts-seg').locator('button', has_text='单线程').click()
         pg.wait_for_timeout(500)
-        store = pg.evaluate('() => Object.assign({}, localStorage)')
-        assert parts(store) == 'multi', f'切回并行后存储不对：{parts(store)!r}'
-        print('[4] 切回「4 路并行」→ localStorage 写回 multi')
+        assert parts(pg.evaluate('() => Object.assign({}, localStorage)')) == 'single', '单线程没落盘'
+        print('[4] 切「单线程」→ localStorage 写入 single')
 
         # 交给浏览器时这块不该出现（应用内才需要切片）
         pg.locator('.seg', has_text='应用内下载').first.locator('button', has_text='交给浏览器').click()
         pg.wait_for_timeout(500)
-        assert pg.locator('.seg', has_text='4 路并行').count() == 0, '交给浏览器时还显示分片开关'
-        print('[5] 改成「交给浏览器」后，分片开关整块消失')
+        assert pg.locator('.seg', has_text='32 路').count() == 0, '交给浏览器时还显示分片档位'
+        print('[5] 改成「交给浏览器」后，分片档位整块消失')
 
         b.close()
         print('全部断言通过')

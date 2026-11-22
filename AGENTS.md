@@ -63,7 +63,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `releases.ts` `forks.ts` `workflows.ts` | 发行版/复刻/工作流的状态与校验 |
 | `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block（含参考式链接展开 `expandLinkRefs`）、图片路径与镜像 |
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键，`translateBlocks` 支持 guard 钩子（翻译前改写/还原）；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
-| `linkguard.ts` | 机翻保行内格式：链接/粗体/斜体/删除线一律换成 ⟦内容⟧ 占位符（实测 Edge 幸存 6/6，9 个连续 token 也 9/9），token 类型与地址按出现顺序存 ctx，译文回来逐 token 回填；token 数与 ctx 不符时整段降级纯文字（错位比丢失更糟）。缓存命名空间 `.g2` |
+| `linkguard.ts` | 机翻保行内格式：**不再用 ⟦⟧ 占位符**（v1.1.1 起）。`planInline` 把 spans 拆成可翻片段（纯地址、emoji/符号、已是中文的片段不送翻），`applyInline` 按同顺序把译文填回本地结构 —— 链接 href/顺序/数量全程不经过翻译通道，通道怎么写坏都顶不掉链接。译文缺片段、出现 ◆/�、或原文的 emoji 变少 → 返回 null，调用方保留原块。`inlineGuard()` 供 README 与文档翻译共用。缓存命名空间 `.g4` + 片段哈希 |
 | `useDocTranslation.ts` | 一段 Markdown（发行说明等）的整块机翻 hook：guard 保链接/粗体、边翻边显示、失败如实报数、换文档先 cancel 防串台 |
 | `search.ts` `trending.ts` `hotCache.ts` `tabs.ts` `theme.ts` `backnav.ts` `audit.ts` `types.ts` | 搜索语法、热门查询、热门榜单缓存（内存 + 本机快照 + 淘汰）、底栏配置、主题、返回键决策（软键盘视口启发式 `softKeyboardOpen`）、审计、领域类型 |
 | `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 三源合并目录（feed 轮换精选 + most-popular + new-releases，去重 ~174+，静态 JSON 非 GitHub API），多线路候选（自建站队首/官方 raw/公共代理）、rotation 缓存 6h（缓存键 v2）、`avatarSources` 头像多线路回退（原图 → 自建站头像域名 → url 风格代理改写 → 首字母）、新旧 schema 双认（stargazersCount/stars、owner.avatarUrl/顶层 avatarUrl）、`apkPlatforms` 平台归属、`apkAppToRepo` 复用仓库详情链路 |
@@ -86,15 +86,15 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `appearance.ts` | 外观偏好（强调色 / 底栏形态 / 底栏文字 / 背景 / 玻璃 / 动效）：`normalizeAppearance` 逐字段兜底、`applyAppearance` 只写 `<html data-*>`、`ACCENTS` 色板、`accentSwatch` |
 | `boot.ts` | 首屏遮罩的撤除：给 `#boot` 打 `data-leaving`，`transitionend` + 420ms 超时双保险，重复调用幂等 |
 | `format.ts` | 相对时间、短日期、体积、紧凑数字、路径切分 |
-| `download.ts` | 下载域：`DownloadTarget`（apk/asset/archive）、`mirrorOfUrl`、`measureRoutes`（**分批并发**）、`rankRoutes`（先分档再比速度）、`SpeedBoard`（按站点存、按自然日有效）、`parseDlParts` / `PARTS_OF`（分片偏好） |
-| `native-download.ts` | 原生下载桥：`status` / `exists` / `takePending` / `notifyState` / `openNotifySettings`，字段与 `DownloadPlugin.java` 逐项对齐 |
+| `download.ts` | 下载域：`DownloadTarget`（apk/asset/archive）、`mirrorOfUrl`、`measureRoutes`（**分批并发**）、`rankRoutes`（先分档再比速度）、`SpeedBoard`（按站点存、按自然日有效）、`parseDlParts` / `PARTS_OF` / `PARTS_LABEL`（**6 档分片**，旧值 `multi` 迁移成 `auto`）、`bgDownloadView`（后台下载横幅文案，纯函数可测） |
+| `native-download.ts` | 原生下载桥：`status` / `exists` / `takePending` / `notifyState` / `openNotifySettings` / `discardResume`，`status` 带 `resumeBytes` / `resumable` / `resumed`，字段与 `DownloadPlugin.java` 逐项对齐 |
 | `dl-history.ts` | 下载记录：`pushRecord` / `parseHistory` / `removeRecord`，上限 60、去重键 `repo\|kind\|name`、取消不留记录 |
 | `graphql.ts` | 批量查发行版资产（一页仓库一次请求）；`NOT_FOUND` 缓存空、`FORBIDDEN`/`RATE_LIMITED` 不缓存 |
 | `rel-badge.ts` | 仓库行 APK / EXE 标记的判定与缓存键 |
 | `font.ts` | 界面字体偏好：`readFontPref` / `writeFontPref` / `applyFont`（只写 `<html data-font>`） |
 | `update-pref.ts` | 更新提示开关：只有明确存了 `off` 才关，读不到按开 |
 
-> 原生层（`android/app/src/main/java/dev/zjkl/ghx/`）：`MainActivity` · `InsetsBridge` · `ImmersivePlugin` · `DownloadPlugin` · `DownloadHub`（进程级单例，活的下载线程在这里） · `ChunkedFetch` / `ChunkPlan`（4 路分片，**不依赖 android.\***，能在普通 JVM 上真跑） · `NotifText`（通知文案格式化，同样纯 Java） · `DownloadService`（前台服务） · `DownloadActionReceiver`（通知上的取消按钮） · `ApkInstaller`（安装入口，页面与通知共用）。
+> 原生层（`android/app/src/main/java/dev/zjkl/ghx/`）：`MainActivity` · `InsetsBridge` · `ImmersivePlugin` · `DownloadPlugin` · `DownloadHub`（进程级单例，活的下载线程在这里） · `ChunkedFetch` / `ChunkPlan`（最高 32 路分片 + 断点续传，**不依赖 android.\***，能在普通 JVM 上真跑） · `ResumeState`（每片进度账本，纯 Java） · `NotifText`（通知文案格式化，同样纯 Java） · `DownloadService`（前台服务） · `DownloadActionReceiver`（通知上的取消按钮） · `ApkInstaller`（安装入口，页面与通知共用）。
 
 > 原生逻辑怎么测：`scripts/test-chunked.sh` 会 `javac` 编译 `ChunkPlan` / `ChunkedFetch` / `NotifText` + 三个测试类，在**普通 JVM** 上起本地 HTTP 服务造 206 / 200 / 302 / 限速 / 偶发 503 五种线路，跑 33 + 39 = 72 条断言。CI 里挂在构建 APK 之前，原生逻辑坏了不用等十分钟才红。**沙箱没有模拟器、没有 /dev/kvm，别指望跑 Instrumented Test。**
 
@@ -165,7 +165,7 @@ GET 默认缓存，TTL 按路径：搜索 5min、`/user/repos` 60s、actions/run
 - **限高 flex 列里的条目必须 `flex: none`（v1.0.4）**：`.toc-list` 是 `flex-direction: column` + `max-height`，`.toc-item` 又带 `overflow: hidden`（为了 `text-overflow: ellipsis`）。按规范，`overflow` 非 `visible` 时自动最小高度（`min-height:auto`）失效，条目就会被 `flex-shrink` 压到 14px 一条、文字只剩横切面。**以后凡是「限高 + 可滚 + 子项省略号」的列表，子项都写 `flex: none`（或 `flex: 0 0 auto`）**，要的是滚动而不是压缩。
 - **GitHub 链接零外跳（v1.0.3）**：`routeForGithubPath` 不再返回 null —— releases / wiki / discussions / compare 这类 App 没有的页面给 `{kind:'webOnly'}`，由 `WebOnlyPage` 展示路径、复制地址、回仓库。`SpanText` 里 GitHub 目标即使没有 `onRoute` 也不会 `openExternal`（只给 `onBlocked` 提示）。**新加链接渲染时不要对 github.com 调 openExternal**，下载/附件上传除外。
 - **没有仓库上下文时（v1.0.2）**：Issue 正文/评论、PR 描述与审核、通知评论、个人主页自述这些地方拿不到默认分支，走 `mdlink.resolveBareHref`：只认锚点、`mailto:`/`tel:`、绝对地址，相对路径一律不给跳（拼错地址比不给点更糟）。绝对 GitHub 地址照样映射成 Route，所以在这些页面里点 `github.com/o/r/issues/12` 也是 App 内打开。**新加 Markdown 渲染点时必须同时传 `ctx`（有仓库时）和 `onRoute`，否则链接会悄悄退回系统浏览器** —— v1.0.1 就是这里漏了，用户看到「部分跳转还是跳网页」。
-- **行内格式保活（v1.0.1）**：以前 `guardLinks` 只保链接，粗体/斜体在 `block.text` 里连标记都没有，译文一替换格式全丢（发行说明里 `**OpenAI Codex**` 变普通文字）。现在 `guardInline` 把 link/strong/em/del 统一换成 ⟦内容⟧，ctx 变成 `{ tokens: [{kind, href?}] }` 按出现顺序配对；code 不保护（通道会把命令当正文翻，语义本就不保）。token 数与 ctx 不符就整段降级 —— 宁可少格式，不可错配。
+- **行内格式保活（v1.0.1，v1.1.1 已被片段化取代）**：以前 `guardLinks` 只保链接，粗体/斜体在 `block.text` 里连标记都没有，译文一替换格式全丢（发行说明里 `**OpenAI Codex**` 变普通文字）。现在 `guardInline` 把 link/strong/em/del 统一换成 ⟦内容⟧，ctx 变成 `{ tokens: [{kind, href?}] }` 按出现顺序配对；code 不保护（通道会把命令当正文翻，语义本就不保）。token 数与 ctx 不符就整段降级 —— 宁可少格式，不可错配。
 - **Issue / PR / 通知也翻（v1.0.3）**：`scope.issue` 默认开。Issue 正文与评论、PR 描述与审核意见、通知直读的评论都走 `useDocTranslation`，正文与评论各一套 hook（生命周期不同，混用会互相取消）。评论的译文是拍平后按块数切片还原的，所以每条评论的块数必须用同一份 `parseMarkdown` 结果。
 - **裸 URL 也算链接（v1.0.3）**：`parseInline` 末尾过一遍 `linkifySpans`，把 text 段里的 `https://…` 换成 link span —— 以前只有 `[文字](地址)` 才算链接，手写 URL 翻完就变成点不动的死字。字符集排除 CJK 与全角标点。规则与 `linkifyUrls` 共用 `splitTextLinks`，只维护一份。guard 的 token 数因此变化，缓存命名空间升 `.g3`。
 - **标题锚点（v1.0.1）**：发行说明爱写 `[English](#en-v1.3.10) | [中文](#cn-v1.3.10)` 配 `<h2 id="…">`。`parseMarkdown` 现在把显式 id 原样留下、普通标题按 GitHub 规则生成 slug（重名加 `-1`），`MarkdownView` 用它当元素 id，`onAnchor` 才能 scrollIntoView。以前标题 id 是下标式 `md-h-<i>`，这类目录全是死链。
@@ -213,7 +213,9 @@ user / notifications / search / profile / settings / tokens / audit
 
 **候选表**（`mirrors.ts` 的 `releaseCandidates` / `archive.ts` 的 `archiveCandidates`）—— 顺序是实测出来的，**不要在新模块里重排**。要点：自建站常驻、官方恒沉底、ZIP 只有 `gh-proxy.com` 能吃 codeload。`slice(0, 6)` / `slice(0, 4)` 是探活成本的上限，加条目前先想清楚「多等一条要多久」。
 
-**分片**（`ChunkedFetch`）—— 必须 206 才切；每跳重设 `Range`；`Accept-Encoding: identity`；定位写入；失败降级单连接。`MAX_PARTS = 4` 是实测上限，改大只会更慢。
+**分片**（`ChunkedFetch`）—— 必须 206 才切；每跳重设 `Range`；`Accept-Encoding: identity`；定位写入。`MAX_PARTS = 32`、`MIN_PART = 256 KiB`：界面最高档 32 路，实际片数还要被总长与最小片再夹一次；线路不认 Range 就退回单连接。
+
+**断点续传**（`ResumeState`）—— 分片先 `setLength(total)` 预占，文件长度恒等于总长，**不能拿长度当进度**，所以每片单独记已写字节，落在 `xxx.part.resume`（2 秒一次 + 收尾落盘）。总长或片数对不上就作废。单连接用文件长度当起点，但必须先确认旁边没有分片账本，否则会把预分配的花文件当成下完。
 
 **通知与前台服务**（`DownloadService`）—— 它是唯一能挡 Android 12+ Cached Apps Freezer 的东西，**不是「顺便加个通知」**。`handleOnDestroy` 只解绑监听、不取消下载；终态通知必须先 `DETACH` 再 `notify`，顺序反了等于没发。
 
@@ -536,7 +538,7 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - 此前是**一条连接从头拉到尾**：`HttpURLConnection` + 64 KB 缓冲循环，连 `Range` 头都没发过。
   - 先发 **2 字节探针**（`Range: bytes=0-1`），只有拿回 `206` 且 `Content-Range` 带总长才切片；各片用 `FileChannel.write(buf, pos)` 定位写入（不移动游标，所以不用锁），收尾校验总字节数。
   - **三个坑**：①线路无视 `Range` 回 200 → 各片写全文互相覆盖，出花文件；②302 到签名地址丢 `Range` → 每片都拿全文，所以每一跳都要重设；③中间层 gzip → 分段偏移按压缩字节算、写入按解压字节算，全错位，必须显式 `Accept-Encoding: identity`。
-  - **并发上限 4**：实测 8 路被 CDN 限流，比单路还慢 8 倍。分片失败删半截改走单连接；已下过大半就不再重来；单片偶发失败重试一次；取消掐断所有在途连接。
+  - **并发上限 4**（v1.1.2 起按用户要求放宽到 32，见该版本条目）：当时实测 8 路被 CDN 限流，比单路还慢 8 倍。分片失败删半截改走单连接；已下过大半就不再重来；单片偶发失败重试一次；取消掐断所有在途连接。
   - 设置里加「分片下载」（4 路 / 单线程），默认开，只作用于应用内下载，进度右侧显示实时路数。
   - **纯逻辑抽出来就能在没有模拟器的情况下真测**：`ChunkedFetch` / `ChunkPlan` 不 import 任何 `android.*`，`scripts/test-chunked.sh` 在普通 JVM 上起本地 HTTP 服务造五种线路，33 条断言（含 md5 与服务器侧并发峰值）。真线路下整包与单连接**逐字节一致**。
   - 实测（自建站真下 20.3 MB）：4 路 11.2 s / 单连 10.8 s，**没有变快** —— 沙箱到 CF 的出口带宽本身打满了。分片只在「单连接被窗口/丢包压住」时有效。单测 1274 → 1279，静态检查 20 → 37 条。
@@ -562,7 +564,7 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
 - **v0.9.4**：热门页顶部插入「APK 商店」横滑区（komi-store 精选目录）。
   - **数据不是 GitHub API**：komi-store（原 GitHub Store）把每天轮换的安卓应用精选目录缓存在公开仓库 `komi-store/komi-store-backend-data` 的 `cached-data/feed/android.json`（2026-11-21 核实 150 条，`latestReleaseTag` / `hasInstallersAndroid` 全有值）。静态 JSON、免令牌、不占 api 配额，游客也能看 —— 与热门页「公开数据匿名可看」定位一致。
   - **线路候选**：自建站队首（实测 200 且会顺手把 feed 里的 `avatars.githubusercontent.com` 改写成镜像域名，头像白捡一层加速）→ 官方 raw → gh-proxy 系，保序去重；一条线路超时 8s 收敛 null 换下一条，绝不全断。**全部失败时回退未过期缓存**（3 天内可用），而不是整块消失。
-  - **编排（v0.9.5 已重排）**：入口在热门页标题栏（包裹图标，feed 可用才显示），内容收进**全屏弹层** —— 两列网格 + 名称/简介过滤 + 点应用进仓库详情。第一版把横滑卡插在筛选区与榜单之间，喧宾夺主，用户否了。
+  - **编排（v0.9.5 已重排）**：入口在热门页标题栏（包裹图标，feed 可用才显示），内容收进**全屏弹层** —— 网格 + 名称/简介过滤 + 点应用进仓库详情（v1.1.1 改单列清单）。第一版把横滑卡插在筛选区与榜单之间，喧宾夺主，用户否了。
   - **头像坑**：`<img>` 等待响应期间不触发 onerror（RULES 记过），挂起也按失败算 —— 8 秒没加载出来就换首字母，不让空白方块挂首页。
   - komi-store 的时间是 `2026-11-20 14:36:03+00`（空格 + 双位时区），不是 ISO：`normalizeTs` 补全后再 `Date.parse`，垃圾输入一律 null。
   - `verify-apkstore.py` 八段（mock feed）+ 真实 feed 复验（12 张卡、首字母兜底全对）+ 挂起头像回退实测。单测 1285 → 1314。
@@ -583,7 +585,7 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - `verify-backkey.py` 五段（焦点残留一下收弹层、模拟键盘开着第一下只收键盘、商店详情弹层/路由栈单按语义、根层 home 语义）。单测 1352 → 1356。
 
   - **为什么改**：v0.9.4 把商店横滑区插在筛选区和榜单之间，三张大卡占掉半屏，榜单被挤得看不见 —— 用户原话「丑成这个屌样了，入口放在这里不尴尬吗」。热门页的本职是看榜单，商店不该抢屏。
-  - **现在的编排**：标题栏（刷新按钮左侧）一个包裹图标入口；点开是全屏弹层（`ApkStoreSheet`，新弹层类型 `apkstore`，返回键直接收起）：头部来源 + rotation 日期 + 总数，过滤框按名称/简介即时过滤，两列网格卡片（头像/名称/星数语言/版本 tag/两行简介），点应用收弹层、进现有仓库详情。
+  - **现在的编排**：标题栏（刷新按钮左侧）一个包裹图标入口；点开是全屏弹层（`ApkStoreSheet`，新弹层类型 `apkstore`，返回键直接收起）：头部来源 + rotation 日期 + 总数，过滤框按名称/简介即时过滤，**单列清单**（头像 / 名称+版本 tag / 星数语言+平台标 / 两行简介 / 箭头；v1.1.1 起两列改单列，390 下两列会把简介压成碎字），点应用收弹层、进现有仓库详情。
   - feed 拉不到时入口整个不出现，热门页无痕；单测净 +1（backnav 补 `apkstore` 层级）。`verify-apkstore.py` 九段重写（含「页内无内嵌区块」「feed 404 入口隐藏」「返回键收弹层」）。
   - 上一版的横滑卡样式（`.store-*`）已从 `theme.css` 删除，换成弹层网格（`.shop-*`）。
 
@@ -616,6 +618,11 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - 图片失败给「重试」「不加载」，`MdImage` 两处实现合并。
   - `verify-v103.py` 八段（译文链接可点、裸 URL 站内打开、原文切换、图片重试/跳过）；单测 1379 → 1384。
 
+- **v1.0.4**：修自述目录被压扁。
+  - 真机上 25 节目的目录糊成一片：`.toc-item` 被 flex-shrink 压到 14.6px（正常 32.8px），文字只剩一条横切面。加 `flex: none` 后恢复，列表装不下就滚。
+  - `verify-toc.py` 六段：25 条高度 ≥26px 且无竖向裁切、面板不越视口、列表可滚、超长标题走省略号、点第 21 节滚动 0 → 1096 且浮层收起、重开高亮随位置走、深色同样正常。
+  - 单测不变（纯样式问题，1384 条仍全绿）。
+
 - **v1.1.0**：正式版发布 + 更新通道可选测试版。
   - `update-pref.ts` 从布尔开关升级为三档（正式版 / 测试版 / 关掉），旧键只用于迁移；设置页、个人页、列表横幅在预发布时都标「测试版」。
   - `update.ts` 新增 `UpdateChannel`、`pickBestRelease`、`isPrerelease`；测试通道读 `/releases` 列表按版本号取最高，正式通道仍只认 `/releases/latest`，预发布在正式通道一律视为「无更新」而不是报错。
@@ -623,10 +630,20 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - CI 支持正式版：tag 注解含 `<!-- release: stable -->` 时取消 Pre-release 并更新 `latest`。
   - `verify-update.py` 八段（含测试版通道与回正式版说明）；单测 1384 → 1396。
 
-- **v1.0.4**：修自述目录被压扁。
-  - 真机上 25 节目的目录糊成一片：`.toc-item` 被 flex-shrink 压到 14.6px（正常 32.8px），文字只剩一条横切面。加 `flex: none` 后恢复，列表装不下就滚。
-  - `verify-toc.py` 六段：25 条高度 ≥26px 且无竖向裁切、面板不越视口、列表可滚、超长标题走省略号、点第 21 节滚动 0 → 1096 且浮层收起、重开高亮随位置走、深色同样正常。
-  - 单测不变（纯样式问题，1384 条仍全绿）。
+- **v1.1.2**：32 路分片 + 断点续传 + 后台下载 + 星标可点 + 多账号默认数。
+  - **分片档位**：`ChunkPlan.MAX_PARTS` 4 → 32，`MIN_PART` 1 MiB → 256 KiB。设置页从 2 档改成 6 档（自动 / 4 / 8 / 16 / 32 / 单线程），`auto` 传上限、由原生按大小夹。旧键里的 `multi` 迁移成 `auto`，不会因为升级退回单线程。
+  - **断点续传**：新增 `ResumeState`（纯 Java，JVM 可测），记每片已写字节到 `xxx.part.resume`，2 秒一次 + 收尾落盘；总长/片数不符即作废。分片按账本跳过已完成区间，单连接用 `Range: bytes=N-` 从文件长度续。失败/取消不再删 `.part`（只有一字节没写才删，避免预分配空壳被误判成下完）。`DownloadPlugin` 新增 `discard`、`status` 带 `resumeBytes/resumable/resumed`，通知栏标「续传」。
+  - **后台下载**：下载中面板给「后台下载」，关掉面板下载照跑；列表顶部 `dlbar` 横幅（1.2 s 轮询、空闲 6 s），点回下载面板，有断点时显示「已下 3.0 MB · 点此继续」。
+  - **星标控件**：列表行内 `☆ N` 改成 `role=button`（`stopPropagation`，不误开详情），单账号直接 PUT/DELETE，多账号开面板；点完数字 ±1、金色实心。
+  - **多账号默认数**：`ghx.acct.pref.multiCount` = 0/1/2/3，`defaultSelection(tasks, count)` 按顺序取前 N 个；`buildAccounts` 保证当前账号第一。
+  - 验证：`test-chunked.sh` 新增账本真值表、分片续传（第二轮只下 3.1/6.3 MB）、单连接续传；`verify-dlparts.py` 改 6 档；新增 `verify-v112.py`（星标点击 + 偏好落盘 + 重载保持）；`check-download-native.py` 增加 11 条续传静态检查。单测 1418 → 1432。
+
+- **v1.1.1**：机翻不再顶掉链接 + 商店改单列 + 多账号偏好。
+  - **占位符方案退场**：真机长文里 Edge 会把 ⟦⟧ 本地化成 〖〗、吞掉半边或挪位，restore 失败后按纯译文降级，链接就没了；emoji 还会被啃成 ◆◆（用户截图里的「问号图标」）。现在 `planInline` / `applyInline` 把段落拆成片段单独翻，链接与 emoji 由本地结构保存，restore 拒绝时**保留原块**而不是写半截译文。缓存键升 `.g4` 并混入片段哈希。
+  - 纯 URL 标签、emoji/符号片段不送翻（送了只会被改写）；原文有 emoji 而译文变少也判失败。
+  - APK 商店两列改单列清单：390 宽下两列把简介压成两行碎字、名字频繁省略。
+  - 多账号偏好：`ghx.acct.pref` 存「切回账号是否接着上次看」；每个账号的现场（路由栈/筛选/排序/置顶/快照）落盘 `ghx.ws.<id>`，重启也恢复；删号顺手清掉。设置页「账号与网络」新增开关，关闭后切号回首页。
+  - `verify-trkeep.py`（链接存活/坏字回退/译文生效）、`verify-acctpref.py`（开关落盘与重载保持）；单测 1396 → 1418。
 
 - 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
 

@@ -3,7 +3,7 @@ import { githubUrlAt } from '../lib/mirrors'
 import type { GitHubClient } from '../lib/api'
 import { rawBase } from '../lib/images'
 import { copyText } from '../lib/clipboard'
-import { guardInline, unguardInline } from '../lib/linkguard'
+import { inlineGuard } from '../lib/linkguard'
 import { parseMarkdown, type Block } from '../lib/markdown'
 import type { LinkContext } from '../lib/mdlink'
 import type { Route } from '../lib/routes'
@@ -157,20 +157,9 @@ export function ReadmeSheet(p: Props) {
           maxBlocks: bulk ? 40 : 20,
           concurrency: bulk ? 6 : 3,
           skip,
-          // 翻译前把链接换成 ⟦标签⟧ 占位，译文回来按出现顺序回填 —— 否则
-          // 译文一替换 spans 就失效，整段可点的链接全变死文字（用户提过）
-          guard: {
-            protect: (b) => {
-              if (!('spans' in b)) return null
-              const g = guardInline(b.spans)
-              return g ? { text: g.text, ctx: g.ctx } : null
-            },
-            restore: (b, translated, ctx) => {
-              const res = unguardInline(translated, ctx)
-              if (!res) return null
-              return { ...b, text: res.text, spans: res.spans, spansFor: res.text }
-            },
-          },
+          // 行内结构拆成片段送翻、本地拼回：链接地址与顺序不经过通道，
+          // 通道再怎么写坏占位符也顶不掉链接（v1.1.1 起不再用 ⟦⟧）
+          guard: inlineGuard<Block>(p.target),
           onProgress: (done, total) => setProgress({ done, total }),
           onBlock: (index, block) => {
             const cur = translatedRef.current

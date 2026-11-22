@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   apkTarget,
+  bgDownloadView,
   archiveTarget,
   artifactTarget,
   assetTarget,
@@ -16,6 +17,7 @@ import {
   mirrorOfUrl,
   modeHint,
   parseDownloadMode,
+  PARTS_LABEL,
   parseDlParts,
   parseSpeedBoard,
   progressOf,
@@ -30,6 +32,7 @@ import {
   DL_PARTS_KEY,
   DOWNLOAD_MODE_KEY,
   toRoutes,
+  type DlParts,
   type SpeedEntry,
 } from '../download'
 import {
@@ -606,34 +609,95 @@ describe('CI 产物', () => {
 /*
  * 分片下载偏好。
  *
- * 只有明确存了 'single' 才关 —— 老版本没有这个键，不能因为读不到就当单线程，
- * 否则升级上来的用户会莫名少掉并行下载。
+ * v1.1.2 从「开/关」升级成档位。旧版本只存过 'multi'，迁移成 auto；
+ * 读不到（老用户没这个键）也按 auto，不能因为升级就莫名退回单线程。
  */
 describe('分片下载偏好', () => {
-  it('没有存过时按开处理', () => {
-    expect(parseDlParts(null)).toBe('multi')
-    expect(parseDlParts(undefined)).toBe('multi')
+  it('没有存过时按自动多路处理', () => {
+    expect(parseDlParts(null)).toBe('auto')
+    expect(parseDlParts(undefined)).toBe('auto')
   })
 
-  it('只认 single，其余一律当开', () => {
-    expect(parseDlParts('single')).toBe('single')
-    expect(parseDlParts('multi')).toBe('multi')
-    expect(parseDlParts('')).toBe('multi')
-    expect(parseDlParts('off')).toBe('multi')
+  it('旧值 multi 迁移成 auto，不丢并行', () => {
+    expect(parseDlParts('multi')).toBe('auto')
+    expect(parseDlParts('')).toBe('auto')
+    expect(parseDlParts('off')).toBe('auto')
+    expect(parseDlParts('garbage')).toBe('auto')
   })
 
-  it('序列化后能原样读回', () => {
-    expect(parseDlParts(serializeDlParts('single'))).toBe('single')
-    expect(parseDlParts(serializeDlParts('multi'))).toBe('multi')
+  it('六个档位都能原样读回', () => {
+    const all: DlParts[] = ['auto', '4', '8', '16', '32', 'single']
+    for (const v of all) expect(parseDlParts(serializeDlParts(v))).toBe(v)
   })
 
-  it('两档对应的并发数', () => {
-    expect(PARTS_OF.multi).toBe(4)
+  it('每档对应的并发数，单线程就是 1', () => {
     expect(PARTS_OF.single).toBe(1)
+    expect(PARTS_OF['4']).toBe(4)
+    expect(PARTS_OF['8']).toBe(8)
+    expect(PARTS_OF['16']).toBe(16)
+    expect(PARTS_OF['32']).toBe(32)
+    // auto 传的是上限，实际片数由原生按 256 KB 最小片再夹
+    expect(PARTS_OF.auto).toBe(32)
+  })
+
+  it('档位文案齐全，不会出现 undefined 路', () => {
+    const all: DlParts[] = ['auto', '4', '8', '16', '32', 'single']
+    for (const v of all) expect(PARTS_LABEL[v].length).toBeGreaterThan(0)
   })
 
   it('沿用独立的存储键，不跟下载方式打架', () => {
     expect(DL_PARTS_KEY).not.toBe(DOWNLOAD_MODE_KEY)
     expect(DL_PARTS_KEY).toContain('parts')
+  })
+})
+
+/*
+ * 后台下载横幅。
+ *
+ * 网页端没有原生通道，这条横幅在浏览器里永远跑不出来，所以逻辑必须是纯的、
+ * 能单测的 —— 否则「什么时候该出现」只能靠真机猜。
+ */
+describe('后台下载横幅', () => {
+  const base = { running: false, fileName: 'ghx-1.2.0.apk', bytes: 0, total: 0, kbps: 0 }
+
+  it('没在跑也没有断点：不出现', () => {
+    expect(bgDownloadView(base)).toBeNull()
+    expect(bgDownloadView({ ...base, resumable: true, resumeBytes: 0 })).toBeNull()
+  })
+
+  it('正在下载：百分比 + 路数 + 速度', () => {
+    const v = bgDownloadView({
+      ...base,
+      running: true,
+      bytes: 5 * 1024 * 1024,
+      total: 10 * 1024 * 1024,
+      parts: 8,
+      kbps: 2048,
+    })!
+    expect(v.running).toBe(true)
+    expect(v.sub).toBe('50% · 8 路 · 2.0 MB/s')
+  })
+
+  it('单线程不写路数，总长未知时不瞎报百分比', () => {
+    const v = bgDownloadView({ ...base, running: true, bytes: 1234, total: 0, parts: 1, kbps: 300 })!
+    expect(v.sub).toBe('0% · 300 KB/s')
+  })
+
+  it('停下但有断点：说清已下多少，引导继续', () => {
+    const v = bgDownloadView({
+      ...base,
+      resumable: true,
+      resumeBytes: 3 * 1024 * 1024,
+      total: 10 * 1024 * 1024,
+    })!
+    expect(v.running).toBe(false)
+    expect(v.sub).toContain('已下 3.0 MB')
+    expect(v.sub).toContain('/ 10.0 MB')
+    expect(v.sub).toContain('点此继续')
+  })
+
+  it('文件名为空时给一句人话，不显示空白条', () => {
+    const v = bgDownloadView({ ...base, running: true, fileName: '  ', bytes: 0, total: 10, kbps: 0 })!
+    expect(v.name).toBe('下载')
   })
 })
