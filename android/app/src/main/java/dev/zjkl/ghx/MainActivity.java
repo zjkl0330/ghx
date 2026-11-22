@@ -26,14 +26,77 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        /*
+         * 第一件事：给整个进程装一个兜底处理器。
+         *
+         * 打不开的 App 只能给出「闪一下回桌面」这一条线索，没有 adb 就完全没法定位。
+         * 这里在任何东西之前登记，之后无论崩在主线程还是下载线程，都会先把栈写进
+         * Android/data/<包名>/files/boot-failure.txt，再把异常交回系统原本的处理器
+         * （不吞异常，否则系统会当成没崩，卡住不弹「已停止」）。
+         */
+        installCrashSink();
+
         // 自定义插件要在 super 之前登记：BridgeActivity 在 onCreate 里就把 Bridge 建好了。
-        registerPlugin(ImmersivePlugin.class);
-        registerPlugin(DownloadPlugin.class);
+        // 登记失败不该拖垮整个启动 —— 网页层发现插件缺失会自己降级成「浏览器下载」。
+        try {
+            registerPlugin(ImmersivePlugin.class);
+            registerPlugin(DownloadPlugin.class);
+        } catch (Throwable t) {
+            BootFailure.note(this, "registerPlugin", t);
+        }
 
         // 必须先 super：BridgeActivity 会在这里把主题从启动屏主题切到 AppTheme.NoActionBar，
         // 切换会重新 apply 一遍窗口属性。反过来先设窗口再 super，颜色会被主题覆盖回去。
-        super.onCreate(savedInstanceState);
+        try {
+            super.onCreate(savedInstanceState);
+        } catch (Throwable t) {
+            // WebView 初始化失败、主题资源缺失、Bridge 装配异常都落在这里
+            BootFailure.show(this, "super.onCreate", t);
+            return;
+        }
 
+        try {
+            setupWindow();
+        } catch (Throwable t) {
+            // 已经进了页面就还能用，全屏/insets 出问题只影响观感
+            BootFailure.note(this, "setupWindow", t);
+        }
+
+        // 从通知栏的「安装」进来的
+        try {
+            handleInstallIntent(getIntent());
+        } catch (Throwable t) {
+            BootFailure.note(this, "handleInstallIntent", t);
+        }
+    }
+
+    /**
+     * 进程级兜底：先落盘，再交回系统。
+     *
+     * 只在 Activity 存在期间有意义 —— 进程被杀之后重新启动，onCreate 会再装一次，
+     * 所以不需要考虑「上一次的处理器还挂着」。
+     */
+    private void installCrashSink() {
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+        final MainActivity host = this;
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    BootFailure.note(host, "uncaught:" + t.getName(), e);
+                } catch (Throwable ignored) {
+                    // 已经要死了，记不上也没别的办法
+                }
+                if (prev != null) prev.uncaughtException(t, e);
+            }
+        });
+    }
+
+    /**
+     * 窗口与 insets 的初始化。从原来的 onCreate 主体原样搬出来，
+     * 外面套一层 try —— 这一段依赖 Bridge 已经装好，是最容易 NPE 的地方。
+     */
+    private void setupWindow() {
         Window window = getWindow();
 
         /*
@@ -122,8 +185,25 @@ public class MainActivity extends BridgeActivity {
         webView.postDelayed(() -> InsetsBridge.sync(this, true), 2000);
         webView.postDelayed(() -> InsetsBridge.sync(this, true), 4000);
 
-        // 从通知栏的「安装」进来的
-        handleInstallIntent(getIntent());
+        /*
+         * 白屏自检。
+         *
+         * 有一种坏法不会抛异常，也没有崩溃栈：进程好好的，WebView 就是一点进度都没有，
+         * 用户看到黑屏，以为是「闪退」。本地资源正常情况下一两秒就加载完，
+         * 8 秒还是 0 基本可以断定页面没跑起来（WebView 内核异常、资源没进包、
+         * 或者脚本一上来就语法错误）。这时候把原因摊出来，比让用户对着黑屏猜强。
+         */
+        webView.postDelayed(() -> {
+            try {
+                if (webView.getProgress() <= 0) {
+                    BootFailure.show(this, "webview-load",
+                            new IllegalStateException(
+                                    "WebView 8 秒内没有任何加载进度，url=" + webView.getUrl()));
+                }
+            } catch (Throwable ignored) {
+                // 自检本身失败就安静放弃，不要变成新的崩溃源
+            }
+        }, 8000);
     }
 
     /**
@@ -134,7 +214,11 @@ public class MainActivity extends BridgeActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleInstallIntent(intent);
+        try {
+            handleInstallIntent(intent);
+        } catch (Throwable t) {
+            BootFailure.note(this, "onNewIntent", t);
+        }
     }
 
     private void handleInstallIntent(Intent intent) {
@@ -175,16 +259,27 @@ public class MainActivity extends BridgeActivity {
          * 主题切换、系统改手势导航、从分屏恢复，都可能让 decorFitsSystemWindows 回到默认值 ——
          * 一旦回到 true，insets 在派发到 WebView 之前就被 decor 消费掉，
          * 页面拿到的永远是 0。这一步是幂等的，代价只有一次属性赋值。
+         *
+         * 整段包 try：onCreate 走到一半崩过的话 Bridge 可能是 null，
+         * 那时回到前台会在这里再崩一次，用户看到的就是「一打开就退」反复循环。
          */
-        Window window = getWindow();
-        WindowCompat.setDecorFitsSystemWindows(window, false);
-        window.setStatusBarColor(Color.TRANSPARENT);
-        window.setNavigationBarColor(Color.TRANSPARENT);
-        InsetsBridge.sync(this, true);
+        try {
+            Window window = getWindow();
+            WindowCompat.setDecorFitsSystemWindows(window, false);
+            window.setStatusBarColor(Color.TRANSPARENT);
+            window.setNavigationBarColor(Color.TRANSPARENT);
+            InsetsBridge.sync(this, true);
+        } catch (Throwable t) {
+            BootFailure.note(this, "onResume", t);
+        }
 
         // 刚从「安装未知应用」设置页回来：放行了就接着装，不用用户再点一次
-        if (pendingInstall != null && ApkInstaller.canInstall(this)) {
-            tryInstallPending();
+        try {
+            if (pendingInstall != null && ApkInstaller.canInstall(this)) {
+                tryInstallPending();
+            }
+        } catch (Throwable t) {
+            BootFailure.note(this, "tryInstallPending", t);
         }
     }
 }
