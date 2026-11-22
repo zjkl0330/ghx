@@ -6429,3 +6429,32 @@ button.ustat:active {
   font-weight: 600;
 }
 
+/* ── 兼容模式（渲染进程崩过之后的降级）──────────────────────────────
+   原生层带 ?safe=1 重新加载时，<html data-safe="1"> 会在这里生效：
+   · 不加载 22 MB 的 OPPO Sans，直接用系统字体；
+   · 关掉底栏毛玻璃与背后的模糊层，减少 GPU / 合成器压力；
+   · 动效已经由内联脚本切成 calm。
+   这些规则放在文件最后，确保能盖掉前面按 data-font / data-glass 写的值。 */
+html[data-safe='1'] {
+  --font-ui: -apple-system, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei',
+    system-ui, sans-serif;
+}
+
+html[data-safe='1'] .tabbar,
+html[data-safe='1'] .glass-backdrop {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-safe='1'] .glass-backdrop {
+  display: none;
+}
+
+html[data-safe='1'] .tabbar {
+  background: var(--surface);
+}
+
+html[data-safe='1'] .tabbar::after {
+  display: none;
+}
+

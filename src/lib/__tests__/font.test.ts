@@ -77,4 +77,10 @@ describe('应用到 DOM', () => {
   it('拿不到根节点时不抛错', () => {
     expect(() => applyFont('system', null)).not.toThrow()
   })
+
+  it('兼容模式下强制系统字体，不加载内置字体', () => {
+    const root: { dataset: Record<string, string> } = { dataset: { safe: '1' } }
+    applyFont('sans', root)
+    expect(root.dataset.font).toBe('system')
+  })
 })

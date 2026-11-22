@@ -43,5 +43,14 @@ export function applyFont(
     ?.documentElement ?? null,
 ): void {
   if (!root?.dataset) return
+  /*
+   * 兼容模式（原生层带 ?safe=1 进来）一律用系统字体。
+   * 内置字体 22 MB，渲染进程已经崩过一次时不能再让它加载；
+   * 用户偏好仍原样保存在 ghx.font，退出兼容模式后自动恢复。
+   */
+  if (root.dataset.safe === '1') {
+    root.dataset.font = 'system'
+    return
+  }
   root.dataset.font = isFontPref(pref) ? pref : 'sans'
 }

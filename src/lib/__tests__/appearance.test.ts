@@ -131,6 +131,12 @@ describe('applyAppearance', () => {
       applyAppearance(DEFAULT_APPEARANCE, {} as { dataset?: Record<string, string> }),
     ).not.toThrow()
   })
+
+  it('兼容模式强制精简动效，不覆盖用户偏好本身', () => {
+    const root = { dataset: { safe: '1' } as Record<string, string> }
+    applyAppearance({ ...DEFAULT_APPEARANCE, motion: 'full' }, root)
+    expect(root.dataset.motion).toBe('calm')
+  })
 })
 
 describe('存取', () => {

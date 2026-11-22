@@ -134,7 +134,8 @@ export function applyAppearance(
   root.dataset.tablabel = next.tabLabel
   root.dataset.bg = next.bg
   root.dataset.glass = next.glass
-  root.dataset.motion = next.motion
+  // 兼容模式（渲染进程崩过）一律精简动效，用户偏好留在本地，退出兼容后恢复
+  root.dataset.motion = root.dataset.safe === '1' ? 'calm' : next.motion
 }
 
 export function accentDef(key: AccentKey): AccentDef {
