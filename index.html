@@ -194,6 +194,18 @@
           // 字体：默认用随包内置的 OPPO Sans，'system' 才回退系统字体。
           // 白名单和 src/lib/font.ts 保持一致。
           root.dataset.font = localStorage.getItem('ghx.font') === 'system' ? 'system' : 'sans'
+
+          /*
+           * 兼容模式：渲染进程崩过之后，原生层会带 ?safe=1 重新加载。
+           * 必须在这里（React 之前）就切到系统字体并停掉重动效 ——
+           * 22 MB 的内置字体一旦开始加载，再改 CSS 也来不及。
+           */
+          var safe = /(?:^|[?&])safe=1(?:&|$)/.test(window.location.search)
+          if (safe) {
+            root.dataset.safe = '1'
+            root.dataset.font = 'system'
+            root.dataset.motion = 'calm'
+          }
         } catch (e) {}
       })()
     </script>

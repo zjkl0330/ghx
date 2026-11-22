@@ -25,6 +25,9 @@ public class MainActivity extends BridgeActivity {
     /** 待安装的包：授权「安装未知应用」会离开本页，回来时要接着装 */
     private String pendingInstall;
 
+    /** 渲染进程兜底；兼容模式下也靠它把 ?safe=1 拼到首页地址上 */
+    private RendererGuard rendererGuard;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         /*
@@ -54,11 +57,58 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
+        /*
+         * 渲染进程兜底。
+         *
+         * 网页渲染进程被杀时 Capacitor 默认不接管，系统会把 App 一起带走 ——
+         * 用户只看到「闪一下回桌面」，连崩溃弹窗都没有。监听要在首页加载前挂上，
+         * 所以紧跟在 super 之后登记。
+         */
+        try {
+            if (getBridge() != null) {
+                rendererGuard = new RendererGuard(this);
+                getBridge().addWebViewListener(rendererGuard);
+            }
+        } catch (Throwable t) {
+            BootFailure.note(this, "renderer-guard", t);
+        }
+
         try {
             setupWindow();
         } catch (Throwable t) {
             // 已经进了页面就还能用，全屏/insets 出问题只影响观感
             BootFailure.note(this, "setupWindow", t);
+        }
+
+        /*
+         * 覆盖升级或上次渲染进程崩过：先清一次 WebView 缓存再重载。
+         * 升级包里网页资源的文件名会变，个别 ROM 会拿着上一版的缓存把渲染进程带崩；
+         * 清 HTTP/资源缓存不动 localStorage 与保险库，代价只是重新读一遍包内资源。
+         *
+         * 上次崩过时同时进兼容模式：系统字体 + 不画毛玻璃 + 精简动效。
+         */
+        try {
+            boolean safe = RendererGuard.isSafe(this);
+            // 两个条件都要算：短路会让 versionChanged 没机会记住当前版本
+            boolean crashClear = RendererGuard.takeClear(this);
+            boolean versionClear = RendererGuard.versionChanged(this, versionCode());
+            boolean clear = crashClear || versionClear;
+            if ((safe || clear) && getBridge() != null && rendererGuard != null) {
+                WebView wv = getBridge().getWebView();
+                if (clear) {
+                    try {
+                        wv.clearCache(true);
+                        wv.clearHistory();
+                    } catch (Throwable ignored) {
+                        // 清缓存失败也继续重载，别把启动卡死
+                    }
+                }
+                String appUrl = getBridge().getAppUrl();
+                rendererGuard.reload(wv, safe ? RendererGuard.withSafe(appUrl) : appUrl);
+            }
+            RendererGuard.explainOnce(this);
+        } catch (Throwable t) {
+            BootFailure.note(this, "safe-mode", t);
         }
 
         // 从通知栏的「安装」进来的
@@ -214,6 +264,20 @@ public class MainActivity extends BridgeActivity {
             wv.setWebViewClient(new GhxWebViewClient(b));
         } catch (Throwable t) {
             BootFailure.note(this, "installRenderGuard", t);
+        }
+    }
+
+    /**
+     * 当前安装包的 versionCode。读不到就返回 0 —— 调用方会跳过「按版本清缓存」
+     * 这条路，而不是每次启动都误判成升级。
+     */
+    private long versionCode() {
+        try {
+            android.content.pm.PackageInfo p =
+                    getPackageManager().getPackageInfo(getPackageName(), 0);
+            return Build.VERSION.SDK_INT >= 28 ? p.getLongVersionCode() : p.versionCode;
+        } catch (Throwable t) {
+            return 0;
         }
     }
 
