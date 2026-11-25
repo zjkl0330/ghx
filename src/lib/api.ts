@@ -388,6 +388,38 @@ export class GitHubClient {
   }
 
   /**
+   * 取二进制（目前只有私有仓库的正文图片走这里）。
+   *
+   * 为什么不能直接把 raw 地址塞给 `<img>`：`raw.githubusercontent.com`
+   * 对带 `Authorization` 的跨域请求预检回 403，图床这条路走不通；
+   * 而 `api.github.com` 的预检回 204 且放行 `Authorization`。
+   * 所以先带令牌取回字节，再在调用方换成 `blob:` 地址。
+   *
+   * 不进 JSON 缓存 —— 图有自己的 LRU，且这里只负责「拿一次」。
+   */
+  async rawBlob(url: string): Promise<Blob> {
+    const target = url.startsWith('http') ? url : `${this.baseUrl}${url}`
+    const res = await this.send(
+      target,
+      {
+        headers: {
+          Accept: 'application/vnd.github.raw',
+          ...this.authHeaders(),
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      },
+      true,
+    )
+    const rate = this.readRate(res.headers)
+    this.rate = rate
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new GitHubError(describeError(res.status, safeJson(text)), res.status, safeJson(text))
+    }
+    return res.blob()
+  }
+
+  /**
    * 上传发行版附件这条路走不通，留个记录免得以后又试一遍。
    *
    * 端点本身没问题：`POST https://uploads.github.com/repos/{o}/{r}/releases/{id}/assets?name=x`

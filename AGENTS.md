@@ -62,6 +62,8 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `update.ts` | 自更新：版本比较、加速站 URL、打开外部链接、`headReachable` 下载探活 |
 | `releases.ts` `forks.ts` `workflows.ts` | 发行版/复刻/工作流的状态与校验 |
 | `readme.ts` `markdown.ts` `images.ts` | README 解码、自研 Markdown 解析为 Block（含参考式链接展开 `expandLinkRefs`）、图片路径与镜像 |
+| `imagebytes.ts` | 私有仓库图片：raw/github 地址反解成 `contents` API 路径（分支名带斜杠时给多段候选）、blob 地址 LRU |
+| `timeline.ts` | Issue/PR 动态：把 timeline 事件译成一行人话（标签/指派/关闭原因/改名/引用/合并），`tailLimit` 控制折叠 |
 | `translate.ts` | 多通道机翻：Edge / Azure / MyMemory / Google，切段、降级、缓存键，`translateBlocks` 支持 guard 钩子（翻译前改写/还原）；`isNameLike` / `looksLikePinyin` 把拼音与代号型简介挡在翻译之外 |
 | `linkguard.ts` | 机翻保行内格式：**不再用 ⟦⟧ 占位符**（v1.1.1 起）。`planInline` 把 spans 拆成可翻片段（纯地址、emoji/符号、已是中文的片段不送翻），`applyInline` 按同顺序把译文填回本地结构 —— 链接 href/顺序/数量全程不经过翻译通道，通道怎么写坏都顶不掉链接。译文缺片段、出现 ◆/�、或原文的 emoji 变少 → 返回 null，调用方保留原块。`inlineGuard()` 供 README 与文档翻译共用。缓存命名空间 `.g4` + 片段哈希 |
 | `useDocTranslation.ts` | 一段 Markdown（发行说明等）的整块机翻 hook：guard 保链接/粗体、边翻边显示、失败如实报数、换文档先 cancel 防串台 |
@@ -69,7 +71,7 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 | `apkstore.ts` | 热门页「APK 商店」入口 + 清单弹层：komi-store 三源合并目录（feed 轮换精选 + most-popular + new-releases，去重 ~174+，静态 JSON 非 GitHub API），多线路候选（用户自填站队首/官方 raw；v1.1.3 起不预置任何代理）、rotation 缓存 6h（缓存键 v2）、`avatarSources` 头像多线路回退（原图 → 自建站头像域名 → url 风格代理改写 → 首字母）、新旧 schema 双认（stargazersCount/stars、owner.avatarUrl/顶层 avatarUrl）、`apkPlatforms` 平台归属、`apkAppToRepo` 复用仓库详情链路 |
 | `routes.ts` | **可序列化路由栈**：`Route` 判别联合 + `pushRoute`/`popRoute`/`replaceTop`/`routeKey`/`repoOf`/`routeLabel` |
 | `paging.ts` | `Link` 头解析（大小写与空白不敏感，畸形片段跳过）、`nextPage` 无 Link 时按满页兜底 |
-| `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked` |
+| `issues.ts` | Issue 领域：PR 剔除、状态文案、标签配色与计数、筛选；`listIssues`/`getIssue`/`addComment`/`updateIssue`/`setIssueLabels`/`setAssignees`（PATCH 整体替换）/`setLocked`/`listTimeline` |
 | `pulls.ts` | PR 领域：mergeable 提示、合并/评审失败码翻译、`parsePatch`/`slicePatch`（400 行上限）、`mergePull`（带 head sha）、`submitReview`、`checkRuns` |
 | `code.ts` | 代码浏览：UTF-8 base64 编解码（分块防爆栈）、语言判定、目录排序与摘要、`getFile`/`getMeta`（**目录返回数组、文件返回对象**）、`putFile`/`deleteFile`、提交历史与 diff、`writeErrorHint` |
 | `refs.ts` | 分支与标签：命名校验、默认分支置顶、含 `/` 的编码处理、新建/删除/改名 |
@@ -248,7 +250,7 @@ user / notifications / search / profile / settings / tokens / audit
 | 中英混排被 `hasChinese` 判成中文而跳过 | 用 `needsTranslation` 占比判定 |
 | 429 直接判失败 | 退让重试 2 次（700ms、1400ms） |
 | 仓库列表只拉 6 页 ×30 = 180 个 | 已改 100/页 × 最多 20 页 |
-| 私有仓库 README 图片加载不出 | `<img>` 不带令牌，下版改用带令牌的 contents 接口取 |
+| 私有仓库 README 图片加载不出 | `<img>` 不带令牌；**v1.2.1 已修**：失败/4 秒超时后走 `contents` 取字节换 `blob:`（`lib/imagebytes.ts` + `ui/AuthImage.tsx`） |
 | Edge 翻译带 `from=en` | 中文段落会被改写，必须省略 `from` |
 | 加速站只在代码里写死 | 域名会换，必须支持 `overrides` 改地址 |
 | 浏览器预览与真机行为不同（CORS / 302 / zip） | 涉及下载、日志、原生请求的功能必须真机验证 |
@@ -652,7 +654,7 @@ TOKEN=<PAT> BASE=<本地上一个提交，如 HEAD~1> python3 scripts/push-via-a
   - 多账号偏好：`ghx.acct.pref` 存「切回账号是否接着上次看」；每个账号的现场（路由栈/筛选/排序/置顶/快照）落盘 `ghx.ws.<id>`，重启也恢复；删号顺手清掉。设置页「账号与网络」新增开关，关闭后切号回首页。
   - `verify-trkeep.py`（链接存活/坏字回退/译文生效）、`verify-acctpref.py`（开关落盘与重载保持）；单测 1396 → 1418。
 
-- 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；私有仓库 README 图片仍待修；无密钥时 MyMemory 额度有限。
+- 已知边界：发行版附件上传在 WebView 路线走不通（预检不放行 `Content-Type`），要传只能自写原生流式上传，本版未做；通知与 Watch 仅 classic 令牌；无密钥时 MyMemory 额度有限。
 
 ## AI（方案已定，未开工）
 

@@ -10,6 +10,7 @@
  */
 
 import type { ApiClient } from './api'
+import { normalizeTimeline, type TimelineItem, type TimelineRaw } from './timeline'
 
 export type IssueState = 'open' | 'closed'
 export type IssueStateReason = 'completed' | 'not_planned' | 'reopened' | null
@@ -183,6 +184,28 @@ export async function listComments(
     { fresh },
   )
   return data ?? []
+}
+
+/**
+ * 动态（timeline）。`comments` 与 `committed` 这类已经在别处呈现的事件
+ * 会在 `normalizeTimeline` 里被丢掉，这里只管取。
+ *
+ * 注意：`Accept` 用的是默认的 `application/vnd.github+json` —— 这个端点
+ * 早已转正，不需要再带 `mockingbird-preview`。
+ */
+export async function listTimeline(
+  client: ApiClient,
+  owner: string,
+  repo: string,
+  number: number,
+  fresh = false,
+): Promise<TimelineItem[]> {
+  const { data } = await client.request<TimelineRaw[]>(
+    `/repos/${enc(owner)}/${enc(repo)}/issues/${number}/timeline?per_page=100`,
+    {},
+    { fresh },
+  )
+  return normalizeTimeline(data ?? [])
 }
 
 export async function addComment(

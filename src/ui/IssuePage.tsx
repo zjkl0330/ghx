@@ -5,6 +5,7 @@ import {
   getIssue,
   listComments,
   listLabels,
+  listTimeline,
   setAssignees,
   setIssueLabels,
   setLocked,
@@ -27,7 +28,9 @@ import type { LinkContext } from '../lib/mdlink'
 import type { Route } from '../lib/routes'
 import type { TargetLang, TranslateChannel, TranslationStore } from '../lib/translate'
 import { relTime, shortDate } from '../lib/format'
+import type { TimelineItem } from '../lib/timeline'
 import { PageHeader, PageState } from './PageHeader'
+import { TimelineList } from './TimelineList'
 import { MarkdownView } from './MarkdownView'
 import { TransHead } from './TransHead'
 import { useDocTranslation } from './useDocTranslation'
@@ -74,6 +77,8 @@ export function IssuePage(p: {
   }
   const [issue, setIssue] = useState<Issue | null>(null)
   const [comments, setComments] = useState<IssueComment[]>([])
+  /** 标签变更、关闭、指派这类事件；评论区不显示它们，但确实发生过 */
+  const [events, setEvents] = useState<TimelineItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -145,12 +150,15 @@ export function IssuePage(p: {
       if (!silent) setLoading(true)
       setError(null)
       try {
-        const [it, cs] = await Promise.all([
+        const [it, cs, tl] = await Promise.all([
           getIssue(p.client, p.owner, p.repo, p.number, silent),
           listComments(p.client, p.owner, p.repo, p.number, silent),
+          // 动态拿不到不该把整页拖垮：老仓库、镜像站都可能没有这个端点
+          listTimeline(p.client, p.owner, p.repo, p.number, silent).catch(() => [] as TimelineItem[]),
         ])
         setIssue(it)
         setComments(cs)
+        setEvents(tl)
       } catch (err) {
         setError((err as Error).message)
       } finally {
@@ -511,6 +519,8 @@ export function IssuePage(p: {
                 </div>
               </div>
             )}
+
+            <TimelineList items={events} />
 
             <div className="section-title" style={{ padding: '4px 16px' }}>
               评论 {comments.length > 0 ? `· ${comments.length}` : ''}

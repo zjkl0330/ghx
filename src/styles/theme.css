@@ -3669,6 +3669,104 @@ h1.title {
   border-radius: 10px;
 }
 
+/* Issue / PR 的「动态」：标签变更、指派、关闭、引用这类事件。
+   视觉上比评论轻一档 —— 它是背景信息，不该跟正文抢注意力。 */
+.tl {
+  margin: 6px 16px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 9px 12px 6px;
+}
+
+.tl-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.tl-title .muted {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-size: 10.5px;
+}
+
+.tl-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.tl-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--text-dim);
+  transform: translateY(-1px);
+}
+
+.tl-dot.closed {
+  background: var(--red);
+  border-color: var(--red);
+}
+
+.tl-dot.reopened {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.tl-dot.merged {
+  background: rgb(var(--chart-pull-rgb));
+  border-color: rgb(var(--chart-pull-rgb));
+}
+
+.tl-dot.label {
+  background: var(--text-3);
+  border-color: var(--text-3);
+}
+
+.tl-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tl-text b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tl-time {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.tl-more {
+  display: block;
+  width: 100%;
+  padding: 7px 0 5px;
+  background: none;
+  border: 0;
+  color: var(--blue-text);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
 .comment {
   margin: 0 16px 10px;
   border: 1px solid var(--line);

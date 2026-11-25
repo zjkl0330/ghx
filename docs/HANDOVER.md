@@ -1,6 +1,6 @@
 # ghx 交接文档
 
-> **适用版本 v1.2.0**（2026-11-25 整理）。读者：接手这个项目的人或新模型——手上只有这个仓库，没有历史对话。
+> **适用版本 v1.2.1**（2026-11-25 整理）。读者：接手这个项目的人或新模型——手上只有这个仓库，没有历史对话。
 >
 > 本文件是**现场恢复手册 + 状态快照**。设计细节看 [`AGENTS.md`](../AGENTS.md)，行为守则看 [`RULES.md`](../RULES.md)，待办看 [`ROADMAP.md`](../ROADMAP.md)。
 
@@ -105,7 +105,7 @@ sdk.dir=/opt/android-sdk
 | 检查 | 命令 | 期望 |
 |---|---|---|
 | 类型 | `npx tsc -b` | 无输出。**必须用 `-b`**，`tsc --noEmit` 对 project references 是空跑 |
-| 单测 | `npx vitest run` | `1462 passed (65 files)` |
+| 单测 | `npx vitest run` | `1491 passed (67 files)` |
 | NPE 红线 | `python3 scripts/check-npe-guards.py` | 9 条 PASS |
 | 前端构建 | `pnpm build` | 出 `dist/` |
 | 签名 | 见 2.3 | 指纹 `fd6a8ea4…` |
@@ -136,9 +136,9 @@ sdk.dir=/opt/android-sdk
 cd /workspace/ghx
 
 npx tsc -b                      # 类型检查
-npx vitest run                  # 单测（1462 / 65 文件）
+npx vitest run                  # 单测（1491 / 67 文件）
 pnpm build                      # tsc -b && vite build → dist/
-npx vite preview --port 4173    # 端口必须 4173，29 个验证脚本里 28 个硬编码了它
+npx vite preview --port 4173    # 端口必须 4173，31 个验证脚本里 30 个硬编码了它
 
 xvfb-run -a python3 scripts/verify-features.py    # 功能入口盘点
 bash scripts/test-chunked.sh                      # 原生纯 Java 逻辑（89 条断言，不需要模拟器）
@@ -159,7 +159,7 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 
 | 闸门 | 命令 | 结果 |
 |---|---|---|
-| 单元测试 | `npx vitest run` | **1462 通过 / 65 文件** |
+| 单元测试 | `npx vitest run` | **1491 通过 / 67 文件** |
 | 类型检查 | `npx tsc -b` | 通过 |
 | NPE 红线 | `scripts/check-npe-guards.py` | **9 条全过**（Context 先装、用处处判空、插件方法不外抛） |
 | 原生下载接线 | `scripts/check-download-native.py --apk …` | **77 条全过** |
@@ -167,8 +167,10 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 | 功能盘点 | `scripts/verify-features.py` | **77 项全过**：底栏 3、仓库页 11、批量 3、我的 10、设置 7、外观/翻译 8、底栏页签 2、热门 7、商店 3、星标 2、详情 11、搜索 6、通知 1、看板 2、Gist 1 |
 | 玻璃视觉 | `scripts/verify-glass.py` | 四项指标 + 像素方差，全过 |
 | APK 商店 | `scripts/verify-apkstore.py` | 10 项全过（单列 / 平台筛选 / 头像回退 / 返回键） |
+| 私有仓库图片 | `GHX_TOKEN=… scripts/verify-privateimg.py` | 走令牌通道后 `blob:` 图真的解码（真私有仓库、真令牌） |
+| Issue/PR 动态 | `GHX_TOKEN=… scripts/verify-timeline.py` | Issue 3 条动态、PR 对话区 6 条动态 + 1 条评论 + 评论框 |
 
-`scripts/` 共 **40 个**脚本，其中 `verify-*.py` **29 个**，覆盖归档、批量、复制、下载、下载历史、分片、字体、游客模式、Markdown、镜像恢复、通知、溢出、发版说明、测速、目录、翻译保活、链接、更新、返回键等。
+`scripts/` 共 **43 个**脚本，其中 `verify-*.py` **31 个**，覆盖归档、批量、复制、下载、下载历史、分片、字体、游客模式、Markdown、镜像恢复、通知、溢出、发版说明、测速、目录、翻译保活、链接、更新、返回键等。
 
 **诚实说明**：上面 8 条是本次实际重跑的；其余 21 个 `verify-*.py` 上一版通过、这次**没有复跑**。改动碰到对应模块时再跑，不要因为「历史全绿」就跳过。`scripts/repro-upgrade.py` 是复现升级场景的一次性脚本，不是闸门。
 
@@ -180,7 +182,7 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 
 - 补丁位 +1；满 10 进次版本（`0.9.9 → 1.0.0`）。
 - 版本号**只在 `package.json` 维护**，`scripts/sync-version.mjs` 同步到 gradle：`versionName` = 字面版本，`versionCode` = `major*10000 + minor*100 + patch`（1.2.0 → `10200`）。
-- 当前：`versionName 1.2.0` / `versionCode 10200`。
+- 当前：`versionName 1.2.1` / `versionCode 10201`（未打 tag、未发版）。
 
 ```bash
 node scripts/bump-version.mjs 1.2.0    # 传「当前」版本，产出 1.2.1
@@ -222,7 +224,7 @@ tag 触发时版本取 tag 名，所以 **tag 必须与 `package.json` 一致**�
 - 有 → 不勾 Pre-release，并占用 `/releases/latest`（用户端会弹更新）。
 - 没有 → 预发布，`latest` 不动，静默更新。
 
-日常改动发预发布；用户确认过的版本才发正式版。当前 `latest` = **v1.2.0**（正式版，2026-11-22 发布）。
+日常改动发预发布；用户确认过的版本才发正式版。当前 `latest` = **v1.2.0**（正式版，2026-11-22 发布）；v1.2.1 已改完待发。
 
 CI 第 18 步 `Verify signature` 硬校验指纹，签错直接失败——这是防止「包能装但覆盖不了」的最后一道闸。
 
@@ -297,7 +299,7 @@ rm -f /tmp/askpass.sh    # 用完删掉
 | `src/ui/` | 63 个组件：路由页（`*Page.tsx`）、弹层（`*Sheet.tsx`）、基础件 |
 | `src/styles/theme.css` | 6513 行，所有视觉唯一来源，含 CSS 变量与全部响应式 |
 | `android/app/src/main/java/dev/zjkl/ghx/` | 原生层：下载、通知、渲染兜底 |
-| `scripts/` | 40 个验证/构建脚本 |
+| `scripts/` | 43 个验证/构建脚本 |
 | `docs/` | 设计文档 + 截图 + 本文件 + `RULES-SUMMARY.md` / `STYLE.md` + `archive/` |
 
 ### 8.2 七个核心机制（细节在 `AGENTS.md` §134 起）
@@ -351,6 +353,7 @@ rm -f /tmp/askpass.sh    # 用完删掉
 | 签名密钥 | 只有私有备份与 GitHub Secrets 两处。丢了就永远无法覆盖升级，只能换包名重新发 |
 | PAT | 明文出现过多次，一律视为已泄露；每次交接都建议用户撤销重签 |
 | ROADMAP 未开工 | Discussions / Projects / pinned 走 GraphQL；`docs/ai-plan.md`、`docs/cross-platform.md` 是已定方案未动手 |
+| 私有仓库图片 | **v1.2.1 已修**：`<img>` 加载失败后走 API contents 取字节换 `blob:`；公开图不受影响 |
 | 加速站恢复的边界 | 若 1.1.10 / 1.1.11 启动后自动测速已把 `ghx.mirror` 与快照覆盖成官方，旧地址**不可恢复**（数据已被覆盖），只能让用户重填 |
 
 ---
@@ -363,8 +366,8 @@ rm -f /tmp/askpass.sh    # 用完删掉
 |---|---|
 | 「`git push` 不可靠，一切走 `api.github.com`」 | 可用，只是要 `-c http.version=HTTP/1.1`；API 退回兜底 |
 | 「本地与远端 hash 必然分叉」 | 不再分叉，`main` 与远端同为 `c5b6b75` |
-| 「单测 1285」 | **1462** |
-| 「验证脚本 16 个」 | 40 个脚本，其中 `verify-*.py` 29 个 |
+| 「单测 1285」 | **1491** |
+| 「验证脚本 16 个」 | 43 个脚本，其中 `verify-*.py` 31 个 |
 | 「从会话记录 grep PAT」 | **禁止**，直接向用户要新的 |
 | 「原生逻辑 72 条」 | 89 条 |
 | 版本 0.9.3 / `latest` 指 v0.8.9 | v1.2.0，`latest` 指 v1.2.0 |

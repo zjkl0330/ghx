@@ -187,6 +187,7 @@ import {
 import { AccountSheet } from './ui/AccountSheet'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
+import { AuthImageProvider } from './ui/AuthImage'
 import { CodePage, FileEditor } from './ui/CodePage'
 import { CommitPage, CommitsPage } from './ui/CommitsPage'
 import { ComposeSheet, type ComposeMode, type ComposeSubmit } from './ui/ComposeSheet'
@@ -2430,6 +2431,7 @@ export default function App() {
   })()
 
   return (
+    <AuthImageProvider client={client}>
     <div className={route ? 'app' : 'app with-tabs'}>
       {/*
         页面区套一层错误边界，底栏留在外面：某个页面因为脏数据崩掉时，
@@ -3604,5 +3606,6 @@ export default function App() {
 
       {toast && <div className="toast">{toast}</div>}
     </div>
+    </AuthImageProvider>
   )
 }

@@ -25,7 +25,10 @@ import {
   type PullRequest,
   type PullReview,
 } from '../lib/pulls'
+import { addComment, listComments, listTimeline, type IssueComment } from '../lib/issues'
+import type { TimelineItem } from '../lib/timeline'
 import { PageHeader, PageState } from './PageHeader'
+import { TimelineList } from './TimelineList'
 import { MarkdownView } from './MarkdownView'
 import { TransHead } from './TransHead'
 import { useDocTranslation } from './useDocTranslation'
@@ -251,6 +254,10 @@ export function PullPage(p: {
   const [confirm, setConfirm] = useState(false)
   const [reviewPanel, setReviewPanel] = useState<'APPROVE' | 'REQUEST_CHANGES' | null>(null)
   const [reviewBody, setReviewBody] = useState('')
+  /** 对话区：普通评论与动态（标签/指派/关闭）分开拉，任一失败不影响详情 */
+  const [comments, setComments] = useState<IssueComment[]>([])
+  const [events, setEvents] = useState<TimelineItem[]>([])
+  const [commentDraft, setCommentDraft] = useState('')
 
   /** 描述与审核意见各一套：描述先到，审核是随后拉的，混在一起会互相取消 */
   const bodyBlocks = useMemo(
@@ -307,16 +314,20 @@ export function PullPage(p: {
       if (!silent) setLoading(true)
       setError(null)
       try {
-        const [d, f, c, r] = await Promise.all([
+        const [d, f, c, r, cs, tl] = await Promise.all([
           getPull(p.client, p.owner, p.repo, p.number, silent),
           pullFiles(p.client, p.owner, p.repo, p.number, silent),
           pullCommits(p.client, p.owner, p.repo, p.number, silent),
           listReviews(p.client, p.owner, p.repo, p.number, silent),
+          listComments(p.client, p.owner, p.repo, p.number, silent).catch(() => [] as IssueComment[]),
+          listTimeline(p.client, p.owner, p.repo, p.number, silent).catch(() => [] as TimelineItem[]),
         ])
         setPr(d)
         setFiles(f)
         setCommits(c)
         setReviews(r)
+        setComments(cs)
+        setEvents(tl)
       } catch (err) {
         setError((err as Error).message)
       } finally {
@@ -372,6 +383,22 @@ export function PullPage(p: {
     } catch (err) {
       const status = (err as { status?: number }).status ?? 0
       p.onToast(reviewFailure(status, (err as { body?: unknown }).body))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function sendComment() {
+    const body = commentDraft.trim()
+    if (!body || !p.client || busy) return
+    setBusy(true)
+    try {
+      await addComment(p.client, p.owner, p.repo, p.number, body)
+      setCommentDraft('')
+      p.onToast('评论已发送')
+      await load(true)
+    } catch (err) {
+      p.onToast((err as Error).message)
     } finally {
       setBusy(false)
     }
@@ -473,6 +500,8 @@ export function PullPage(p: {
                   )}
                 </div>
 
+                <TimelineList items={events} />
+
                 {commits.length > 0 && (
                   <>
                     <div className="section-title">提交 · {commits.length}</div>
@@ -530,6 +559,57 @@ export function PullPage(p: {
                     ))}
                   </>
                 )}
+                {comments.length > 0 && (
+                  <>
+                    <div className="section-title">评论 · {comments.length}</div>
+                    {comments.map((c) => (
+                      <div className="comment" key={c.id}>
+                        <div className="comment-head">
+                          {c.user?.login && p.onOpenUser ? (
+                            <button className="user-link" onClick={() => p.onOpenUser?.(c.user!.login)}>
+                              <b>{c.user.login}</b>
+                            </button>
+                          ) : (
+                            <b>{c.user?.login ?? '未知'}</b>
+                          )}
+                          <span>{relTime(c.created_at)}</span>
+                        </div>
+                        <div className="comment-body">
+                          {c.body?.trim() ? (
+                            <MarkdownView
+                              blocks={parseMarkdown(c.body, { maxBlocks: 120 })}
+                              mirror={p.mirror}
+                              ctx={linkCtx}
+                              onRoute={p.onOpenRoute}
+                            />
+                          ) : (
+                            <span className="muted">（空评论）</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                <div className="comment-form">
+                  <textarea
+                    className="textarea"
+                    rows={3}
+                    value={commentDraft}
+                    onChange={(e) => setCommentDraft(e.target.value)}
+                    placeholder="写条评论…（支持 Markdown）"
+                  />
+                  <div className="btnrow" style={{ marginTop: 8 }}>
+                    <button
+                      className="btn primary"
+                      disabled={busy || !commentDraft.trim()}
+                      onClick={() => void sendComment()}
+                    >
+                      <Icon name="chat" size={14} />
+                      发送
+                    </button>
+                  </div>
+                </div>
               </>
             )}
 

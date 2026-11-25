@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { rawRefCandidates } from '../lib/imagebytes'
 import { mirrorImage } from '../lib/images'
 import type { Block } from '../lib/markdown'
+import { useAuthImage } from './AuthImage'
 
 type ImgBlock = Extract<Block, { kind: 'img' }>
 
@@ -16,11 +18,16 @@ type ImgBlock = Extract<Block, { kind: 'img' }>
  *    而不是丢一行死文字；
  * 3. 「不加载」把这张图折成一行小字，随时可以点回来 —— 流量紧张时
  *    用户需要的是「别再请求了」，不是「看不见也删不掉」。
+ *
+ * 私有仓库的图两条都拿不到（raw 对匿名请求回 404），所以在判死之前
+ * 再试一次带令牌的通道：取回字节换成 `blob:` 地址。这条路只在前面
+ * 全失败后才走，公开图不受影响。
  */
 export function MdImage({ b, mirror }: { b: ImgBlock; mirror?: string }) {
   const accelerated = mirror ? mirrorImage(b.src, mirror) : null
   const primary = accelerated ?? b.src
   const fallback = accelerated && accelerated !== b.src ? b.src : null
+  const authed = useAuthImage()
 
   const [src, setSrc] = useState(primary)
   const [state, setState] = useState<'load' | 'ok' | 'fail'>('load')
@@ -28,6 +35,7 @@ export function MdImage({ b, mirror }: { b: ImgBlock; mirror?: string }) {
   /** 重试时换 key 强制重挂 <img>，否则同一个失败地址不会再发请求 */
   const [attempt, setAttempt] = useState(0)
   const tried = useRef(false)
+  const authTried = useRef(false)
 
   // 列表复用组件：换了一张图要把失败/重试状态一起重置
   useEffect(() => {
@@ -36,6 +44,7 @@ export function MdImage({ b, mirror }: { b: ImgBlock; mirror?: string }) {
     setSkipped(false)
     setAttempt(0)
     tried.current = false
+    authTried.current = false
   }, [primary])
 
   useEffect(() => {
@@ -48,8 +57,32 @@ export function MdImage({ b, mirror }: { b: ImgBlock; mirror?: string }) {
     return () => window.clearTimeout(t)
   }, [state, fallback, src])
 
+  /**
+   * 私有仓库的图不会「报错」，它可能一直挂着 —— 国内直连 raw 时常见
+   * 十几秒没响应。所以除了 onError，还按时间兜一手：4 秒还没出来就用
+   * 令牌通道直接取字节。公开图正常 400ms 内就画完了，走不到这里。
+   */
+  useEffect(() => {
+    if (state !== 'load' || !authed || authTried.current) return
+    const target = rawRefCandidates(primary).length > 0 ? primary : fallback && rawRefCandidates(fallback).length > 0 ? fallback : null
+    if (!target) return
+    const t = window.setTimeout(() => {
+      if (authTried.current) return
+      authTried.current = true
+      void authed(target)
+        .then((url) => {
+          if (!url) return
+          setSrc(url)
+          setState('load')
+        })
+        .catch(() => undefined)
+    }, 4_000)
+    return () => window.clearTimeout(t)
+  }, [state, authed, primary, fallback])
+
   function retry() {
     tried.current = false
+    authTried.current = false
     setSkipped(false)
     setSrc(primary)
     setState('load')
@@ -112,6 +145,25 @@ export function MdImage({ b, mirror }: { b: ImgBlock; mirror?: string }) {
           tried.current = true
           setSrc(fallback)
           return
+        }
+        // 最后一道：私有仓库的图。只认 raw 图床，其它域名（图床、徽章）
+        // 拿令牌去问也是白问，直接判失败
+        if (!authTried.current && authed) {
+          const target = rawRefCandidates(src).length > 0 ? src : fallback && rawRefCandidates(fallback).length > 0 ? fallback : null
+          if (target) {
+            authTried.current = true
+            void authed(target)
+              .then((url) => {
+                if (url) {
+                  setSrc(url)
+                  setState('load')
+                } else {
+                  setState('fail')
+                }
+              })
+              .catch(() => setState('fail'))
+            return
+          }
         }
         setState('fail')
       }}
