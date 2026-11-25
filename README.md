@@ -512,7 +512,7 @@ v1.1.3 起**包里不再预置任何加速站**：候选只有官方直连，加
 
 ```bash
 pnpm install
-pnpm test                 # 584 项单元测试
+pnpm test                 # 1462 项单元测试
 pnpm build                # 类型检查 + 打包
 pnpm cap:sync             # 同步版本号到 gradle 并 cap sync
 
@@ -579,7 +579,9 @@ git push origin v1.1.0
 
 历次需求与踩坑记录整理在 [RULES.md](./RULES.md)：交付形态、界面基调、令牌与解锁、返回键层级、缓存策略、版本与发布流程、验证标准、已知边界。改动前先读。
 
-接手写代码（人或 AI）先读 [AGENTS.md](./AGENTS.md)：目录地图、五个核心机制、硬约束、踩过的坑、发布流程。**读完这一份不用再通读源码**。
+接手写代码（人或 AI）先读 [AGENTS.md](./AGENTS.md)：目录地图、七个核心机制、硬约束、踩过的坑、发布流程。**读完这一份不用再通读源码**。
+
+换机器 / 换模型、要从零把环境跑起来，看 [docs/HANDOVER.md](./docs/HANDOVER.md)：工具链版本、签名恢复、验收闸门的真实数字、发版与推送、以及 v1.1.5→v1.2.0 那一串坑的根因。
 接下来要做什么、哪些功能做不了、为什么，见 [ROADMAP.md](./ROADMAP.md)：按 Issues / PR / 代码浏览 / 分支 / Actions / 通知 / 搜索分批，每项都标了 REST 端点、所需 scope、复杂度和坑。
 
 ## 许可
