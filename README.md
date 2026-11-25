@@ -582,6 +582,8 @@ git push origin v1.1.0
 接手写代码（人或 AI）先读 [AGENTS.md](./AGENTS.md)：目录地图、七个核心机制、硬约束、踩过的坑、发布流程。**读完这一份不用再通读源码**。
 
 换机器 / 换模型、要从零把环境跑起来，看 [docs/HANDOVER.md](./docs/HANDOVER.md)：工具链版本、签名恢复、验收闸门的真实数字、发版与推送、以及 v1.1.5→v1.2.0 那一串坑的根因。
+
+只想扫一眼要守什么，看 [docs/RULES-SUMMARY.md](./docs/RULES-SUMMARY.md)：十条红线 + 交付/界面/缓存/翻译/发布/验证的执行清单。改界面之前看 [docs/STYLE.md](./docs/STYLE.md)：配色变量、字号阶梯、圆角间距、液态玻璃参数与反模式。
 接下来要做什么、哪些功能做不了、为什么，见 [ROADMAP.md](./ROADMAP.md)：按 Issues / PR / 代码浏览 / 分支 / Actions / 通知 / 搜索分批，每项都标了 REST 端点、所需 scope、复杂度和坑。
 
 ## 许可

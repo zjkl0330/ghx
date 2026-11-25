@@ -298,7 +298,7 @@ rm -f /tmp/askpass.sh    # 用完删掉
 | `src/styles/theme.css` | 6513 行，所有视觉唯一来源，含 CSS 变量与全部响应式 |
 | `android/app/src/main/java/dev/zjkl/ghx/` | 原生层：下载、通知、渲染兜底 |
 | `scripts/` | 40 个验证/构建脚本 |
-| `docs/` | 设计文档 + 截图 + 本文件 + `archive/` |
+| `docs/` | 设计文档 + 截图 + 本文件 + `RULES-SUMMARY.md` / `STYLE.md` + `archive/` |
 
 ### 8.2 七个核心机制（细节在 `AGENTS.md` §134 起）
 
@@ -379,7 +379,7 @@ rm -f /tmp/askpass.sh    # 用完删掉
 - [ ] 恢复 `keystore/ghx-release.jks` + `android/keystore.properties`，`apksigner` 指纹 == `fd6a8ea4…`
 - [ ] `npx tsc -b` 无输出；`npx vitest run` == **1462**
 - [ ] `pnpm build` 后 `vite preview --port 4173`，`xvfb-run -a python3 scripts/verify-features.py` == **77**
-- [ ] 读 `RULES.md`（行为）+ `AGENTS.md` §七个核心机制 + §硬约束
+- [ ] 读 `RULES.md`（行为）/ `docs/RULES-SUMMARY.md`（速查）+ `AGENTS.md` §七个核心机制 + §硬约束；动界面前读 `docs/STYLE.md`
 - [ ] 向用户要 PAT；确认远端 `main` 与 `v1.2.0` 都在
 - [ ] 问清这次要做什么——**不要主动扩大范围**
 
