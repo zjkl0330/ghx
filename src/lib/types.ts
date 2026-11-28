@@ -21,6 +21,13 @@ export interface TokenRecord {
   lastCheckedAt: string | null
   lastStatus: TokenStatus
   baseUrl: string
+  /**
+   * 同账号的第二枚令牌（副密钥）。副密钥按用户要求可直接查看，
+   * 主密钥仍要过查看密码；这里只存「有没有」与指纹，密文在 vault 的第二个加密区。
+   */
+  hasSecondary?: boolean
+  /** 副密钥脱敏指纹，列表里用来区分主副 */
+  secondaryPreview?: string | null
 }
 
 export interface Repo {
@@ -183,6 +190,10 @@ export interface AuditEntry {
     | 'file'
     | 'security'
     | 'account-switch'
+    /** 主 / 副密钥的变更 */
+    | 'token-edit'
+    /** 备份导出与恢复 */
+    | 'backup'
   target: string
   result: 'ok' | 'failed'
   detail: string

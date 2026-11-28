@@ -36,6 +36,12 @@ export type SheetName =
   | 'dlHistory'
   /** APK 商店（热门页入口的全屏清单） */
   | 'apkstore'
+  /** 备份与恢复（设置 → 备份与恢复） */
+  | 'backup'
+  /** 某个账号的主 / 副密钥 */
+  | 'secret'
+  /** 主密钥查看密码的设置与清除 */
+  | 'reveal'
 
 /** 首页页签：底栏第一项就是「首页」，返回时回到它 */
 export const HOME_TAB = 'repos'

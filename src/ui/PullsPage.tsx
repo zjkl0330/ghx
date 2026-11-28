@@ -25,7 +25,7 @@ import {
   type PullRequest,
   type PullReview,
 } from '../lib/pulls'
-import { addComment, listComments, listTimeline, type IssueComment } from '../lib/issues'
+import { addComment, listCommentPage, listLatestComments, listTimeline, type IssueComment } from '../lib/issues'
 import type { TimelineItem } from '../lib/timeline'
 import { PageHeader, PageState } from './PageHeader'
 import { TimelineList } from './TimelineList'
@@ -256,6 +256,8 @@ export function PullPage(p: {
   const [reviewBody, setReviewBody] = useState('')
   /** 对话区：普通评论与动态（标签/指派/关闭）分开拉，任一失败不影响详情 */
   const [comments, setComments] = useState<IssueComment[]>([])
+  const [cpage, setCpage] = useState({ page: 1, last: 1 })
+  const [olderBusy, setOlderBusy] = useState(false)
   const [events, setEvents] = useState<TimelineItem[]>([])
   const [commentDraft, setCommentDraft] = useState('')
 
@@ -319,14 +321,17 @@ export function PullPage(p: {
           pullFiles(p.client, p.owner, p.repo, p.number, silent),
           pullCommits(p.client, p.owner, p.repo, p.number, silent),
           listReviews(p.client, p.owner, p.repo, p.number, silent),
-          listComments(p.client, p.owner, p.repo, p.number, silent).catch(() => [] as IssueComment[]),
+          listLatestComments(p.client, p.owner, p.repo, p.number, silent).catch(
+            () => ({ items: [] as IssueComment[], page: 1, last: 1, hasOlder: false }),
+          ),
           listTimeline(p.client, p.owner, p.repo, p.number, silent).catch(() => [] as TimelineItem[]),
         ])
         setPr(d)
         setFiles(f)
         setCommits(c)
         setReviews(r)
-        setComments(cs)
+        setComments(cs.items)
+        setCpage({ page: cs.page, last: cs.last })
         setEvents(tl)
       } catch (err) {
         setError((err as Error).message)
@@ -385,6 +390,21 @@ export function PullPage(p: {
       p.onToast(reviewFailure(status, (err as { body?: unknown }).body))
     } finally {
       setBusy(false)
+    }
+  }
+
+  /** 往前翻一页评论；更早的要排在上面，所以前置插入 */
+  async function loadOlder() {
+    if (!p.client || olderBusy || cpage.page <= 1) return
+    setOlderBusy(true)
+    try {
+      const res = await listCommentPage(p.client, p.owner, p.repo, p.number, cpage.page - 1)
+      setComments((prev) => [...res.items, ...prev])
+      setCpage((cur) => ({ page: res.page, last: Math.max(res.last, cur.last) }))
+    } catch (err) {
+      p.onToast((err as Error).message)
+    } finally {
+      setOlderBusy(false)
     }
   }
 
@@ -561,7 +581,20 @@ export function PullPage(p: {
                 )}
                 {comments.length > 0 && (
                   <>
-                    <div className="section-title">评论 · {comments.length}</div>
+                    <div className="section-title">
+                      评论 · {comments.length}
+                      {cpage.page > 1 ? '+' : ''}
+                    </div>
+                    {cpage.page > 1 && (
+                      <button
+                        type="button"
+                        className="more-btn"
+                        disabled={olderBusy}
+                        onClick={() => void loadOlder()}
+                      >
+                        {olderBusy ? '加载中…' : `加载更早的评论（还有 ${cpage.page - 1} 页）`}
+                      </button>
+                    )}
                     {comments.map((c) => (
                       <div className="comment" key={c.id}>
                         <div className="comment-head">

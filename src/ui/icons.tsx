@@ -74,6 +74,8 @@ const P: Record<string, ReactNode> = {
   ),
   back: <path d="M15 5l-7 7 7 7" />,
   arrowRight: <path d="M5 12h14M13 6l6 6-6 6" />,
+  /** 回到顶部 */
+  up: <path d="M12 19V6M6 11.5L12 5.5l6 6" />,
   /** 测速用 */
   bolt: <path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" />,
   /** 外部页面 */
@@ -313,8 +315,7 @@ const P: Record<string, ReactNode> = {
       <path d="M12 12v8.5" />
     </>
   ),
-  /* 上/下箭头：排序用。单独给形状，不靠旋转 chevron，缩放时不发虚 */
-  up: <path d="M12 19V5M6 11l6-6 6 6" />,
+  /* 下箭头：排序用。上箭头复用上面的 up，形状一致，不重复定义键 */
   down: <path d="M12 5v14M6 13l6 6 6-6" />,
 }
 

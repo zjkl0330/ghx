@@ -89,6 +89,12 @@ interface Props {
   onChangeGuard: () => void
   onClearGuard: () => void
   onMigrate: () => void
+  /** 主密钥查看密码：只在本机存盐与哈希 */
+  revealSet: boolean
+  onSetReveal: () => void
+  onClearReveal: () => void
+  /** 备份与恢复（导出设置+账号，可含密钥；支持存到云盘） */
+  onOpenBackup: () => void
   onSaveBaseUrl: (url: string) => void
   mirrorAuto: boolean
   mirrorSpeed: number | null
@@ -633,6 +639,50 @@ export function SettingsPage(p: Props) {
 
             <div className="hint" style={{ marginTop: 10 }}>
               令牌一律 AES-256-GCM 加密落盘。免密模式下设备密钥也放在本机，能防住「数据文件被单独拷走或上传」，防不住拿到已解锁手机的人；需要后者就开启启动验证。
+            </div>
+
+            <div className="tgl-label" style={{ marginTop: 16 }}>
+              主密钥查看密码
+            </div>
+            <div className="kv-row">
+              <span>状态</span>
+              <b style={{ color: p.revealSet || p.guarded ? 'var(--green)' : 'var(--text-dim)' }}>
+                {p.guarded ? '跟随启动验证' : p.revealSet ? '已设置' : '未设置（首次查看时设）'}
+              </b>
+            </div>
+            <div className="hint" style={{ marginTop: 4 }}>
+              副密钥在令牌面板里直接展示；主密钥必须先输这道密码。它只是界面闸门，
+              不会重新加密令牌 —— 忘了可以清掉重设。
+            </div>
+            {!p.guarded && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button className="btn ghost" style={{ flex: 1 }} onClick={p.onSetReveal}>
+                  {p.revealSet ? '修改密码' : '设置密码'}
+                </button>
+                {p.revealSet && (
+                  <button className="btn ghost" style={{ flex: 1 }} onClick={p.onClearReveal}>
+                    清除
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="section-title">备份与恢复</div>
+          <div className="panel">
+            <button className="linkrow" onClick={p.onOpenBackup}>
+              <span className="linkrow-main">
+                <b>导出 / 恢复</b>
+                <i>
+                  {p.tokenCount} 个账号 · 全部偏好设置 · 可选择连同密钥导出
+                </i>
+              </span>
+              <Icon name="chevron" size={13} className="linkrow-arrow" />
+            </button>
+            <div className="hint" style={{ marginTop: 8 }}>
+              导出的文件名带账号与时间（如 ghx-backup-zjkl0330-20261128-1830.json），存进云盘也认得出。
+              原生端会打开系统「保存到」面板，可以直接选 Google 云端硬盘；带密钥的备份用你设的导出密码
+              AES-256-GCM 加密，文件本身看不出任何令牌。
             </div>
           </div>
 

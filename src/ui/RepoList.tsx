@@ -184,21 +184,23 @@ export function RepoList(p: Props) {
         <div className="seg" style={{ margin: 0, flex: 1 }}>
           {(
             [
-              ['all', `全部 ${p.counts.live}`],
-              ['public', `公开 ${p.counts.public}`],
-              ['private', `私有 ${p.counts.private}`],
+              ['all', '全部', p.counts.live],
+              ['public', '公开', p.counts.public],
+              ['private', '私有', p.counts.private],
               // 一个归档都没有时不占位置：绝大多数账号永远看不到这一档
               ...(p.counts.archived > 0
-                ? ([['archived', `归档 ${p.counts.archived}`]] as const)
+                ? ([['archived', '归档', p.counts.archived]] as const)
                 : []),
             ] as const
-          ).map(([key, label]) => (
+          ).map(([key, label, count]) => (
             <button
               key={key}
               className={p.visibility === key ? 'on' : ''}
               onClick={() => p.onVisibility(key)}
             >
               {label}
+              {/* 数字小一号、颜色淡一档：读起来是「标签 + 计数」，不是「全部44」一个词 */}
+              <em className="seg-n">{count}</em>
             </button>
           ))}
         </div>

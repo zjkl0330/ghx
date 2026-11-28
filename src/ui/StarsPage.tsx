@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitHubClient } from '../lib/api'
 import { descText, pickDescItems } from '../lib/desc'
 import { groupByLanguage, topLanguages } from '../lib/stars'
@@ -54,6 +54,35 @@ export function StarsPage(p: Props) {
   const [allLoaded, setAllLoaded] = useState(false)
   const [moreLoading, setMoreLoading] = useState(false)
   const [moreError, setMoreError] = useState<string | null>(null)
+  /**
+   * 请求序号。换账号时上一个账号的慢响应可能后到，不拦住就会把
+   * B 的页面刷成 A 的星标 —— 这是多账号下最典型的串号。
+   */
+  const seq = useRef(0)
+
+  /**
+   * 换账号先清场。
+   *
+   * 之前只依赖 client 变化触发重新拉取，但列表要等新数据回来才替换：
+   * 顶部已经写着 @B，下面还是 @A 的星标仓库，还带着 A 的搜索词。
+   * 这里在拉取之前就把它们清掉，宁可空一屏也不要给错数据。
+   */
+  const lastClient = useRef(p.client)
+  useEffect(() => {
+    if (lastClient.current === p.client) return
+    lastClient.current = p.client
+    seq.current += 1
+    setRepos([])
+    setQuery('')
+    setLang(null)
+    setNextPage(4)
+    setAllLoaded(false)
+    setError(null)
+    setMoreError(null)
+    setMoreLoading(false)
+    setBusy(null)
+    setView('list')
+  }, [p.client])
 
   /** 星标文件夹：纯本地，按账号分片 */
   const [folders, setFolders] = useState<StarFolderStore>(() => readStarFolders(p.accountId))
@@ -94,8 +123,12 @@ export function StarsPage(p: Props) {
   /** fresh=true 时绕过缓存，手动刷新用；首次进入直接吃缓存，不再转圈 */
   const load = useCallback(
     async (fresh = false) => {
+      const mine = seq.current + 1
+      seq.current = mine
       if (!p.client) {
         setRepos([])
+        setAllLoaded(true)
+        setLoading(false)
         return
       }
       setLoading(true)
@@ -108,6 +141,8 @@ export function StarsPage(p: Props) {
         let lastFull = false
         for (let page = 1; page <= 3; page += 1) {
           const { data } = await p.client.listStarred(page, 50, fresh)
+          // 期间切了账号：这份结果属于上一个账号，丢掉
+          if (seq.current !== mine) return
           acc.push(...data)
           lastFull = data.length === 50
           if (!lastFull) break
@@ -116,9 +151,10 @@ export function StarsPage(p: Props) {
         setNextPage(4)
         setAllLoaded(!lastFull)
       } catch (err) {
+        if (seq.current !== mine) return
         setError((err as Error).message)
       } finally {
-        setLoading(false)
+        if (seq.current === mine) setLoading(false)
       }
     },
     [p.client],
@@ -126,18 +162,20 @@ export function StarsPage(p: Props) {
 
   const loadMore = useCallback(async () => {
     if (!p.client || moreLoading || allLoaded) return
+    const mine = seq.current
     setMoreLoading(true)
     setMoreError(null)
     try {
       const { data } = await p.client.listStarred(nextPage, 50)
+      if (seq.current !== mine) return
       setRepos((prev) => [...prev, ...data])
       setNextPage((n) => n + 1)
       if (data.length < 50) setAllLoaded(true)
     } catch (err) {
       // 停在原页，再点一次就是重试
-      setMoreError((err as Error).message)
+      if (seq.current === mine) setMoreError((err as Error).message)
     } finally {
-      setMoreLoading(false)
+      if (seq.current === mine) setMoreLoading(false)
     }
   }, [p.client, moreLoading, allLoaded, nextPage])
 
@@ -261,7 +299,7 @@ export function StarsPage(p: Props) {
         <div>
           <div className="page-title">星标</div>
           <div className="page-sub">
-            {p.login ? `@${p.login}` : '未连接账号'} · {repos.length} 个仓库
+            {p.login ? `@${p.login}` : '账号未校验'} · {repos.length} 个仓库
             {groups.length > 0 ? ` · ${groups.length} 种语言` : ''}
           </div>
         </div>
@@ -385,7 +423,8 @@ export function StarsPage(p: Props) {
           <div className="rows">{filtered.map(repoRow)}</div>
         )}
 
-        {view === 'list' && !empty && !allLoaded && (
+        {/* 出错时列表是空的，这时再挂一个「加载更多（已有 0 个）」只会让人以为是分页问题 */}
+        {view === 'list' && !error && filtered.length > 0 && !allLoaded && (
           <button
             className="btn ghost block"
             style={{ marginTop: 10 }}

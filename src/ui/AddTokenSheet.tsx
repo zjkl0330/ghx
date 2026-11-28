@@ -6,14 +6,21 @@ interface Props {
   busy: boolean
   error: string | null
   onCancel: () => void
-  onSubmit: (input: { name: string; secret: string; expiresAt: string | null }) => void
+  onSubmit: (input: {
+    name: string
+    secret: string
+    secondary: string | null
+    expiresAt: string | null
+  }) => void
 }
 
 export function AddTokenSheet({ busy, error, onCancel, onSubmit }: Props) {
   const [name, setName] = useState('')
   const [secret, setSecret] = useState('')
+  const [secondary, setSecondary] = useState('')
   const [expires, setExpires] = useState('')
   const valid = looksLikeToken(secret)
+  const subValid = !secondary.trim() || looksLikeToken(secondary)
 
   return (
     <>
@@ -57,6 +64,24 @@ export function AddTokenSheet({ busy, error, onCancel, onSubmit }: Props) {
           <div className="hint">GitHub 不会在接口里返回过期时间，填了才能提前提醒。</div>
         </div>
 
+        <div className="field">
+          <label htmlFor="tsub">副密钥（可选）</label>
+          <input
+            id="tsub"
+            value={secondary}
+            onChange={(e) => setSecondary(e.target.value)}
+            placeholder="同一账号的另一枚令牌"
+            autoCapitalize="off"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {secondary.length > 0 && !subValid && <div className="err">副密钥格式不像 GitHub 令牌</div>}
+          <div className="hint">
+            同一账号可以存两把：副密钥在令牌面板里直接展示（适合只读/细粒度令牌），
+            主密钥需要先输查看密码。不需要就留空。
+          </div>
+        </div>
+
         {error && <div className="err">{error}</div>}
 
         <div className="btns">
@@ -66,8 +91,15 @@ export function AddTokenSheet({ busy, error, onCancel, onSubmit }: Props) {
           <button
             className="btn primary"
             style={{ flex: 1 }}
-            disabled={!valid || busy}
-            onClick={() => onSubmit({ name, secret, expiresAt: expires ? new Date(expires).toISOString() : null })}
+            disabled={!valid || !subValid || busy}
+            onClick={() =>
+              onSubmit({
+                name,
+                secret,
+                secondary: secondary.trim() || null,
+                expiresAt: expires ? new Date(expires).toISOString() : null,
+              })
+            }
           >
             {busy ? '导入中…' : '加密保存'}
           </button>

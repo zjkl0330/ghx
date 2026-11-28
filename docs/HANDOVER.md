@@ -1,6 +1,6 @@
 # ghx 交接文档
 
-> **适用版本 v1.2.1**（2026-11-25 整理）。读者：接手这个项目的人或新模型——手上只有这个仓库，没有历史对话。
+> **适用版本 v1.2.3**（2026-11-28 整理）。读者：接手这个项目的人或新模型——手上只有这个仓库，没有历史对话。
 >
 > 本文件是**现场恢复手册 + 状态快照**。设计细节看 [`AGENTS.md`](../AGENTS.md)，行为守则看 [`RULES.md`](../RULES.md)，待办看 [`ROADMAP.md`](../ROADMAP.md)。
 
@@ -14,7 +14,7 @@
 
 技术栈：Capacitor 7 + React 19 + TypeScript + Vite。**没有 router、没有状态库、没有 markdown 库**，路由栈、Markdown 解析、玻璃视觉全部手写。
 
-规模参考：`src/` 约 4.9 万行 TS/TSX，63 个 UI 组件，`theme.css` 6513 行。
+规模参考：`src/` 约 5.3 万行 TS/TSX，65 个 UI 组件，`theme.css` 6800 余行。
 
 ---
 
@@ -105,7 +105,7 @@ sdk.dir=/opt/android-sdk
 | 检查 | 命令 | 期望 |
 |---|---|---|
 | 类型 | `npx tsc -b` | 无输出。**必须用 `-b`**，`tsc --noEmit` 对 project references 是空跑 |
-| 单测 | `npx vitest run` | `1491 passed (67 files)` |
+| 单测 | `npx vitest run` | `1497 passed (68 files)` |
 | NPE 红线 | `python3 scripts/check-npe-guards.py` | 9 条 PASS |
 | 前端构建 | `pnpm build` | 出 `dist/` |
 | 签名 | 见 2.3 | 指纹 `fd6a8ea4…` |
@@ -136,9 +136,9 @@ sdk.dir=/opt/android-sdk
 cd /workspace/ghx
 
 npx tsc -b                      # 类型检查
-npx vitest run                  # 单测（1491 / 67 文件）
+npx vitest run                  # 单测（1497 / 68 文件）
 pnpm build                      # tsc -b && vite build → dist/
-npx vite preview --port 4173    # 端口必须 4173，31 个验证脚本里 30 个硬编码了它
+npx vite preview --port 4173    # 端口必须 4173，33 个验证脚本里 32 个硬编码了它
 
 xvfb-run -a python3 scripts/verify-features.py    # 功能入口盘点
 bash scripts/test-chunked.sh                      # 原生纯 Java 逻辑（89 条断言，不需要模拟器）
@@ -155,11 +155,11 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 
 ---
 
-## 5. 验收闸门（2026-11-28 在 v1.2.2 上重跑的结果）
+## 5. 验收闸门（2026-11-28 在本批代码上重跑的结果）
 
 | 闸门 | 命令 | 结果 |
 |---|---|---|
-| 单元测试 | `npx vitest run` | **1523 通过 / 69 文件** |
+| 单元测试 | `npx vitest run` | **1568 通过 / 73 文件** |
 | 类型检查 | `npx tsc -b` | 通过 |
 | NPE 红线 | `scripts/check-npe-guards.py` | **9 条全过**（Context 先装、用处处判空、插件方法不外抛） |
 | 原生下载接线 | `scripts/check-download-native.py --apk …` | **77 条全过** |
@@ -172,10 +172,18 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 | 星标文件夹 | `scripts/verify-starfolders.py` | 建组 → 归类 → 筛选 → 改名 → 删除 6 步全过，含返回键只收面板 |
 | 详情操作排序 | `scripts/verify-actionorder.py` | 上移生效、首尾禁用、重开持久化、恢复默认，6 步全过 |
 | 下载面板几何 | `scripts/verify-dlsheet.py` | 注入 17 条线路后按钮仍在 792–830px，线路表内滚 285/900 |
+| 回到顶部 + 三榜 | `GHX_TOKEN=… scripts/verify-backtotop.py` | 今日/本周/本月各 30 条；按钮出现 → 点后 scrollTop=0 → 换页签收起 |
+| 评论分页 | `GHX_TOKEN=… scripts/verify-comments-paging.py` | 首屏 54 条（该 Issue 最后一页）+「加载更早」→ 154 条，旧的插在上面 |
+| 备份 / 恢复 | `GHX_TOKEN=… scripts/verify-backup.py` | 文件名 `ghx-backup-zjkl0330-20261128-1855.json`；空密码被拦；文件 1545 B 内无明文令牌；错密码拒绝；覆盖恢复后 `ghx.theme` 从 dark 变回 light，重载后仍登录 |
+| 主 / 副密钥 | `GHX_TOKEN=… scripts/verify-secrets.py` | 副密钥保存后直接显示明文；主密钥解锁前不可见；设查看密码后显示；重开面板又遮住；错密码拒绝、对密码再显示 |
+| 多账号隔离 | `GHX_TOKEN=… scripts/verify-multiaccount.py` | 主账号 44 仓库 / 39 星标；切到坏令牌账号后两页都为空且提示「令牌无效或已被吊销」；切回后数据恢复 |
 
-`scripts/` 共 **45 个**脚本，其中 `verify-*.py` **34 个**，覆盖归档、批量、复制、下载、下载历史、分片、字体、游客模式、Markdown、镜像恢复、通知、溢出、发版说明、测速、目录、翻译保活、链接、更新、返回键等。
+`scripts/` 共 **50 个**脚本，其中 `verify-*.py` **39 个**，覆盖归档、批量、复制、下载、下载历史、分片、字体、游客模式、Markdown、镜像恢复、通知、溢出、发版说明、测速、目录、翻译保活、链接、更新、返回键、星标文件夹、操作排序、下载面板几何、备份、主副密钥、多账号隔离等。
 
-**诚实说明**：v1.2.2 这轮实际重跑了 7 个（features / glass / apkstore / backkey 与三个新增脚本），其余 `verify-*.py` 是上一版或更早跑过的，**这次没有复跑**。改动碰到对应模块时再跑，不要因为「历史全绿」就跳过。`scripts/repro-upgrade.py` 是复现升级场景的一次性脚本，不是闸门。
+**诚实说明**：本批实际重跑的是单元测试、类型检查、构建、功能盘点、玻璃视觉，以及本批新增的六条脚本
+（backup / secrets / multiaccount / starfolders / actionorder / dlsheet）。回到底部、评论分页、
+私有图片等更早验过的条目**这次没有复跑**；`verify-*.py` 里其余脚本更早通过，改动碰到对应模块时再跑，
+不要因为「历史全绿」就跳过。`scripts/repro-upgrade.py` 是复现升级场景的一次性脚本，不是闸门。
 
 ---
 
@@ -185,7 +193,7 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 
 - 补丁位 +1；满 10 进次版本（`0.9.9 → 1.0.0`）。
 - 版本号**只在 `package.json` 维护**，`scripts/sync-version.mjs` 同步到 gradle：`versionName` = 字面版本，`versionCode` = `major*10000 + minor*100 + patch`（1.2.0 → `10200`）。
-- 当前：`versionName 1.2.1` / `versionCode 10201`（未打 tag、未发版）。
+- 当前：`versionName 1.2.3` / `versionCode 10203`（准备发预发布）。
 
 ```bash
 node scripts/bump-version.mjs 1.2.0    # 传「当前」版本，产出 1.2.1
@@ -227,7 +235,7 @@ tag 触发时版本取 tag 名，所以 **tag 必须与 `package.json` 一致**�
 - 有 → 不勾 Pre-release，并占用 `/releases/latest`（用户端会弹更新）。
 - 没有 → 预发布，`latest` 不动，静默更新。
 
-日常改动发预发布；用户确认过的版本才发正式版。当前 `latest` = **v1.2.0**（正式版，2026-11-22 发布）；v1.2.1 已改完待发。
+日常改动发预发布；用户确认过的版本才发正式版。当前 `latest` = **v1.2.0**（正式版，2026-11-22 发布）；v1.2.1、v1.2.2 已发预发布，v1.2.3 待发。
 
 CI 第 18 步 `Verify signature` 硬校验指纹，签错直接失败——这是防止「包能装但覆盖不了」的最后一道闸。
 
@@ -302,7 +310,7 @@ rm -f /tmp/askpass.sh    # 用完删掉
 | `src/ui/` | 63 个组件：路由页（`*Page.tsx`）、弹层（`*Sheet.tsx`）、基础件 |
 | `src/styles/theme.css` | 6513 行，所有视觉唯一来源，含 CSS 变量与全部响应式 |
 | `android/app/src/main/java/dev/zjkl/ghx/` | 原生层：下载、通知、渲染兜底 |
-| `scripts/` | 43 个验证/构建脚本 |
+| `scripts/` | 45 个验证/构建脚本 |
 | `docs/` | 设计文档 + 截图 + 本文件 + `RULES-SUMMARY.md` / `STYLE.md` + `archive/` |
 
 ### 8.2 七个核心机制（细节在 `AGENTS.md` §134 起）
@@ -357,6 +365,9 @@ rm -f /tmp/askpass.sh    # 用完删掉
 | PAT | 明文出现过多次，一律视为已泄露；每次交接都建议用户撤销重签 |
 | ROADMAP 未开工 | Discussions / Projects / pinned 走 GraphQL；`docs/ai-plan.md`、`docs/cross-platform.md` 是已定方案未动手 |
 | 私有仓库图片 | **v1.2.1 已修**：`<img>` 加载失败后走 API contents 取字节换 `blob:`；公开图不受影响 |
+| 备份存到云盘 | 走 SAF（`ACTION_CREATE_DOCUMENT`），Google 云端硬盘是系统面板里的一个位置；**手机上没装 Drive 就选不到它**，此时只能存本机。没有接 Drive REST API，所以不能「直接登录 Google 账号上传」 |
+| 备份的边界 | 不含设备密钥、审计日志、翻译缓存、热门快照、下载记录；不含密钥的备份只能恢复设置，账号要重新导入 —— 备份面板里已写明 |
+| 副密钥不设防 | 按用户要求「可以直接展示」，所以拿到已解锁手机的人点开令牌面板就能看到副密钥。主密钥仍需查看密码 / 启动口令 |
 | 加速站恢复的边界 | 若 1.1.10 / 1.1.11 启动后自动测速已把 `ghx.mirror` 与快照覆盖成官方，旧地址**不可恢复**（数据已被覆盖），只能让用户重填 |
 
 ---
@@ -369,8 +380,8 @@ rm -f /tmp/askpass.sh    # 用完删掉
 |---|---|
 | 「`git push` 不可靠，一切走 `api.github.com`」 | 可用，只是要 `-c http.version=HTTP/1.1`；API 退回兜底 |
 | 「本地与远端 hash 必然分叉」 | 不再分叉，`main` 与远端同为 `c5b6b75` |
-| 「单测 1285」 | **1491** |
-| 「验证脚本 16 个」 | 43 个脚本，其中 `verify-*.py` 31 个 |
+| 「单测 1285」 | **1568** |
+| 「验证脚本 16 个」 | 50 个脚本，其中 `verify-*.py` 39 个 |
 | 「从会话记录 grep PAT」 | **禁止**，直接向用户要新的 |
 | 「原生逻辑 72 条」 | 89 条 |
 | 版本 0.9.3 / `latest` 指 v0.8.9 | v1.2.0，`latest` 指 v1.2.0 |

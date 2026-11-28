@@ -3,7 +3,8 @@ import type { GitHubClient } from '../lib/api'
 import {
   addComment,
   getIssue,
-  listComments,
+  listCommentPage,
+  listLatestComments,
   listLabels,
   listTimeline,
   setAssignees,
@@ -77,6 +78,9 @@ export function IssuePage(p: {
   }
   const [issue, setIssue] = useState<Issue | null>(null)
   const [comments, setComments] = useState<IssueComment[]>([])
+  /** 当前显示的是第几页评论 / 最后一页是第几页 —— 用来决定「加载更早」还点不点得动 */
+  const [cpage, setCpage] = useState({ page: 1, last: 1 })
+  const [olderBusy, setOlderBusy] = useState(false)
   /** 标签变更、关闭、指派这类事件；评论区不显示它们，但确实发生过 */
   const [events, setEvents] = useState<TimelineItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -141,6 +145,27 @@ export function IssuePage(p: {
     return transTalk.zh.slice(start, start + blocks.length)
   }
 
+  /**
+   * 往前翻一页评论。
+   *
+   * 不放 useCallback：它只被按钮点用，进不了任何 effect 的依赖链，
+   * 包一层反而让 useCallback 的依赖表变长。
+   */
+  async function loadOlder() {
+    if (!p.client || olderBusy || cpage.page <= 1) return
+    setOlderBusy(true)
+    try {
+      const res = await listCommentPage(p.client, p.owner, p.repo, p.number, cpage.page - 1)
+      // 前置插入：更早的评论要排在上面，不能追加到末尾
+      setComments((prev) => [...res.items, ...prev])
+      setCpage((cur) => ({ page: res.page, last: Math.max(res.last, cur.last) }))
+    } catch (err) {
+      p.onToast((err as Error).message)
+    } finally {
+      setOlderBusy(false)
+    }
+  }
+
   const load = useCallback(
     async (silent = false) => {
       if (!p.client) {
@@ -152,12 +177,13 @@ export function IssuePage(p: {
       try {
         const [it, cs, tl] = await Promise.all([
           getIssue(p.client, p.owner, p.repo, p.number, silent),
-          listComments(p.client, p.owner, p.repo, p.number, silent),
+          listLatestComments(p.client, p.owner, p.repo, p.number, silent),
           // 动态拿不到不该把整页拖垮：老仓库、镜像站都可能没有这个端点
           listTimeline(p.client, p.owner, p.repo, p.number, silent).catch(() => [] as TimelineItem[]),
         ])
         setIssue(it)
-        setComments(cs)
+        setComments(cs.items)
+        setCpage({ page: cs.page, last: cs.last })
         setEvents(tl)
       } catch (err) {
         setError((err as Error).message)
@@ -523,8 +549,19 @@ export function IssuePage(p: {
             <TimelineList items={events} />
 
             <div className="section-title" style={{ padding: '4px 16px' }}>
-              评论 {comments.length > 0 ? `· ${comments.length}` : ''}
+              评论 {comments.length > 0 ? `· ${comments.length}${cpage.page > 1 ? '+' : ''}` : ''}
             </div>
+
+            {cpage.page > 1 && (
+              <button
+                type="button"
+                className="more-btn"
+                disabled={olderBusy}
+                onClick={() => void loadOlder()}
+              >
+                {olderBusy ? '加载中…' : `加载更早的评论（还有 ${cpage.page - 1} 页）`}
+              </button>
+            )}
 
             {comments.length > 0 && (
               <div style={{ padding: '0 16px' }}>

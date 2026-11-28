@@ -43,6 +43,8 @@ public class MainActivity extends BridgeActivity {
         try {
             registerPlugin(ImmersivePlugin.class);
             registerPlugin(DownloadPlugin.class);
+            // 备份文件的保存/读取（系统保存面板，可选 Google 云端硬盘）
+            registerPlugin(ExporterPlugin.class);
         } catch (Throwable t) {
             BootFailure.note(this, "registerPlugin", t);
         }

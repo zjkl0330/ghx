@@ -20,6 +20,8 @@ interface Props {
   onAdd: () => void
   onRemove: (id: string) => void
   onCheck: (id: string) => void
+  /** 打开主/副密钥面板 */
+  onOpenSecret: (id: string) => void
   quota: Record<string, { remaining: number; limit: number }>
   onBack: () => void
 }
@@ -110,6 +112,15 @@ export function TokenVault(p: Props) {
                   <span>{rec.expiresAt ? `${rec.expiresAt.slice(0, 10)} 到期` : '无固定期限'}</span>
                 </div>
               )}
+
+              <button className="tk-keys" onClick={() => p.onOpenSecret(rec.id)}>
+                <Icon name="key" size={13} />
+                <span>主 / 副密钥</span>
+                <em className={rec.hasSecondary ? '' : 'dim'}>
+                  {rec.hasSecondary ? '两把' : '只有主密钥'}
+                </em>
+                <Icon name="chevron" size={12} className="linkrow-arrow" />
+              </button>
 
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <button

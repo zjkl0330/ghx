@@ -20,6 +20,8 @@ const ACTION_LABEL: Record<AuditEntry['action'], string> = {
   file: '编辑文件',
   security: '安全设置',
   'account-switch': '切换账号',
+  'token-edit': '修改密钥',
+  backup: '备份 / 恢复',
 }
 
 function fmt(iso: string): string {

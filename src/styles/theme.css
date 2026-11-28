@@ -2759,9 +2759,11 @@ h1.title {
 
 .hot-rank {
   flex: none;
-  width: 18px;
-  padding-top: 1px;
-  font-size: 11px;
+  /* 20px 才装得下两位数不挤；tabular-nums 让 1 与 10 的右边缘对齐 */
+  width: 20px;
+  /* 排名跟仓库名首行的视觉中线对齐：字号小一号，不抬一点会显得吊在上面 */
+  padding-top: 2px;
+  font-size: 11.5px;
   font-weight: 700;
   color: var(--text-dim);
   text-align: right;
@@ -2774,6 +2776,47 @@ h1.title {
 
 .hot-rate {
   color: var(--green);
+}
+
+/*
+ * 热门榜的描述给两行。
+ *
+ * 别的列表（提交、文件、通知）单行就够 —— 那些是一眼能认出的标题。
+ * 热门榜不一样：仓库名是陌生字符串，用户靠描述判断「点不点」，
+ * 中文一句话常被截在第 12 个字，等于没写。两行够覆盖绝大多数仓库的一句话简介。
+ * 「译」标绝对定位在右上，两行时靠 .with-mark 的右内边距整体让位。
+ */
+.hot-row .row-desc,
+.hot-row .row-desc .desc-text {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.45;
+}
+
+/* 筛选栏里的计数：与标签拉开字号与色阶，不然「全部 44」会读成一个词 */
+.seg button .seg-n {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.seg button.on .seg-n {
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* 骨架期间的一句实话：让人知道是在拉 30 个，不是只找到几个 */
+.hot-loading-tip {
+  padding: 14px 16px 6px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 /*
@@ -3843,6 +3886,29 @@ h1.title {
   font-size: 11.5px;
   text-align: left;
   cursor: pointer;
+}
+
+/* 评论的「加载更早」：虚线框，表示这是一段可以继续展开的边界，不是一条评论 */
+.more-btn {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 0 16px 10px;
+  padding: 9px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: none;
+  color: var(--blue-text);
+  font-size: 11.5px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.more-btn:disabled {
+  opacity: 0.55;
+}
+
+.more-btn:active:not(:disabled) {
+  background: var(--surface-2);
 }
 
 .comment {
@@ -6725,3 +6791,302 @@ html[data-safe='1'] .tabbar::after {
   display: none;
 }
 
+
+/* ---- 回到顶部 ----
+ *
+ * 滚过一屏多才出现的圆形按钮，浮在内容右下。
+ * 有底栏时抬到底栏之上（--tabbar-h + 间隙 + 安全区），没有底栏（路由页）时贴安全区。
+ * 用 fixed 而不是 absolute：.page 自己是滚动容器，absolute 会跟着内容滚走。
+ */
+.backtotop {
+  position: fixed;
+  /* 与列表行的 16px 右边距对齐，不额外创造一条对齐线 */
+  right: 16px;
+  bottom: calc(var(--safe-bottom) + 18px);
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  box-shadow: 0 6px 18px var(--shadow);
+  /* 出现时不抢注意力：淡入 + 轻微上移，100ms 级别，比缩放更像「浮上来」 */
+  animation: btt-in 0.16s ease-out both;
+}
+
+.backtotop.raised {
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + var(--tabbar-gap) + 16px);
+}
+
+.backtotop:active {
+  transform: scale(0.94);
+  color: var(--text);
+}
+
+@keyframes btt-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 用户明确要求减弱动效时，连出现动画也去掉，只留按钮本身 */
+@media (prefers-reduced-motion: reduce) {
+  .backtotop {
+    animation: none;
+  }
+}
+
+/* 老 WebView 不认 backdrop-filter 时，底栏是不透明面，按钮不必再加深阴影 */
+html[data-safe='1'] .backtotop {
+  box-shadow: 0 3px 10px var(--shadow);
+}
+
+/* ─────────────────── 备份 / 主副密钥（v1.3.0） ─────────────────── */
+
+/*
+ * 备份面板是「一次性任务」型弹层：内容比普通表单多，但都不是长文本。
+ * 给它一个可滚动的上限，并让底部说明始终跟着内容走，不压在按钮上。
+ */
+.bk-sheet {
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.bk-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.bk-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-3);
+}
+
+.bk-file b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+.bk-file i {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--text-dim);
+}
+
+/* 勾选行：整行可点，说明另起一行，避免长句子把勾选框挤成两行高 */
+.bk-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-2);
+}
+
+.bk-check b {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.bk-check i {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.bk-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.bk-grid > div {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.bk-grid b {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.bk-grid i {
+  display: block;
+  margin-top: 1px;
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--text-dim);
+}
+
+.bk-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.bk-done {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--green-bg);
+  color: var(--green);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.bk-done b {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 600;
+}
+
+.bk-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+/* 密钥面板：两块内容上下排，用分隔线而不是卡片嵌套，少一层阴影 */
+.sec-sheet {
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.sec-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sec-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--blue-text);
+  background: var(--blue-soft-2);
+  border: 1px solid var(--blue-line-soft);
+}
+
+.sec-tag.ok {
+  color: var(--green);
+  background: var(--green-bg);
+  border-color: transparent;
+}
+
+.sec-note {
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+/* 密钥本体：等宽、可折行。长令牌不能省略号截断 —— 用户要照着抄 */
+.sec-value {
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text);
+  word-break: break-all;
+  user-select: text;
+}
+
+.sec-value.dim {
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+}
+
+.sec-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sec-acts .btn {
+  height: 32px;
+  font-size: 11.5px;
+}
+
+/* 令牌卡片里的「主 / 副密钥」入口 */
+.tk-keys {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+
+.tk-keys em {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--blue-text);
+}
+
+.tk-keys em.dim {
+  color: var(--text-dim);
+}
+
+.tk-keys:active {
+  background: var(--surface-2);
+}

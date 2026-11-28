@@ -52,7 +52,10 @@ Capacitor 7 + React 19 + TypeScript + Vite。没有 router、没有 markdown 库
 |---|---|
 | `api.ts` | GitHub REST 客户端。`request()` 统一入口：GET 走缓存、写后按前缀失效、403 分限流/权限、错误码翻中文 |
 | `cache.ts` | 内存 TTL 缓存。`ttlFor()` 按路径分档，`invalidationPrefixes()` 决定写操作清哪些 |
-| `vault.ts` | 令牌保险库，AES-256-GCM。设备密钥 + 可选口令 guard |
+| `vault.ts` | 令牌保险库，AES-256-GCM。设备密钥 + 可选口令 guard；**主密钥（`secrets`）与副密钥（`secrets2`）两个加密区**，`setSecondary` / `secondarySecret` / `allSecrets` / `restore` |
+| `backup.ts` | 备份与恢复：文件名带账号与时间、设置白名单（`BACKUP_SETTING_KEYS`）、可选密钥整块 `PBKDF2(210k)+AES-256-GCM` 加密、解析容错、合并/覆盖写回 |
+| `reveal.ts` | 主密钥查看密码：PBKDF2-SHA256 存盐与哈希，`hasRevealPass` / `setRevealPass` / `checkRevealPass` / `clearRevealPass` |
+| `savefile.ts` | 文本存/取文件双通道：原生走 `Exporter` 插件（SAF，可选 Google 云端硬盘），网页走 `<a download>` 与 `<input type=file>` |
 | `tokens.ts` | 令牌体检：`probeToken`、过期分级、风险 scope |
 | `repos.ts` | 仓库归一化、筛选（`RepoFilterVisibility` 四档：全部/公开/私有/**归档**）、`countBy`（公开+私有=全部，都不含归档）、批量动作计划 `planBatch` / `runBatchActions` |
 | `sort.ts` `stars.ts` `topics.ts` | 排序、语言分组、话题解析 |
@@ -253,6 +256,8 @@ user / notifications / search / profile / settings / tokens / audit
 | 私有仓库 README 图片加载不出 | `<img>` 不带令牌；**v1.2.1 已修**：失败/4 秒超时后走 `contents` 取字节换 `blob:`（`lib/imagebytes.ts` + `ui/AuthImage.tsx`） |
 | Edge 翻译带 `from=en` | 中文段落会被改写，必须省略 `from` |
 | 加速站只在代码里写死 | 域名会换，必须支持 `overrides` 改地址 |
+| 切账号后列表还挂着上一个账号的数据 | 页面本地状态（列表、搜索词、点星集合、分页游标）不跟着 client 变；换号要先清场，拉取时用请求序号挡旧响应（`StarsPage` / `HotPage` / `activate()`） |
+| 只按 id 缓存 `GitHubClient` | 改过 API 地址后会拿到旧域名的实例；`ensureClient` 要比较 `client.baseUrl` 与当前配置 |
 | 浏览器预览与真机行为不同（CORS / 302 / zip） | 涉及下载、日志、原生请求的功能必须真机验证 |
 | `GET /repos/{o}/{r}/contents/{path}` 目录返回**数组**、文件返回**对象** | 先 `getMeta` 判 `Array.isArray`，别直接当对象读 `.content` |
 | `GET /issues` 会混进 PR | 用条目的 `pull_request` 字段过滤 |

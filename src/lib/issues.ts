@@ -10,6 +10,7 @@
  */
 
 import type { ApiClient } from './api'
+import { pageFromLink } from './paging'
 import { normalizeTimeline, type TimelineItem, type TimelineRaw } from './timeline'
 
 export type IssueState = 'open' | 'closed'
@@ -171,21 +172,6 @@ export async function getIssue(client: ApiClient, owner: string, repo: string, n
   return data
 }
 
-export async function listComments(
-  client: ApiClient,
-  owner: string,
-  repo: string,
-  number: number,
-  fresh = false,
-): Promise<IssueComment[]> {
-  const { data } = await client.request<IssueComment[]>(
-    `/repos/${enc(owner)}/${enc(repo)}/issues/${number}/comments?per_page=100`,
-    {},
-    { fresh },
-  )
-  return data ?? []
-}
-
 /**
  * 动态（timeline）。`comments` 与 `committed` 这类已经在别处呈现的事件
  * 会在 `normalizeTimeline` 里被丢掉，这里只管取。
@@ -206,6 +192,64 @@ export async function listTimeline(
     { fresh },
   )
   return normalizeTimeline(data ?? [])
+}
+
+/** 一页评论的读取结果。分页信息一律从 Link 头推，读不到就按条数推断。 */
+export interface CommentPage {
+  items: IssueComment[]
+  /** 实际取到的是第几页 */
+  page: number
+  /** 最后一页页码；单页时等于 1 */
+  last: number
+  /** 这一页之前还有没有更早的 */
+  hasOlder: boolean
+}
+
+/**
+ * 按页取评论。
+ *
+ * 注意 GitHub 的评论默认**按时间升序**返回：第 1 页是最早的 100 条，
+ * 不是最新的。所以「首屏要看到最新讨论」不能直接取第 1 页 ——
+ * 见下面的 listLatestComments。
+ */
+export async function listCommentPage(
+  client: ApiClient,
+  owner: string,
+  repo: string,
+  number: number,
+  page = 1,
+  fresh = false,
+): Promise<CommentPage> {
+  const perPage = 100
+  const { data, link } = await client.request<IssueComment[]>(
+    `/repos/${enc(owner)}/${enc(repo)}/issues/${number}/comments?per_page=${perPage}&page=${page}`,
+    {},
+    { fresh },
+  )
+  const items = data ?? []
+  // Link 头被 CDN 吞掉时（WebView 里常见）用「满页即还有下一页」兜底
+  const last = pageFromLink(link?.last ?? null) ?? (items.length >= perPage ? page + 1 : page)
+  return { items, page, last, hasOlder: page > 1 }
+}
+
+/**
+ * 首屏评论：直接取**最后一页**。
+ *
+ * 长 Issue 有几百条评论，用户打开时想看到的是最近的讨论，不是三年前的
+ * 第一条。代价是最多少量一次请求（单页时只有一次）：先取第 1 页只为
+ * 拿到 last，再取 last。`Link` 读不到时退化成「只有这一页」。
+ */
+export async function listLatestComments(
+  client: ApiClient,
+  owner: string,
+  repo: string,
+  number: number,
+  fresh = false,
+): Promise<CommentPage> {
+  const first = await listCommentPage(client, owner, repo, number, 1, fresh)
+  if (first.last <= 1) return { ...first, hasOlder: false }
+  const latest = await listCommentPage(client, owner, repo, number, first.last, fresh)
+  return { ...latest, hasOlder: latest.page > 1 }
 }
 
 export async function addComment(

@@ -32,7 +32,14 @@ interface CipherBlob {
 interface VaultFileBase {
   check: CipherBlob
   records: TokenRecord[]
+  /** 主密钥：必须过查看密码/启动口令才在界面上出现 */
   secrets: Record<string, CipherBlob>
+  /**
+   * 副密钥：同一账号的第二枚令牌，界面上直接展示。
+   * 老库没有这一段，读取时补空对象 —— 加字段不改版本号，
+   * 因为它是纯附加信息，旧版本 App 读到会忽略，令牌也不会坏。
+   */
+  secrets2: Record<string, CipherBlob>
 }
 
 /** v1：密钥由用户口令派生，每次启动必须输口令。 */
@@ -139,7 +146,7 @@ export class Vault {
     const salt = this.cryptoImpl.getRandomValues(new Uint8Array(SALT_BYTES))
     const key = await this.derive(passphrase, salt)
     const check = await this.encrypt(key, CHECK_PLAINTEXT)
-    const file: VaultFileV1 = { v: 1, salt: toB64(salt), check, records: [], secrets: {} }
+    const file: VaultFileV1 = { v: 1, salt: toB64(salt), check, records: [], secrets: {}, secrets2: {} }
     await this.persist(file)
     this.key = key
     this.deviceKey = null
@@ -158,6 +165,7 @@ export class Vault {
       check: await this.encrypt(key, CHECK_PLAINTEXT),
       records: [],
       secrets: {},
+      secrets2: {},
     }
     await this.kv.set(DEVICE_KEY, toB64(raw))
     await this.persist(file)
@@ -217,6 +225,28 @@ export class Vault {
     this.file = file
   }
 
+  /**
+   * 只验口令，不改解锁状态。
+   *
+   * 用途：保险库已经解锁着，但要看主密钥时再确认一次「站在手机前的人知道口令」。
+   * 与 unlock() 的区别是它不会把 key 换掉，也不会因为失败就把库锁死。
+   */
+  async verifyPassphrase(passphrase: string): Promise<boolean> {
+    const file = await this.load()
+    if (!file) throw new Error('保险库不存在')
+    if (file.v === 1) {
+      const key = await this.derive(passphrase, fromB64(file.salt))
+      return this.checkKey(key, file.check)
+    }
+    if (!file.guard || !file.guardSalt) return false
+    try {
+      await this.openGuard(passphrase, file)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   /** 开启启动验证：用口令把设备密钥包起来。 */
   async setGuard(passphrase: string): Promise<void> {
     if (passphrase.length < 8) throw new Error('口令至少 8 位')
@@ -268,6 +298,10 @@ export class Vault {
     for (const [id, blob] of Object.entries(file.secrets)) {
       secrets[id] = await this.encrypt(key, await this.decrypt(oldKey, blob))
     }
+    const secrets2: Record<string, CipherBlob> = {}
+    for (const [id, blob] of Object.entries(file.secrets2 ?? {})) {
+      secrets2[id] = await this.encrypt(key, await this.decrypt(oldKey, blob))
+    }
 
     const next: VaultFileV2 = {
       v: 2,
@@ -277,6 +311,7 @@ export class Vault {
       check: await this.encrypt(key, CHECK_PLAINTEXT),
       records: file.records,
       secrets,
+      secrets2,
     }
     await this.kv.set(DEVICE_KEY, toB64(raw))
     await this.persist(next)
@@ -299,6 +334,8 @@ export class Vault {
   async add(input: {
     name: string
     secret: string
+    /** 可选副密钥：同一账号的第二枚令牌，界面上可直接查看 */
+    secondary?: string | null
     expiresAt?: string | null
     baseUrl?: string
   }): Promise<TokenRecord> {
@@ -306,6 +343,8 @@ export class Vault {
     const file = this.requireFile()
     const secret = input.secret.trim()
     if (!looksLikeToken(secret)) throw new Error('令牌格式不正确')
+    const secondary = (input.secondary ?? '').trim()
+    if (secondary && !looksLikeToken(secondary)) throw new Error('副密钥格式不正确')
 
     const record: TokenRecord = {
       id: uuidV4(this.cryptoImpl),
@@ -319,10 +358,116 @@ export class Vault {
       lastCheckedAt: null,
       lastStatus: 'unknown',
       baseUrl: input.baseUrl ?? 'https://api.github.com',
+      hasSecondary: !!secondary,
+      secondaryPreview: secondary ? previewOf(secondary) : null,
     }
 
     file.records.push(record)
     file.secrets[record.id] = await this.encrypt(key, secret)
+    if (secondary) file.secrets2[record.id] = await this.encrypt(key, secondary)
+    await this.persist(file)
+    return record
+  }
+
+  /**
+   * 设置 / 替换 / 清除副密钥。
+   * 传 null 表示清除 —— 主密钥不受影响，账号照常能用。
+   */
+  async setSecondary(id: string, secret: string | null): Promise<TokenRecord> {
+    const key = this.requireKey()
+    const file = this.requireFile()
+    const idx = file.records.findIndex((r) => r.id === id)
+    if (idx < 0) throw new Error('令牌不存在')
+    const next = (secret ?? '').trim()
+    if (next && !looksLikeToken(next)) throw new Error('副密钥格式不正确')
+
+    if (next) {
+      file.secrets2[id] = await this.encrypt(key, next)
+      file.records[idx] = {
+        ...file.records[idx],
+        hasSecondary: true,
+        secondaryPreview: previewOf(next),
+      }
+    } else {
+      delete file.secrets2[id]
+      file.records[idx] = { ...file.records[idx], hasSecondary: false, secondaryPreview: null }
+    }
+    await this.persist(file)
+    return file.records[idx]
+  }
+
+  /** 副密钥明文；没配过返回 null */
+  async secondarySecret(id: string): Promise<string | null> {
+    const key = this.requireKey()
+    const file = this.requireFile()
+    const blob = file.secrets2[id]
+    if (!blob) return null
+    return this.decrypt(key, blob)
+  }
+
+  /**
+   * 导出备份用：把所有账号的主/副密钥一次性解出来。
+   * 调用方拿到后应当立刻加密进备份文件并丢弃，别存进 React 状态。
+   */
+  async allSecrets(): Promise<Record<string, { secret: string; secondary: string | null }>> {
+    const key = this.requireKey()
+    const file = this.requireFile()
+    const out: Record<string, { secret: string; secondary: string | null }> = {}
+    for (const rec of file.records) {
+      const blob = file.secrets[rec.id]
+      if (!blob) continue
+      const sec2 = file.secrets2[rec.id]
+      out[rec.id] = {
+        secret: await this.decrypt(key, blob),
+        secondary: sec2 ? await this.decrypt(key, sec2) : null,
+      }
+    }
+    return out
+  }
+
+  /**
+   * 恢复备份里的一个账号。
+   *
+   * 不复用 add()：备份里带着登录名、scopes、头像这些探测结果，
+   * 恢复后不该再让用户等一次联网校验。id 一律重新生成 ——
+   * 两台设备撞上同一个 id 的概率极低，但撞上了就会互相覆盖。
+   */
+  async restore(input: {
+    name: string
+    secret: string
+    secondary?: string | null
+    login?: string | null
+    avatarUrl?: string | null
+    scopes?: string[]
+    expiresAt?: string | null
+    baseUrl?: string
+  }): Promise<TokenRecord> {
+    const key = this.requireKey()
+    const file = this.requireFile()
+    const secret = input.secret.trim()
+    if (!looksLikeToken(secret)) throw new Error('备份里的令牌格式不正确')
+    const secondary = (input.secondary ?? '').trim()
+    if (secondary && !looksLikeToken(secondary)) throw new Error('备份里的副密钥格式不正确')
+
+    const record: TokenRecord = {
+      id: uuidV4(this.cryptoImpl),
+      name: (input.name || '').trim() || '恢复的令牌',
+      kind: kindOf(secret),
+      preview: previewOf(secret),
+      createdAt: new Date().toISOString(),
+      expiresAt: input.expiresAt ?? null,
+      scopes: input.scopes ?? [],
+      login: input.login ?? null,
+      avatarUrl: input.avatarUrl ?? null,
+      lastCheckedAt: null,
+      lastStatus: input.login ? 'ok' : 'unknown',
+      baseUrl: input.baseUrl || 'https://api.github.com',
+      hasSecondary: !!secondary,
+      secondaryPreview: secondary ? previewOf(secondary) : null,
+    }
+    file.records.push(record)
+    file.secrets[record.id] = await this.encrypt(key, secret)
+    if (secondary) file.secrets2[record.id] = await this.encrypt(key, secondary)
     await this.persist(file)
     return record
   }
@@ -331,6 +476,7 @@ export class Vault {
     const file = this.requireFile()
     file.records = file.records.filter((r) => r.id !== id)
     delete file.secrets[id]
+    delete file.secrets2[id]
     await this.persist(file)
   }
 
@@ -406,6 +552,8 @@ export class Vault {
     const parsed = JSON.parse(raw) as VaultFile
     const version = (parsed as { v?: number }).v
     if (version !== 1 && version !== 2) throw new Error(`不支持的保险库版本: ${String(version)}`)
+    // 老库（v1.2.x 及以前）没有副密钥区：补个空对象，后面所有读写都不用再判空
+    if (!parsed.secrets2 || typeof parsed.secrets2 !== 'object') parsed.secrets2 = {}
     return parsed
   }
 

@@ -209,12 +209,26 @@ export function HotPage(p: Props) {
       setRepos([])
       setTotal(0)
       setAt(null)
+      setStarred(new Set())
       return
     }
     if (changed) {
+      /**
+       * 换账号要清的不只是列表。
+       *
+       * `starred` 是「本次会话里我点过星的仓库」，它属于上一个账号 ——
+       * 不清掉的话，A 点过的仓库在 B 的页面里仍然显示实心星，
+       * 点一下反而会取消 A 的 star 状态（至少用户是这么理解的）。
+       * 搜索词与排序也一并复位：它们是这个账号的浏览现场，不是全局偏好。
+       */
       setRepos([])
       setTotal(0)
       setAt(null)
+      setStarred(new Set())
+      setBusy(null)
+      setQuery('')
+      setError(null)
+      seq.current += 1
     }
 
     let alive = true
@@ -319,7 +333,7 @@ export function HotPage(p: Props) {
   useEffect(() => {
     const client = p.client
     const tokenId = p.tokenId
-    if (!client || !tokenId || p.readOnly || searchMode || repos.length === 0) return
+    if (!client || !tokenId || p.readOnly || searchMode) return
 
     const timer = window.setTimeout(() => {
       for (const r of TRENDING_RANGES) {
@@ -335,7 +349,7 @@ export function HotPage(p: Props) {
       }
     }, 1500)
     return () => window.clearTimeout(timer)
-  }, [p.client, p.kv, p.tokenId, p.readOnly, range, lang, searchMode, repos.length])
+  }, [p.client, p.kv, p.tokenId, p.readOnly, range, lang, searchMode])
 
   async function toggleStar(repo: Repo) {
     if (p.readOnly) {
@@ -368,7 +382,7 @@ export function HotPage(p: Props) {
     : refreshing
       ? '正在更新…'
       : at
-        ? `${snapshotAge(at)}更新`
+        ? `${repos.length} 个 · ${snapshotAge(at)}更新`
         : '最近创建 · 按日均涨星排序'
 
   return (
@@ -425,7 +439,7 @@ export function HotPage(p: Props) {
         </div>
       )}
 
-      <div className="chips" style={{ paddingTop: 8 }}>
+      <div className="chips" style={{ paddingTop: 11 }}>
         <button className={`chip${lang === null ? ' on' : ''}`} onClick={() => chooseLang(null)}>
           全部语言
         </button>
@@ -456,7 +470,12 @@ export function HotPage(p: Props) {
           </div>
         )}
 
-        {loading && repos.length === 0 && <SkeletonRows count={8} />}
+        {loading && repos.length === 0 && (
+        <>
+          <SkeletonRows count={10} />
+          <div className="hot-loading-tip">正在拉取 {HOT_PAGE_SIZE} 个仓库…</div>
+        </>
+      )}
 
         {!loading && !error && repos.length === 0 && (
           <div className="empty">

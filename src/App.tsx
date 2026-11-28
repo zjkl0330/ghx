@@ -18,6 +18,28 @@ import {
 import { pickDescItems } from './lib/desc'
 import { exitDecision, resolveBack, softKeyboardOpen, type BackState, type SheetName } from './lib/backnav'
 import {
+  applySettings,
+  backupFileName,
+  buildBackup,
+  mergePins,
+  newAccounts,
+  openSecrets,
+  parseBackup,
+  readSettings,
+  sealSecrets,
+  serializeBackup,
+  type BackupAccount,
+  type BackupSecretEntry,
+  type RestoreMode,
+  type SealedSecrets,
+} from './lib/backup'
+import {
+  checkRevealPass,
+  clearRevealPass,
+  hasRevealPass,
+  setRevealPass,
+} from './lib/reveal'
+import {
   DEFAULT_MIRROR,
   EMPTY_STORE,
   effectiveMirrors,
@@ -187,7 +209,11 @@ import {
 import { AccountSheet } from './ui/AccountSheet'
 import { AddTokenSheet } from './ui/AddTokenSheet'
 import { AuditLog } from './ui/AuditLog'
+import { BackupSheet } from './ui/BackupSheet'
+import { RevealSheet, type RevealMode } from './ui/RevealSheet'
+import { SecretSheet } from './ui/SecretSheet'
 import { AuthImageProvider } from './ui/AuthImage'
+import { BackToTop } from './ui/BackToTop'
 import { CodePage, FileEditor } from './ui/CodePage'
 import { CommitPage, CommitsPage } from './ui/CommitsPage'
 import { ComposeSheet, type ComposeMode, type ComposeSubmit } from './ui/ComposeSheet'
@@ -371,6 +397,15 @@ export default function App() {
   const [sheet, setSheet] = useState<Sheet>('none')
   const [addBusy, setAddBusy] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
+
+  // ── 主 / 副密钥与备份 ─────────────────────────────────────────────
+  /** 正在看密钥的账号；null 表示面板没开 */
+  const [secretId, setSecretId] = useState<string | null>(null)
+  /** 本机有没有设主密钥查看密码 */
+  const [revealSet, setRevealSet] = useState(false)
+  const [revealMode, setRevealMode] = useState<RevealMode>('set')
+  const [revealBusy, setRevealBusy] = useState(false)
+  const [revealError, setRevealError] = useState<string | null>(null)
 
   const [detailRepo, setDetailRepo] = useState<Repo | null>(null)
   const [createBusy, setCreateBusy] = useState(false)
@@ -997,8 +1032,11 @@ export default function App() {
       if (!v) return null
       const rec = (list ?? records).find((r) => r.id === id)
       if (!rec) return null
-      // 同一账号复用同一个客户端：请求缓存挂在实例上，切回来不用重新打网络
-      let c = clientsRef.current[id]
+      // 同一账号复用同一个客户端：请求缓存挂在实例上，切回来不用重新打网络。
+      // 但地址被改过（镜像面板 / 备份恢复）就得重建 —— 否则会拿着旧域名的实例一直请求。
+      const wantBase = (rec.baseUrl || baseUrl).replace(/\/+$/, '')
+      let c: GitHubClient | undefined = clientsRef.current[id]
+      if (c && c.baseUrl !== wantBase) c = undefined
       if (!c) {
         const secret = await v.secret(id)
         c = new GitHubClient({ token: secret, baseUrl: rec.baseUrl || baseUrl })
@@ -1031,6 +1069,9 @@ export default function App() {
       activeIdRef.current = id
       // 选择态、子面板这些是「当前这一刻的操作」，不跟着账号走
       setSelected(new Set())
+      // 本次会话里点过星标的仓库属于上一个账号：不清掉的话，B 的列表里
+      // A 点过的仓库仍显示实心星，点一下还会被当成「取消 B 的 star」
+      setStarredSet(new Set())
       setSelectMode(false)
       setPipelineRepo(null)
       setDetailRepo(null)
@@ -1215,6 +1256,11 @@ export default function App() {
         const savedAcctPref = await kv.get(ACCOUNT_PREF_KEY)
         if (cancelled) return
         setAcctPref(parseAccountPref(savedAcctPref))
+
+        // 主密钥查看密码是否设过：只影响密钥面板的文案与流程
+        const reveal = await hasRevealPass(kv)
+        if (cancelled) return
+        setRevealSet(reveal)
 
         // 分片下载：老版本没有这个键，按「开」处理
         const savedDlParts = await kv.get(DL_PARTS_KEY)
@@ -1406,13 +1452,24 @@ export default function App() {
     }
   }
 
-  async function addToken(input: { name: string; secret: string; expiresAt: string | null }) {
+  async function addToken(input: {
+    name: string
+    secret: string
+    secondary: string | null
+    expiresAt: string | null
+  }) {
     const v = vaultRef.current
     if (!v) return
     setAddBusy(true)
     setAddError(null)
     try {
-      const rec = await v.add({ name: input.name, secret: input.secret, expiresAt: input.expiresAt, baseUrl })
+      const rec = await v.add({
+        name: input.name,
+        secret: input.secret,
+        secondary: input.secondary,
+        expiresAt: input.expiresAt,
+        baseUrl,
+      })
       const list = await v.list()
       setRecords(list)
       setSheet('none')
@@ -1421,7 +1478,7 @@ export default function App() {
           action: 'token-add',
           target: rec.name,
           result: 'ok',
-          detail: rec.preview,
+          detail: rec.hasSecondary ? `${rec.preview} · 含副密钥` : rec.preview,
         })
         await refreshAudit()
       }
@@ -1552,6 +1609,226 @@ export default function App() {
     }
   }
 
+  /* ── 主 / 副密钥 ───────────────────────────────────────────────── */
+
+  /** 正在查看密钥的那条记录；删号后可能瞬间为 null，面板要能自己收起来 */
+  const secretRecord = records.find((r) => r.id === secretId) ?? null
+
+  function openSecret(id: string) {
+    setSecretId(id)
+    setSheet('secret')
+  }
+
+  async function readSecondary(id: string): Promise<string | null> {
+    const v = vaultRef.current
+    if (!v) return null
+    try {
+      return await v.secondarySecret(id)
+    } catch {
+      return null
+    }
+  }
+
+  async function writeSecondary(id: string, secret: string | null): Promise<void> {
+    const v = vaultRef.current
+    if (!v) throw new Error('保险库未解锁')
+    const updated = await v.setSecondary(id, secret)
+    setRecords((prev) => prev.map((r) => (r.id === id ? updated : r)))
+    const kv = kvRef.current
+    if (kv) {
+      await appendAudit(kv, {
+        action: 'token-edit',
+        target: updated.name,
+        result: 'ok',
+        detail: secret ? `已设置副密钥 ${updated.secondaryPreview ?? ''}` : '已清除副密钥',
+      })
+      await refreshAudit()
+    }
+  }
+
+  /** 主密钥必须过闸门才交给界面：开了启动验证就验口令，否则验本机查看密码 */
+  async function checkReveal(kind: 'vault' | 'reveal', pass: string): Promise<boolean> {
+    const v = vaultRef.current
+    if (kind === 'reveal') return checkRevealPass(kvRef.current, pass)
+    if (!v) return false
+    try {
+      await v.verifyPassphrase(pass)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async function applyRevealPass(next: string) {
+    setRevealBusy(true)
+    setRevealError(null)
+    try {
+      await setRevealPass(kvRef.current, next)
+      setRevealSet(true)
+      setSheet('none')
+      showToast('查看密码已保存')
+    } catch (err) {
+      setRevealError((err as Error).message)
+    } finally {
+      setRevealBusy(false)
+    }
+  }
+
+  async function dropRevealPass() {
+    setRevealBusy(true)
+    setRevealError(null)
+    try {
+      await clearRevealPass(kvRef.current)
+      setRevealSet(false)
+      setSheet('none')
+      showToast('查看密码已清除，主密钥回到「点开即看」')
+    } catch (err) {
+      setRevealError((err as Error).message)
+    } finally {
+      setRevealBusy(false)
+    }
+  }
+
+  /* ── 备份与恢复 ───────────────────────────────────────────────── */
+
+  /**
+   * 组装备份。
+   *
+   * 密钥只在这里短暂出现：从保险库解出来，立刻用导出密码封进 sealed，
+   * 中间结果不回传给 React 状态，也不写日志。
+   */
+  async function buildBackupText(o: { withSecrets: boolean; passphrase: string }) {
+    const v = vaultRef.current
+    if (!v) throw new Error('保险库未解锁，先解锁再导出')
+    const kv = kvRef.current
+    const settings = await readSettings(kv)
+
+    const accounts: BackupAccount[] = []
+    for (const rec of records) {
+      const own = kv ? parsePins(await kv.get(pinKey(rec.id))) : []
+      accounts.push({
+        id: rec.id,
+        name: rec.name,
+        login: rec.login ?? null,
+        preview: rec.preview,
+        kind: rec.kind,
+        scopes: rec.scopes,
+        expiresAt: rec.expiresAt ?? null,
+        baseUrl: rec.baseUrl,
+        avatarUrl: rec.avatarUrl ?? null,
+        pins: own,
+      })
+    }
+
+    let sealed: SealedSecrets | null = null
+    if (o.withSecrets) {
+      const all = await v.allSecrets()
+      const map: Record<string, BackupSecretEntry> = {}
+      for (const [id, entry] of Object.entries(all)) map[id] = entry
+      if (Object.keys(map).length > 0) sealed = await sealSecrets(o.passphrase, map)
+    }
+
+    const me = records.find((r) => r.id === activeId) ?? null
+    const file = buildBackup({
+      appVersion: APP_VERSION,
+      account: { login: me?.login ?? null, name: me?.name ?? null },
+      settings,
+      accounts,
+      sealed,
+    })
+    const fileName = backupFileName({ login: me?.login, name: me?.name })
+    return { fileName, text: serializeBackup(file) }
+  }
+
+  /**
+   * 写回备份。
+   *
+   * 只添加、不删除：
+   * - 账号按「登录名 + 指纹」去重，已经有的跳过；
+   * - 没有密钥的账号跳过（只有元数据的账号切过去也拿不到仓库，加了等于挖坑）；
+   * - 设置按面板选的合并/覆盖写，写不到也不报错。
+   * 最后重载一次页面 —— 主题、字体、底栏这些都从存储里重建，比逐个 setState 可靠。
+   */
+  async function restoreBackup(o: {
+    text: string
+    passphrase: string
+    mode: RestoreMode
+  }): Promise<string> {
+    const parsed = parseBackup(o.text)
+    if (!parsed.ok) throw new Error(parsed.error)
+    const v = vaultRef.current
+    if (!v) throw new Error('保险库未解锁')
+    const kv = kvRef.current
+
+    let secrets: Record<string, BackupSecretEntry> = {}
+    if (parsed.file.sealed) {
+      if (!o.passphrase) throw new Error('这份备份带着密钥，需要导出时设的密码')
+      secrets = await openSecrets(o.passphrase, parsed.file.sealed)
+    }
+
+    const { written, kept } = await applySettings(kv, parsed.file.settings, o.mode)
+
+    const fresh = newAccounts(parsed.file.accounts, records)
+    let added = 0
+    let missing = 0
+    for (const a of fresh) {
+      const entry = a.id ? secrets[a.id] : undefined
+      if (!entry || !entry.secret) {
+        missing += 1
+        continue
+      }
+      try {
+        const rec = await v.restore({
+          name: a.name,
+          secret: entry.secret,
+          secondary: entry.secondary ?? null,
+          login: a.login,
+          avatarUrl: a.avatarUrl ?? null,
+          scopes: a.scopes,
+          expiresAt: a.expiresAt,
+          baseUrl: a.baseUrl,
+        })
+        added += 1
+        if (kv && a.pins && a.pins.length > 0) {
+          const existed = parsePins(await kv.get(pinKey(rec.id)))
+          await kv.set(pinKey(rec.id), serializePins(mergePins(existed, a.pins)))
+        }
+      } catch {
+        missing += 1
+      }
+    }
+
+    if (added > 0) {
+      const list = await v.list()
+      setRecords(list)
+    }
+    if (kv) {
+      await appendAudit(kv, {
+        action: 'backup',
+        target: '恢复备份',
+        result: 'ok',
+        detail: `设置 ${written} 项 · 新增 ${added} 个账号${missing > 0 ? ` · ${missing} 个缺少密钥` : ''}`,
+      })
+      await refreshAudit()
+    }
+
+    const parts = [`设置写回 ${written} 项`]
+    if (kept > 0) parts.push(`保留本机 ${kept} 项`)
+    if (added > 0) parts.push(`新增 ${added} 个账号`)
+    if (missing > 0) parts.push(`${missing} 个账号没有密钥，跳过`)
+
+    // 设置已经落到存储里：重载一次让主题、字体、底栏全部按新值重建
+    globalThis.setTimeout(() => {
+      try {
+        globalThis.location?.reload?.()
+      } catch {
+        /* 重载失败也不影响已写入的数据 */
+      }
+    }, 1400)
+
+    return `${parts.join(' · ')}，即将重载`
+  }
+
   function toggleSelect(repo: Repo) {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -1645,6 +1922,9 @@ export default function App() {
     setRecords((prev) => prev.map((r) => (r.id === activeId ? updated : r)))
     const secret = await v.secret(activeId)
     const c = new GitHubClient({ token: secret, baseUrl: url })
+    // 客户端实例按账号缓存（ensureClient）。换地址后必须把这台也换掉，
+    // 否则切走再切回来时 ensureClient 又会把旧地址的实例交出去。
+    clientsRef.current[activeId] = c
     setClient(c)
     await loadRepos(c, activeId)
     showToast('已切换 API 地址')
@@ -2713,6 +2993,18 @@ export default function App() {
             setGuardError(null)
             setGuardSheet('migrate')
           }}
+          revealSet={revealSet}
+          onSetReveal={() => {
+            setRevealError(null)
+            setRevealMode('set')
+            setSheet('reveal')
+          }}
+          onClearReveal={() => {
+            setRevealError(null)
+            setRevealMode('clear')
+            setSheet('reveal')
+          }}
+          onOpenBackup={() => setSheet('backup')}
           mirrorAuto={mirrorAuto}
           mirrorSpeed={currentSpeed}
           mirrorCheckedAt={probe.at}
@@ -2749,6 +3041,7 @@ export default function App() {
           }}
           onRemove={(id) => void removeToken(id)}
           onCheck={(id) => void checkToken(id)}
+          onOpenSecret={openSecret}
           quota={quota}
           onBack={popTo}
         />
@@ -3171,6 +3464,62 @@ export default function App() {
         </>
       )}
 
+
+      {sheet === 'backup' && (
+        <BackupSheet
+          version={APP_VERSION}
+          login={records.find((r) => r.id === activeId)?.login ?? null}
+          accountName={records.find((r) => r.id === activeId)?.name ?? null}
+          accountCount={records.length}
+          native={Capacitor.isNativePlatform()}
+          onClose={() => setSheet('none')}
+          onToast={showToast}
+          onExport={buildBackupText}
+          onRestore={restoreBackup}
+        />
+      )}
+
+      {sheet === 'secret' && secretRecord && (
+        <SecretSheet
+          record={secretRecord}
+          guarded={guarded}
+          hasRevealPass={revealSet}
+          onClose={() => {
+            setSecretId(null)
+            setSheet('none')
+          }}
+          onToast={showToast}
+          onCheckVaultPass={(pass) => checkReveal('vault', pass)}
+          onCheckRevealPass={(pass) => checkReveal('reveal', pass)}
+          onSetRevealPass={async (pass) => {
+            await setRevealPass(kvRef.current, pass)
+            setRevealSet(true)
+          }}
+          onLoadPrimary={async () => {
+            const v = vaultRef.current
+            if (!v || !secretRecord) throw new Error('保险库未解锁')
+            return v.secret(secretRecord.id)
+          }}
+          onLoadSecondary={() => (secretRecord ? readSecondary(secretRecord.id) : Promise.resolve(null))}
+          onSaveSecondary={(secret) =>
+            secretRecord ? writeSecondary(secretRecord.id, secret) : Promise.resolve()
+          }
+        />
+      )}
+
+      {sheet === 'reveal' && (
+        <RevealSheet
+          mode={revealMode}
+          hasPass={revealSet}
+          busy={revealBusy}
+          error={revealError}
+          onCancel={() => setSheet('none')}
+          onSubmit={(next) => {
+            if (revealMode === 'clear') void dropRevealPass()
+            else void applyRevealPass(next)
+          }}
+        />
+      )}
 
       {sheet === 'accounts' && (
         <AccountSheet
@@ -3623,6 +3972,8 @@ export default function App() {
 
       {toast && <div className="toast">{toast}</div>}
     </div>
+    {/* 全局一份：每个页面的滚动容器都是自己的 .page，按钮挂在根上才不用改十几处页面 */}
+    <BackToTop resetKey={route ? routeKey(route) : `tab:${tab}`} raised={!route} />
     </AuthImageProvider>
   )
 }
