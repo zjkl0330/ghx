@@ -1967,6 +1967,56 @@ h1.title {
   flex: none;
 }
 
+/* 排序入口放在列表下面，不占操作行 —— 它是低频动作，塞进列表会多一行噪音 */
+.acts-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.reorder-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.reorder-bar > span {
+  margin-right: auto;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+/* 这一行的按钮要比常规 38px 矮，否则它会把列表往下推一截 */
+.reorder-bar .btn {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 11.5px;
+}
+
+/* 排序态：整行不可点，只有右侧两个箭头能动。
+   .actrow 的公用来袭自操作按钮，这里把 pointer 改回默认，免得看起来能点。 */
+.reorder-row {
+  cursor: default;
+}
+
+.reorder-row .icon-btn {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+
+.reorder-row .icon-btn:disabled {
+  opacity: 0.3;
+}
+
+.reorder-row .act-txt i {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
 .dangerbox {
   margin-top: 12px;
   padding: 12px;
@@ -2088,6 +2138,34 @@ h1.title {
 /* ---- 星标 ---- */
 .star-row {
   align-items: flex-start;
+}
+
+/* 行尾现在有两个按钮（归类、取消 star），都不许被文案挤扁 */
+.star-row > .icon-btn {
+  flex: none;
+  margin-top: -3px;
+}
+
+/* 归类标记并进元信息行，用弱色，不要抢语言与星数 */
+.row-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+  max-width: 96px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.folder-row {
+  padding: 6px 16px 2px;
+}
+
+.chip.folder-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .row-hit {
@@ -6046,6 +6124,44 @@ button.ustat:active {
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
+}
+
+/* ---- 下载面板 ----
+ * 面板以前是「整个 sheet 一起滚」：用户填了几个加速站之后，线路表把下载按钮
+ * 顶到屏幕外，看起来像被列表盖住。现在头部固定、体部滚动、按钮固定贴底，
+ * 线路本身再单独限高滚一次 —— 无论多少条，按钮都在拇指够得着的位置。
+ */
+.sheet.dl-sheet {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 底部内衬交给 .dl-foot，否则按钮下面会多出一截空白 */
+  padding-bottom: 0;
+}
+
+.dl-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 撑到 sheet 左右内衬之外，滚动条贴边；内容自己再加回 16px */
+  margin: 0 -16px;
+  padding: 0 16px;
+}
+
+.dl-foot {
+  flex: none;
+  margin-top: 0;
+  padding: 10px 0 calc(14px + var(--safe-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* 34vh 大约能露出 5 条线路；再多就内部滚，不跟按钮抢高度 */
+.multi-list.dl-routes {
+  max-height: min(34vh, 300px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .multi-row {

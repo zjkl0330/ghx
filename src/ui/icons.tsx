@@ -313,6 +313,9 @@ const P: Record<string, ReactNode> = {
       <path d="M12 12v8.5" />
     </>
   ),
+  /* 上/下箭头：排序用。单独给形状，不靠旋转 chevron，缩放时不发虚 */
+  up: <path d="M12 19V5M6 11l6-6 6 6" />,
+  down: <path d="M12 5v14M6 13l6 6 6-6" />,
 }
 
 export type IconName = keyof typeof P

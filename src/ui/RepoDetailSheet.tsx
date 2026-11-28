@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { archiveFileName } from '../lib/archive'
 import type { GitHubClient } from '../lib/api'
 import type { AuditEntry, Repo, Visibility } from '../lib/types'
@@ -7,6 +7,13 @@ import { parseTopics, topicsToInput } from '../lib/topics'
 import { openExternal } from '../lib/update'
 import { copyText } from '../lib/clipboard'
 import { linkifyUrls } from '../lib/mdlink'
+import {
+  DEFAULT_ACTION_ORDER,
+  moveAction,
+  readActionOrder,
+  writeActionOrder,
+  type DetailActionId,
+} from '../lib/action-order'
 import { Icon, type IconName } from './icons'
 import { SpanText } from './SpanText'
 
@@ -55,6 +62,22 @@ function relTime(iso: string): string {
   return `${Math.floor(d / 365)} 年前`
 }
 
+/** 排序面板要显示全部操作，包括当前仓库看不到的那些（非自己的仓库也能先排好） */
+const ACTION_META: Record<DetailActionId, { label: string; icon: IconName }> = {
+  star: { label: 'Star / 取消 Star', icon: 'star' },
+  edit: { label: '编辑简介与话题', icon: 'dots' },
+  archive: { label: '归档 / 取消归档', icon: 'archive' },
+  visibility: { label: '转为私有 / 公开', icon: 'globe' },
+  home: { label: '仓库主页', icon: 'repo' },
+  readme: { label: '项目自述', icon: 'book' },
+  workflows: { label: '工作流', icon: 'play' },
+  releases: { label: '发行版', icon: 'package' },
+  forks: { label: '复刻', icon: 'fork' },
+  'repo-url': { label: '复制仓库地址', icon: 'copy' },
+  zip: { label: '下载源码 ZIP', icon: 'download' },
+  delete: { label: '删除仓库', icon: 'trash' },
+}
+
 const LANG_COLOR: Record<string, string> = {
   TypeScript: '#3178c6',
   JavaScript: '#f1e05a',
@@ -88,6 +111,9 @@ export function RepoDetailSheet(p: Props) {
   const [showSrc, setShowSrc] = useState(false)
   /** 三条剪贴板通道都挂了，就把地址摊开让人长按选中 */
   const [copyFallback, setCopyFallback] = useState(false)
+  /** 操作顺序：纯本地偏好，不分账号 */
+  const [order, setOrder] = useState<DetailActionId[]>(() => readActionOrder())
+  const [arranging, setArranging] = useState(false)
 
   const owner = p.repo.owner
   const name = p.repo.name
@@ -177,6 +203,172 @@ export function RepoDetailSheet(p: Props) {
   }
 
   const canDelete = typed.trim() === name
+
+  /**
+   * 操作清单一次性建好，再按 order 排。
+   *
+   * 以前这些 action(...) 是硬写在 JSX 里的，顺序等于代码顺序；要让用户自己排，
+   * 就得先有一份「id → 节点」的表。可见性仍按权限算：别人的仓库不会出现
+   * 编辑/归档/可见度/删除这四项，排序面板里却能看到它们（先排好，等有自己的仓库时生效）。
+   */
+  const acts: Partial<Record<DetailActionId, ReactNode>> = {}
+
+  acts.star = action(
+    'star',
+    'star',
+    starred ? '取消 Star' : 'Star 该仓库',
+    p.onMultiStar
+      ? `${p.accountCount ?? 2} 个账号可同时操作 · 当前${starred ? '已' : '未'} star`
+      : starred === null
+        ? '状态未知，操作前会先查询'
+        : starred
+          ? '当前已 star'
+          : '当前未 star',
+    async () => {
+      if (!p.client) throw new Error('未连接令牌')
+      const next = !starred
+      // 多账号模式下不在这一层动手，交给选择面板统一执行
+      if (p.onMultiStar) {
+        p.onMultiStar(next ? 'star' : 'unstar')
+        return
+      }
+      await p.client.setStarred(owner, name, next)
+      setStarred(next)
+      p.onAudit('repo-star', { target: p.repo.full_name, text: next ? '已 star' : '已取消 star' })
+      p.onToast(next ? '已 star' : '已取消 star')
+    },
+  )
+
+  if (canAdmin) {
+    acts.edit = action('edit', 'dots', '编辑简介与话题', p.repo.description ?? '还没写简介', async () => {
+      setDesc(p.repo.description ?? '')
+      setHome(p.repo.homepage ?? '')
+      setTopicText(topicsToInput(p.repo.topics))
+      setEditError(null)
+      setEditing(true)
+    })
+
+    acts.archive = action(
+      'archive',
+      'archive',
+      p.repo.archived ? '取消归档' : '归档仓库',
+      // 已归档时说的是「撤销会怎样」，别再写「归档后变只读」——
+      // 那句话读起来像正要执行归档，两个方向正好读反
+      p.repo.archived ? '恢复后可继续提交、开 Issue' : '归档后变为只读，可随时撤销',
+      async () => {
+        if (!p.client) throw new Error('未连接令牌')
+        const next = !p.repo.archived
+        const { data } = await p.client.setArchived(owner, name, next)
+        p.onChanged(data ? { ...p.repo, archived: next } : { ...p.repo, archived: next })
+        p.onAudit('repo-archive', { target: p.repo.full_name, text: next ? '已归档' : '已取消归档' })
+        p.onToast(next ? '已归档' : '已取消归档')
+      },
+    )
+
+    acts.visibility = action(
+      'visibility',
+      'globe',
+      p.repo.private ? '转为公开' : '转为私有',
+      p.repo.private ? '公开后任何人可搜索到' : '公开转私有会永久失去 star 与 watcher',
+      async () => {
+        if (!p.client) throw new Error('未连接令牌')
+        const next: Visibility = p.repo.private ? 'public' : 'private'
+        await p.client.setVisibility(owner, name, next)
+        p.onChanged({ ...p.repo, private: next === 'private', visibility: next })
+        p.onAudit('visibility', { target: p.repo.full_name, text: `切换为 ${next}` })
+        p.onToast(next === 'private' ? '已转为私有' : '已转为公开')
+      },
+    )
+  }
+
+  acts.home = action('home', 'repo', '仓库主页', '代码浏览、Issues、PR、设置都在里面', async () =>
+    p.onOpenHome(),
+  )
+  acts.readme = action('readme', 'book', '项目自述', 'README 原文，可一键翻成中文', async () =>
+    p.onOpenReadme(),
+  )
+  acts.workflows = action('workflows', 'play', '工作流', '查看 Actions、启停与手动运行', async () =>
+    p.onOpenWorkflows(),
+  )
+  acts.releases = action('releases', 'package', '发行版', '查看标签、附件与下载', async () =>
+    p.onOpenReleases(),
+  )
+  acts.forks = action('forks', 'fork', '复刻', `${p.repo.forks_count} 份复刻 · 可复刻到自己账号`, async () =>
+    p.onOpenForks(),
+  )
+
+  acts['repo-url'] = (
+    <>
+      {/* 复制的是网页地址，不是 clone 用的 .git 地址：
+          这个 App 里没有终端，拿到 git@… 或 .git 结尾的地址没地方用；
+          仓库地址可以直接粘进浏览器、分享给别人，也能让 git 自己补 .git。 */}
+      {action('repo-url', 'copy', '复制仓库地址', `https://github.com/${p.repo.full_name}`, async () => {
+        // 走 copyText 的三条通道（原生 → navigator.clipboard → execCommand）。
+        // 以前这里直连 navigator.clipboard，华为 WebView 上那是 undefined，
+        // 抛出的英文报错会被 run() 接到、原样染红显示在弹层里。
+        const url = `https://github.com/${p.repo.full_name}`
+        if (await copyText(url)) {
+          setCopyFallback(false)
+          p.onToast('仓库地址已复制')
+          return
+        }
+        setCopyFallback(true)
+        p.onToast('复制失败，长按下面那行地址')
+      })}
+      {/* 就贴在复制按钮下面：整页操作很多，放在弹层顶部等于看不见 */}
+      {copyFallback && (
+        <div className="url-fallback">
+          <span>复制失败，长按选中：</span>
+          <code>{`https://github.com/${p.repo.full_name}`}</code>
+        </div>
+      )}
+    </>
+  )
+
+  acts.zip = action(
+    'zip',
+    'download',
+    '下载源码 ZIP',
+    `${archiveFileName(name, p.repo.default_branch)} · 默认分支 ${p.repo.default_branch}`,
+    async () => {
+      if (p.onDownloadArchive) {
+        p.onDownloadArchive()
+        return
+      }
+      // 没接下载面板时（老调用方）退回旧的打包地址
+      await openExternal(
+        `https://github.com/${owner}/${name}/archive/refs/heads/${p.repo.default_branch}.zip`,
+      )
+      p.onToast('已交给浏览器下载，可在通知栏看进度')
+    },
+  )
+
+  if (canAdmin && !confirmDelete) {
+    acts.delete = action(
+      'delete',
+      'trash',
+      '删除仓库',
+      '永久删除，无法恢复，需输入仓库名确认',
+      async () => {
+        setConfirmDelete(true)
+      },
+      'danger',
+    )
+  }
+
+  function moveBy(id: DetailActionId, delta: -1 | 1) {
+    const next = moveAction(order, id, delta)
+    if (next === order) return
+    setOrder(next)
+    writeActionOrder(next)
+  }
+
+  function resetOrder() {
+    const next = [...DEFAULT_ACTION_ORDER]
+    setOrder(next)
+    writeActionOrder(next)
+    p.onToast('已恢复默认顺序')
+  }
 
   return (
     <div className="mask" onClick={p.onClose}>
@@ -329,141 +521,71 @@ export function RepoDetailSheet(p: Props) {
           </div>
         )}
 
-        <div className="acts">
-          {action(
-            'star',
-            'star',
-            starred ? '取消 Star' : 'Star 该仓库',
-            p.onMultiStar
-              ? `${p.accountCount ?? 2} 个账号可同时操作 · 当前${starred ? '已' : '未'} star`
-              : starred === null
-                ? '状态未知，操作前会先查询'
-                : starred
-                  ? '当前已 star'
-                  : '当前未 star',
-            async () => {
-              if (!p.client) throw new Error('未连接令牌')
-              const next = !starred
-              // 多账号模式下不在这一层动手，交给选择面板统一执行
-              if (p.onMultiStar) {
-                p.onMultiStar(next ? 'star' : 'unstar')
-                return
-              }
-              await p.client.setStarred(owner, name, next)
-              setStarred(next)
-              p.onAudit('repo-star', { target: p.repo.full_name, text: next ? '已 star' : '已取消 star' })
-              p.onToast(next ? '已 star' : '已取消 star')
-            },
-          )}
+        {arranging && (
+          /* 控制条放在列表顶上：12 行铺满一屏时，底部的「完成」会被推到屏幕外 */
+          <div className="reorder-bar">
+            <span>点箭头调整，改完自动保存</span>
+            <button className="linkbtn" onClick={resetOrder}>
+              恢复默认
+            </button>
+            <button className="btn ghost" onClick={() => setArranging(false)}>
+              完成
+            </button>
+          </div>
+        )}
 
-          {canAdmin &&
-            action('edit', 'dots', '编辑简介与话题', p.repo.description ?? '还没写简介', async () => {
-              setDesc(p.repo.description ?? '')
-              setHome(p.repo.homepage ?? '')
-              setTopicText(topicsToInput(p.repo.topics))
-              setEditError(null)
-              setEditing(true)
-            })}
-
-          {canAdmin &&
-            action(
-              'archive',
-              'archive',
-              p.repo.archived ? '取消归档' : '归档仓库',
-              // 已归档时说的是「撤销会怎样」，别再写「归档后变只读」——
-              // 那句话读起来像正要执行归档，两个方向正好读反
-              p.repo.archived ? '恢复后可继续提交、开 Issue' : '归档后变为只读，可随时撤销',
-              async () => {
-                if (!p.client) throw new Error('未连接令牌')
-                const next = !p.repo.archived
-                const { data } = await p.client.setArchived(owner, name, next)
-                p.onChanged(data ? { ...p.repo, archived: next } : { ...p.repo, archived: next })
-                p.onAudit('repo-archive', { target: p.repo.full_name, text: next ? '已归档' : '已取消归档' })
-                p.onToast(next ? '已归档' : '已取消归档')
-              },
-            )}
-
-          {canAdmin &&
-            action(
-              'visibility',
-              'globe',
-              p.repo.private ? '转为公开' : '转为私有',
-              p.repo.private ? '公开后任何人可搜索到' : '公开转私有会永久失去 star 与 watcher',
-              async () => {
-                if (!p.client) throw new Error('未连接令牌')
-                const next: Visibility = p.repo.private ? 'public' : 'private'
-                await p.client.setVisibility(owner, name, next)
-                p.onChanged({ ...p.repo, private: next === 'private', visibility: next })
-                p.onAudit('visibility', { target: p.repo.full_name, text: `切换为 ${next}` })
-                p.onToast(next === 'private' ? '已转为私有' : '已转为公开')
-              },
-            )}
-
-          {action('home', 'repo', '仓库主页', '代码浏览、Issues、PR、设置都在里面', async () => p.onOpenHome())}
-
-          {action('readme', 'book', '项目自述', 'README 原文，可一键翻成中文', async () => p.onOpenReadme())}
-          {action('workflows', 'play', '工作流', '查看 Actions、启停与手动运行', async () => p.onOpenWorkflows())}
-
-          {action('releases', 'package', '发行版', '查看标签、附件与下载', async () => p.onOpenReleases())}
-
-          {action('forks', 'fork', '复刻', `${p.repo.forks_count} 份复刻 · 可复刻到自己账号`, async () => p.onOpenForks())}
-
-          {/* 复制的是网页地址，不是 clone 用的 .git 地址：
-              这个 App 里没有终端，拿到 git@… 或 .git 结尾的地址没地方用；
-              仓库地址可以直接粘进浏览器、分享给别人，也能让 git 自己补 .git。 */}
-          {action('repo-url', 'copy', '复制仓库地址', `https://github.com/${p.repo.full_name}`, async () => {
-            // 走 copyText 的三条通道（原生 → navigator.clipboard → execCommand）。
-            // 以前这里直连 navigator.clipboard，华为 WebView 上那是 undefined，
-            // 抛出的英文报错会被 run() 接到、原样染红显示在弹层里。
-            const url = `https://github.com/${p.repo.full_name}`
-            if (await copyText(url)) {
-              setCopyFallback(false)
-              p.onToast('仓库地址已复制')
-              return
-            }
-            setCopyFallback(true)
-            p.onToast('复制失败，长按下面那行地址')
-          })}
-
-          {/* 就贴在复制按钮下面：整页操作很多，放在弹层顶部等于看不见 */}
-          {copyFallback && (
-            <div className="url-fallback">
-              <span>复制失败，长按选中：</span>
-              <code>{`https://github.com/${p.repo.full_name}`}</code>
-            </div>
-          )}
-
-          {action(
-            'zip',
-            'download',
-            '下载源码 ZIP',
-            `${archiveFileName(name, p.repo.default_branch)} · 默认分支 ${p.repo.default_branch}`,
-            async () => {
-              if (p.onDownloadArchive) {
-                p.onDownloadArchive()
-                return
-              }
-              // 没接下载面板时（老调用方）退回旧的打包地址
-              await openExternal(
-                `https://github.com/${owner}/${name}/archive/refs/heads/${p.repo.default_branch}.zip`,
+        {arranging ? (
+          /* 排序态：列出全部 12 项，包括当前仓库看不到的权限项 —— 用户是在排「自己的习惯」，
+             不该因为此刻点开的是别人的仓库就少排几项 */
+          <div className="acts reorder">
+            {order.map((id, i) => {
+              const meta = ACTION_META[id]
+              return (
+                <div className="actrow reorder-row" key={id}>
+                  <span className="act-ic">
+                    <Icon name={meta.icon} size={15} />
+                  </span>
+                  <span className="act-txt">
+                    <b>{meta.label}</b>
+                    {!acts[id] && <i>当前仓库不可用</i>}
+                  </span>
+                  <button
+                    className="icon-btn"
+                    aria-label={`上移「${meta.label}」`}
+                    disabled={i === 0}
+                    onClick={() => moveBy(id, -1)}
+                  >
+                    <Icon name="up" size={14} />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    aria-label={`下移「${meta.label}」`}
+                    disabled={i === order.length - 1}
+                    onClick={() => moveBy(id, 1)}
+                  >
+                    <Icon name="down" size={14} />
+                  </button>
+                </div>
               )
-              p.onToast('已交给浏览器下载，可在通知栏看进度')
-            },
-          )}
+            })}
+          </div>
+        ) : (
+          <div className="acts">
+            {order
+              .filter((id) => acts[id])
+              .map((id) => (
+                <Fragment key={id}>{acts[id]}</Fragment>
+              ))}
+          </div>
+        )}
 
-          {canAdmin &&
-            !confirmDelete &&
-            action(
-              'delete',
-              'trash',
-              '删除仓库',
-              '永久删除，无法恢复，需输入仓库名确认',
-              async () => {
-                setConfirmDelete(true)
-              },
-              'danger',
-            )}
-        </div>
+        {!arranging && (
+          <div className="acts-foot">
+            <button className="linkbtn" onClick={() => setArranging(true)}>
+              调整操作顺序
+            </button>
+          </div>
+        )}
 
         {!canAdmin && (
           <div className="hint" style={{ marginTop: 10 }}>

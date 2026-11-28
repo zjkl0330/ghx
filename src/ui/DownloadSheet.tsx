@@ -436,10 +436,13 @@ export function DownloadSheet(p: Props) {
 
   return (
     <div className="mask" onClick={busy ? undefined : p.onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+      <div className="sheet dl-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="grab" />
         <h3 className="ellipsis">{p.target.title}</h3>
         <div className="sheet-sub ellipsis">{targetSummary(p.target)}</div>
+
+        {/* 体部滚动、底部按钮固定：线路再多，下载按钮也不会被推出屏幕 */}
+        <div className="dl-body">
 
         <div className="dl-file">
           <span className="dl-file-ic">
@@ -517,7 +520,7 @@ export function DownloadSheet(p: Props) {
           <div className="dl-note">今天 {hhmm(board.at)} 测过 · 每天自动测一次</div>
         )}
 
-        <div className="multi-list">
+        <div className="multi-list dl-routes">
           {order.map((r, i) => {
             const hit = entries.find((e) => e.route.url === r.url)
             const on = picked ? picked === r.url : best ? best.url === r.url : i === 0
@@ -586,7 +589,18 @@ export function DownloadSheet(p: Props) {
 
         {err && <div className="errline">{err}</div>}
 
-        <div className="btns">
+        <div className="hint" style={{ marginTop: 10, textAlign: 'center' }}>
+          {p.target.kind === 'artifact'
+            ? 'CI 产物要走令牌才能取，浏览器拿不到，所以只能由 App 下载；产物有保留期限，过期后需要重新跑一次工作流。'
+            : effectiveMode === 'inner'
+              ? '点「后台下载」可以退出这一页，下载会在通知栏继续；回来还能接着看进度。测速只拉每条线路的前 256 KB。'
+              : p.target.installable
+                ? '交给浏览器后进度在通知栏；下载完成后点通知即可安装。'
+                : '交给浏览器后进度在通知栏，完成后可直接打开，也能在下载目录里找到。'}
+        </div>
+        </div>
+
+        <div className="btns dl-foot">
           {busy ? (
             <>
               <button className="btn ghost" onClick={() => void cancel()}>
@@ -632,15 +646,6 @@ export function DownloadSheet(p: Props) {
           )}
         </div>
 
-        <div className="hint" style={{ marginTop: 10, textAlign: 'center' }}>
-          {p.target.kind === 'artifact'
-            ? 'CI 产物要走令牌才能取，浏览器拿不到，所以只能由 App 下载；产物有保留期限，过期后需要重新跑一次工作流。'
-            : effectiveMode === 'inner'
-              ? '点「后台下载」可以退出这一页，下载会在通知栏继续；回来还能接着看进度。测速只拉每条线路的前 256 KB。'
-              : p.target.installable
-                ? '交给浏览器后进度在通知栏；下载完成后点通知即可安装。'
-                : '交给浏览器后进度在通知栏，完成后可直接打开，也能在下载目录里找到。'}
-        </div>
       </div>
     </div>
   )

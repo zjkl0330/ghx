@@ -155,11 +155,11 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 
 ---
 
-## 5. 验收闸门（2026-11-25 在当前代码重跑的结果）
+## 5. 验收闸门（2026-11-28 在 v1.2.2 上重跑的结果）
 
 | 闸门 | 命令 | 结果 |
 |---|---|---|
-| 单元测试 | `npx vitest run` | **1491 通过 / 67 文件** |
+| 单元测试 | `npx vitest run` | **1523 通过 / 69 文件** |
 | 类型检查 | `npx tsc -b` | 通过 |
 | NPE 红线 | `scripts/check-npe-guards.py` | **9 条全过**（Context 先装、用处处判空、插件方法不外抛） |
 | 原生下载接线 | `scripts/check-download-native.py --apk …` | **77 条全过** |
@@ -169,10 +169,13 @@ JAVA_HOME=/opt/jdk-21.0.2 /opt/gradle-8.11.1/bin/gradle assembleDebug --no-daemo
 | APK 商店 | `scripts/verify-apkstore.py` | 10 项全过（单列 / 平台筛选 / 头像回退 / 返回键） |
 | 私有仓库图片 | `GHX_TOKEN=… scripts/verify-privateimg.py` | 走令牌通道后 `blob:` 图真的解码（真私有仓库、真令牌） |
 | Issue/PR 动态 | `GHX_TOKEN=… scripts/verify-timeline.py` | Issue 3 条动态、PR 对话区 6 条动态 + 1 条评论 + 评论框 |
+| 星标文件夹 | `scripts/verify-starfolders.py` | 建组 → 归类 → 筛选 → 改名 → 删除 6 步全过，含返回键只收面板 |
+| 详情操作排序 | `scripts/verify-actionorder.py` | 上移生效、首尾禁用、重开持久化、恢复默认，6 步全过 |
+| 下载面板几何 | `scripts/verify-dlsheet.py` | 注入 17 条线路后按钮仍在 792–830px，线路表内滚 285/900 |
 
-`scripts/` 共 **43 个**脚本，其中 `verify-*.py` **31 个**，覆盖归档、批量、复制、下载、下载历史、分片、字体、游客模式、Markdown、镜像恢复、通知、溢出、发版说明、测速、目录、翻译保活、链接、更新、返回键等。
+`scripts/` 共 **45 个**脚本，其中 `verify-*.py` **34 个**，覆盖归档、批量、复制、下载、下载历史、分片、字体、游客模式、Markdown、镜像恢复、通知、溢出、发版说明、测速、目录、翻译保活、链接、更新、返回键等。
 
-**诚实说明**：上面 8 条是本次实际重跑的；其余 21 个 `verify-*.py` 上一版通过、这次**没有复跑**。改动碰到对应模块时再跑，不要因为「历史全绿」就跳过。`scripts/repro-upgrade.py` 是复现升级场景的一次性脚本，不是闸门。
+**诚实说明**：v1.2.2 这轮实际重跑了 7 个（features / glass / apkstore / backkey 与三个新增脚本），其余 `verify-*.py` 是上一版或更早跑过的，**这次没有复跑**。改动碰到对应模块时再跑，不要因为「历史全绿」就跳过。`scripts/repro-upgrade.py` 是复现升级场景的一次性脚本，不是闸门。
 
 ---
 
@@ -380,7 +383,7 @@ rm -f /tmp/askpass.sh    # 用完删掉
 
 - [ ] `pnpm install --frozen-lockfile`
 - [ ] 恢复 `keystore/ghx-release.jks` + `android/keystore.properties`，`apksigner` 指纹 == `fd6a8ea4…`
-- [ ] `npx tsc -b` 无输出；`npx vitest run` == **1462**
+- [ ] `npx tsc -b` 无输出；`npx vitest run` == **1523**
 - [ ] `pnpm build` 后 `vite preview --port 4173`，`xvfb-run -a python3 scripts/verify-features.py` == **77**
 - [ ] 读 `RULES.md`（行为）/ `docs/RULES-SUMMARY.md`（速查）+ `AGENTS.md` §七个核心机制 + §硬约束；动界面前读 `docs/STYLE.md`
 - [ ] 向用户要 PAT；确认远端 `main` 与 `v1.2.0` 都在

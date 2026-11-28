@@ -700,6 +700,18 @@ export default function App() {
     setSheet(to)
   }, [])
 
+  /**
+   * 页内弹层的返回拦截。
+   *
+   * 全局返回栈只认识 App 自己管的 sheet；星标文件夹这类「长在某个页面里」的弹层
+   * 不在里面，不拦的话按返回会带着面板直接跳页签。子组件开面板时注册一个函数，
+   * 关掉时注销 —— 返回键先问它，它说吃掉了就不再往下走。
+   */
+  const localBackRef = useRef<(() => boolean) | null>(null)
+  const registerLocalBack = useCallback((fn: (() => boolean) | null) => {
+    localBackRef.current = fn
+  }, [])
+
   const applyBack = useCallback(() => {
     // 软键盘开着时先收键盘，这是安卓上最符合直觉的第一层返回。
     // 但键盘收起后输入框的焦点经常残留 —— 只看 activeElement 是不是 input
@@ -712,6 +724,8 @@ export default function App() {
       }
       // 键盘没开，只是焦点残留：收掉焦点，这次返回继续往下走
     }
+
+    if (localBackRef.current?.()) return
 
     const action = resolveBack(backStateRef.current)
     switch (action.kind) {
@@ -761,8 +775,9 @@ export default function App() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key !== 'Escape') return
-      // 根层交给浏览器自己处理，别在这里拦出一个"已在首页"的提示
-      if (resolveBack(backStateRef.current).kind === 'exit') return
+      // 根层交给浏览器自己处理，别在这里拦出一个"已在首页"的提示；
+      // 但页内弹层还开着时不算根层，要先把它收掉
+      if (resolveBack(backStateRef.current).kind === 'exit' && !localBackRef.current) return
       e.preventDefault()
       applyBack()
     }
@@ -2508,6 +2523,8 @@ export default function App() {
         <StarsPage
           client={client}
           login={activeRecord?.login ?? null}
+          accountId={activeRecord?.id ?? null}
+          registerBack={registerLocalBack}
           descOpts={descOpts}
           onOpenRepo={(r) => {
             setDetailRepo(r)
